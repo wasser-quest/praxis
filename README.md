@@ -31,6 +31,45 @@ Self-hosted AI agent platform with Discord bot, dashboard, tool-calling, and QEM
 - For VM: `qemu-system-x86_64`, `qemu-img` (apt: `qemu-system-x86`)
 - For voice: Vosk or Whisper models
 
+## ⚠️ Security Notice
+
+**Praxis is currently designed for private/VPN networks only.** Do not expose it directly to the public internet.
+
+### Default network exposure
+
+| Service | Default Port | Binding | Access |
+|---------|-------------|---------|--------|
+| Gateway (API) | `3537` | `127.0.0.1` | Local only |
+| Dashboard (Web) | `3537` | `127.0.0.1` | Local only |
+| VNC (QEMU VM) | `5900+` | `127.0.0.1` | Local only |
+
+### How to expose safely
+
+**Option 1: VPN (recommended)**
+- Use [NetBird](https://netbird.io/), [Tailscale](https://tailscale.com/) or [WireGuard](https://www.wireguard.com/)
+- Access via VPN IP/hostname only
+- No ports exposed to public internet
+
+**Option 2: Reverse proxy with auth**
+- Use Caddy, Nginx or Traefik in front of Praxis
+- Add TLS termination and authentication
+- Never expose port 3537 directly
+
+**Option 3: SSH tunnel**
+```bash
+ssh -L 3537:localhost:3537 user@your-server
+# Then open http://localhost:3537 in your browser
+```
+
+### What is NOT secure by default
+
+- No built-in authentication for the dashboard (relies on network isolation)
+- API keys stored encrypted, but the gateway accepts any request on the bound interface
+- VNC proxy has no authentication beyond the token in the URL
+- Discord bot tokens and provider API keys are in the local database
+
+**Bottom line:** Treat Praxis like any self-hosted service with root-level tool access. Keep it behind a VPN or firewall.
+
 ## Quick Start
 
 ```bash
@@ -378,7 +417,7 @@ The built-in **`poml_templates` skill** creates and validates templates using Mi
 
 Discovery is configurable through `templates/discovery/skills.poml`; the default prompt contains no full catalog. `search_skills` uses a persistent metadata index, then `use_skill` loads one workflow. Manifests support independent `skill_hidden` and `user_only` flags.
 
-Use Discord `/skill skillname:skill_creator` to create skills through the existing POML authoring skill, or `/skill skillname:mnemodim-palace` for memory-palace packages. The creator is user-only by default. `/skill skillname:off` clears selection and `/skill` browses a bounded page. Agent context tools/SM transitions cannot change persistent selection. See [Skills and POML discovery](docs/SKILLS.md) for configuration, indexing and media safety.
+Use Discord `/skill skillname:skill_creator` to create skills through the existing POML authoring skill. The creator is user-only by default. `/skill skillname:off` clears selection and `/skill` browses a bounded page. Agent context tools/SM transitions cannot change persistent selection. See [Skills and POML discovery](docs/SKILLS.md) for configuration, indexing and media safety.
 
 See [Skills and POML authoring](docs/SKILLS.md), [Semantic templates and workflows](docs/POML_WORKFLOWS.md), and the [workflow/UI change report](docs/WORKFLOW_UI_CHANGE_REPORT.md). `examples/poml-test-context.json` supplies complete synthetic render data; `scripts/test_poml_templates.py` strictly tests every shipped template.
 

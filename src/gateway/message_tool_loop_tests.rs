@@ -238,14 +238,14 @@ async fn tool_chain_skill_then_reference_then_action_reaches_final_answer() {
             let output = dir.path().join("synthetic-artifact.txt");
             let reference = std::env::current_dir()
                 .unwrap()
-                .join("skills/mnemodim-palace/references/format-cheatsheet.md");
+                .join("skills/code_review/references/STYLE_GUIDE.md");
             let steps = vec![
                 Step::Reply(reply(
                     None,
                     vec![call(
                         "skill",
                         "use_skill",
-                        serde_json::json!({"name":"mnemodim-palace","parameters":{"user_request":"offline synthetic inspection; no media generation"}}),
+                        serde_json::json!({"name":"code_review","parameters":{"user_request":"offline synthetic inspection"}}),
                     )],
                 )),
                 Step::Reply(reply(

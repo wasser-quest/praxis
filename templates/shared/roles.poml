@@ -3,6 +3,6 @@
   <let name="rs_catalog" value="typeof sm_data === 'object' && sm_data && typeof sm_data.persona_roles === 'string' && sm_data.persona_roles ? sm_data.persona_roles : 'standard, code, code_architect, senior_dev, expert_programmer, debugger, review, teach, research'" />
   <cp caption="Roles">
     <p>Current role: {{rs_role}}. Roles: {{rs_catalog}}.</p>
-    <p>Switch with set_context(key "sm_data.role", value role name) at the start of a matching task; instructions and allowed tools change on the next request. Return to "standard" when specialised work ends. One switch per response; unknown roles do nothing.</p>
+    <p>Switch freely with set_context(key "sm_data.role", value role name) whenever a task requires a different role — multiple switches per message are allowed and take effect immediately. Return to "standard" when specialised work ends. Unknown roles do nothing.</p>
   </cp>
 </poml>

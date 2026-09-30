@@ -40,7 +40,6 @@ fn onboarding_assets_install_every_bundled_file_and_executable() {
         "plugins/brave_search/plugin.json",
         "plugins/brave_search/search.py",
         "skills/poml_templates/reference.md",
-        "skills/mnemodim-palace/references/MNEMODIM_IMPORT_GUIDE.md",
     ] {
         assert!(
             root.join(name).is_file(),
