@@ -102,6 +102,8 @@ pub struct SmSecretOverride {
 const ALLOWED_SECRET_FIELDS: &[&str] = &[
     "mimo_voice",
     "mimo_tts_type",
+    "mimo_tts_base_url",
+    "mimo_tts_model",
     "mimo_style_instruction",
     "mimo_voice_design_prompt",
     "minimax_voice_id",

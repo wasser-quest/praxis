@@ -1086,6 +1086,13 @@ fn spawn_tts(
         .clone()
         .unwrap_or_else(|| "builtin".to_string());
     let mimo_voice = settings.mimo_voice_id.clone();
+    // TTS base URL/model overrides: context variable first, then environment.
+    let mimo_tts_base_url = settings.mimo_tts_base_url.clone().or_else(|| {
+        std::env::var("MIMO_TTS_API_BASE")
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+    });
+    let mimo_tts_model_override = settings.mimo_tts_model.clone();
     let qwen_tts_server = settings.qwen_tts_server.clone();
     let qwen_tts_model = settings.qwen_tts_model.clone();
     let qwen_tts_speaker = settings.qwen_tts_speaker.clone();
@@ -1156,12 +1163,15 @@ fn spawn_tts(
             }
             "mimo_tts" => {
                 let api_key = mimo_api_key.unwrap_or_default();
-                let model = match mimo_tts_type.as_str() {
-                    "voicedesign" => "mimo-v2.5-tts-voicedesign",
-                    "voiceclone" => "mimo-v2.5-tts-voiceclone",
-                    _ => "mimo-v2.5-tts",
-                };
-                let tts_client = tts::mimo_tts::MiMoTTS::new(api_key, model.to_string(), None);
+                let model = mimo_tts_model_override.unwrap_or_else(|| {
+                    match mimo_tts_type.as_str() {
+                        "voicedesign" => "mimo-v2.5-tts-voicedesign",
+                        "voiceclone" => "mimo-v2.5-tts-voiceclone",
+                        _ => "mimo-v2.5-tts",
+                    }
+                    .to_string()
+                });
+                let tts_client = tts::mimo_tts::MiMoTTS::new(api_key, model, mimo_tts_base_url);
                 let voice = mimo_voice.as_deref().unwrap_or("mimo_default");
                 match tts_client.speak_builtin(&text, voice, None).await {
                     Ok(bytes) => bytes,

@@ -181,6 +181,14 @@ pub struct ContextSettings {
     pub mimo_voice_id: Option<String>,
     #[serde(default)]
     pub mimo_tts_type: Option<String>,
+    /// Optional MiMo TTS API base URL override. Falls back to the
+    /// `MIMO_TTS_API_BASE` environment variable, then the built-in default.
+    #[serde(default)]
+    pub mimo_tts_base_url: Option<String>,
+    /// Optional MiMo TTS model override. When null, the model is derived
+    /// from `mimo_tts_type` (builtin/voicedesign/voiceclone).
+    #[serde(default)]
+    pub mimo_tts_model: Option<String>,
     #[serde(default)]
     pub history_with_toolcalls: bool,
     #[serde(default)]
@@ -430,6 +438,8 @@ impl Default for ContextSettings {
             minimax_tts_model: None,
             mimo_voice_id: None,
             mimo_tts_type: None,
+            mimo_tts_base_url: None,
+            mimo_tts_model: None,
             history_with_toolcalls: true,
             only_tool_calls_no_history: false,
             download: false,

@@ -136,6 +136,8 @@ These settings do not affect the selected ElevenLabs backend unless RVC is enabl
 | `settings.minimax_tts_model` | string or null | MiniMax speech model ID, or `null` → `"speech-02-hd"` | `null` | MiniMax TTS model override; availability is remote/provider-specific. |
 | `settings.mimo_voice_id` | string or null | MiMo voice ID, or `null` → `"mimo_default"` | `null` | Voice used with `voice_tts_type="mimo_tts"`. |
 | `settings.mimo_tts_type` | string or null | Intended `"builtin"`, `"voicedesign"`, `"voiceclone"`; null/other strings select builtin model | `null` | Selects `mimo-v2.5-tts`, `mimo-v2.5-tts-voicedesign`, or `mimo-v2.5-tts-voiceclone`. Gateway still calls the builtin-style synthesis method, so design/clone modes are not fully wired end to end. |
+| `settings.mimo_tts_base_url` | string or null | MiMo-compatible TTS API base URL including the API root (e.g. `"https://api.xiaomimimo.com/v1"`), or `null` | `null` | Overrides the MiMo TTS endpoint for `voice_tts_type="mimo_tts"`. Resolution order: this variable → environment `MIMO_TTS_API_BASE` → built-in default `https://api.xiaomimimo.com/v1`. |
+| `settings.mimo_tts_model` | string or null | Any model ID served by the configured endpoint, or `null` | `null` | Free-form MiMo TTS model override. When `null`, the model follows `mimo_tts_type` (`mimo-v2.5-tts`, `mimo-v2.5-tts-voicedesign`, `mimo-v2.5-tts-voiceclone`). |
 
 ## LLM, history, and compaction
 
