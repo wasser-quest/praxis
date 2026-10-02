@@ -1,4 +1,7 @@
 pub mod agent_control;
+pub mod apply_patch;
+#[cfg(test)]
+mod patch_tests;
 pub mod discovery;
 pub mod memory;
 pub mod context_tools;

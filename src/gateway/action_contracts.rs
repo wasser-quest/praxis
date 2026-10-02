@@ -234,6 +234,7 @@ pub fn before_tool(user: &str, tool: &str) -> anyhow::Result<()> {
     if matches!(
         tool,
         "run_check"
+            | "inspect_file"
             | "read_file"
             | "get_context"
             | "read_tool_result"
@@ -266,10 +267,79 @@ pub fn definition() -> crate::db::tools::Tool {
     }
 }
 
+/// A transaction uses the same pinned author policy; it cannot supply commands.
+pub(crate) struct PatchPolicy {
+    pub root: PathBuf,
+    pub task_id: String,
+    pub revision: u64,
+    pub checks: Vec<(String, CheckContract)>,
+}
+pub(crate) fn patch_policy(
+    user: &str,
+    names: &[String],
+    invalidate: bool,
+) -> anyhow::Result<PatchPolicy> {
+    task_control::with_verification(user, |ledger| {
+        if invalidate {
+            ledger.invalidate();
+        }
+        let (_, checks, _, root) = ledger.policy.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("Transactional files require a pinned workflow with [checks]")
+        })?;
+        let selected = names
+            .iter()
+            .map(|name| {
+                checks
+                    .get(name)
+                    .cloned()
+                    .map(|check| (name.clone(), check))
+                    .ok_or_else(|| anyhow::anyhow!("Unknown workflow check: {name}"))
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        Ok(PatchPolicy {
+            root: root.clone(),
+            task_id: ledger.task_id.clone(),
+            revision: ledger.revision,
+            checks: selected,
+        })
+    })
+}
+pub(crate) fn invalidate_patch(user: &str, task_id: &str) {
+    let _ = task_control::with_verification(user, |ledger| {
+        if ledger.task_id == task_id {
+            ledger.invalidate();
+        }
+        Ok(())
+    });
+}
+pub(crate) fn publish_patch(
+    user: &str,
+    policy: &PatchPolicy,
+    call: &str,
+) -> anyhow::Result<Vec<ExecutionReceipt>> {
+    anyhow::ensure!(
+        task_control::cancellation(user).is_some_and(|token| !token.is_cancelled()),
+        "Task cancelled"
+    );
+    task_control::with_verification(user, |ledger| {
+        anyhow::ensure!(
+            ledger.task_id == policy.task_id && ledger.revision == policy.revision,
+            "Task or workspace revision changed during patch"
+        );
+        Ok(policy
+            .checks
+            .iter()
+            .map(|(name, _)| {
+                ledger.finish_check(name, policy.revision, Outcome::Passed, Some(0), call)
+            })
+            .collect())
+    })
+}
+
 pub fn instructions(user: &str) -> String {
     task_control::with_verification(user, |ledger| {
         Ok(match &ledger.policy {
-            Some((_, checks, guards, _)) => format!("\n\n[EXECUTION CONTRACTS]\nAvailable run_check names: {:?}. Required checks by destination (_complete means completion): {:?}. Only runtime receipts authorize these transitions. Run checks after your last mutation. Missing evidence blocks completion; report incomplete work honestly.\n", checks.keys().collect::<Vec<_>>(), guards),
+            Some((_, checks, guards, _)) => format!("\n\n[EXECUTION CONTRACTS]\nAvailable run_check names: {:?}. Required checks by destination (_complete means completion): {:?}. Only runtime receipts authorize these transitions. Run checks after your last mutation. For controlled host edits use inspect_file to obtain expected_sha256, then apply_patch with edits and named checks. Only a committed patch publishes passing evidence; rolled_back or rollback_conflict means incomplete work. Missing evidence blocks completion; report incomplete work honestly.\n", checks.keys().collect::<Vec<_>>(), guards),
             None => String::new(),
         })
     }).unwrap_or_default()
@@ -288,6 +358,11 @@ pub async fn run(user: &str, call: &str, args: &serde_json::Value) -> anyhow::Re
     let cancel = task_control::cancellation(user)
         .ok_or_else(|| anyhow::anyhow!("Check requires an active task"))?;
     anyhow::ensure!(!cancel.is_cancelled(), "Task cancelled");
+    let _operation = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => anyhow::bail!("Task cancelled"),
+        lock = crate::tools::apply_patch::FILE_OPERATIONS.lock() => lock,
+    };
     let (contract, root, revision) = task_control::with_verification(user, |ledger| {
         let revision = ledger.start_check(name)?;
         let (_, checks, _, root) = ledger
@@ -320,7 +395,7 @@ pub async fn run(user: &str, call: &str, args: &serde_json::Value) -> anyhow::Re
     Ok(serde_json::json!({"receipt":receipt,"output":output}).to_string())
 }
 
-async fn execute(
+pub(crate) async fn execute(
     contract: &CheckContract,
     root: &Path,
     cancel: &tokio_util::sync::CancellationToken,

@@ -181,6 +181,8 @@ pub fn init_default_tools(db: &Database) -> anyhow::Result<()> {
 pub(crate) fn get_default_tools() -> Vec<Tool> {
     vec![
         crate::gateway::action_contracts::definition(),
+        crate::tools::apply_patch::definition(),
+        crate::tools::apply_patch::inspect_definition(),
         crate::tools::tool_output::definition(),
         Tool {
             name: "search_tools".into(),

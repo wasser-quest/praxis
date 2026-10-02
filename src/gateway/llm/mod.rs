@@ -262,6 +262,10 @@ impl LLMRouter {
                 // Handle agent control signals specially
                 crate::gateway::action_contracts::before_tool(user_id, &tool_call.function.name)?;
                 let result_str = match tool_call.function.name.as_str() {
+                    "apply_patch" => crate::tools::apply_patch::run(user_id, &tool_call.id, &args).await
+                        .unwrap_or_else(|e| format!("Error: {e}")),
+                    "inspect_file" => crate::tools::apply_patch::inspect(user_id, &args).await
+                        .unwrap_or_else(|e| format!("Error: {e}")),
                     "run_check" => crate::gateway::action_contracts::run(user_id, &tool_call.id, &args).await
                         .unwrap_or_else(|e| format!("Error: {e}")),
                     "read_tool_result" => crate::tools::tool_output::run(db, user_id, &args)
