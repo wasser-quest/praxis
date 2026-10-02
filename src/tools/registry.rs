@@ -44,6 +44,13 @@ fn canonical_tool(name: &str) -> Option<&'static crate::db::tools::Tool> {
 fn build_registry() -> Vec<ToolMeta> {
     let mut tools = vec![
         ToolMeta {
+            name: "execute_decision",
+            description: "Execute one compact workflow-mapped decision through verified capabilities",
+            category: ToolCategory::Action,
+            params_schema: crate::gateway::decision_ir::definition().parameters,
+            default_enabled: true,
+        },
+        ToolMeta {
             name: "apply_patch",
             description: "Apply scoped file edits with expected hashes, trusted checks and rollback",
             category: ToolCategory::Action,

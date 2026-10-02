@@ -1,5 +1,7 @@
 #[cfg(all(test, unix))]
 mod contract_tests;
+#[cfg(all(test, unix))]
+mod source_contract_tests;
 pub mod contracts;
 pub mod minimax_image;
 
@@ -52,11 +54,18 @@ pub enum PluginHandler {
     /// Native verification has no helper script, URL, or model-selected command.
     #[serde(rename = "verification")]
     Verification(VerificationAdapter),
+    /// Scoped source replacement with the durable native patch journal.
+    #[serde(rename = "source_edit")]
+    SourceEdit(SourceEditAdapter),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct VerificationAdapter {}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct SourceEditAdapter {}
 
 pub struct PluginRegistry {
     plugins: HashMap<String, Plugin>,
@@ -227,7 +236,7 @@ impl PluginRegistry {
                         "Contracted tools require task-owned execution"
                     );
                     return match &tool.handler {
-                        PluginHandler::Verification(_) => {
+                        PluginHandler::Verification(_) | PluginHandler::SourceEdit(_) => {
                             anyhow::bail!("Native verification requires an action contract")
                         }
                         PluginHandler::Builtin { name } => {

@@ -1,7 +1,7 @@
 {
   "name": "verified_rust",
-  "description": "Native verified Rust workspace build and test capabilities (opt in).",
-  "version": "1.1.0",
+  "description": "Native transactional Rust source edits and verified build/test capabilities (opt in).",
+  "version": "1.2.0",
   "tools": [{
     "name": "build_workspace",
     "description": "Build the Rust workspace and independently verify success. Use scope=workspace. Only a committed runtime receipt proves the configured build succeeded.",
@@ -23,6 +23,20 @@
       "idempotency": "idempotent",
       "timeout_secs": 300,
       "postconditions": [{"program":"cargo","args":["test","--locked","--workspace"],"cwd":".","timeout_secs":295,"resources":["src","tests","Cargo.toml","Cargo.lock"]}]
+    }
+  }, {
+    "name": "modify_source",
+    "description": "Replace an existing workspace source file transactionally. First inspect_file for expected_sha256. Praxis snapshots the file, checks its formatting and workspace compilation, and rolls back a failed edit. Only a committed runtime receipt counts as implementation applied.",
+    "parameters": {"type":"object","properties":{"path":{"type":"string","minLength":1,"maxLength":4096},"expected_sha256":{"type":"string","minLength":64,"maxLength":64},"content":{"type":"string","maxLength":1048576}},"required":["path","expected_sha256","content"],"additionalProperties":false},
+    "handler": {"type":"source_edit"},
+    "contract": {
+      "effect": "workspace_write",
+      "idempotency": "non_idempotent",
+      "timeout_secs": 300,
+      "postconditions": [
+        {"program":"rustfmt","args":["--check","--edition","2021","{source_path}"],"cwd":".","timeout_secs":60,"resources":["src","tests","Cargo.toml","Cargo.lock"]},
+        {"program":"cargo","args":["check","--locked","--workspace"],"cwd":".","timeout_secs":235,"resources":["src","tests","Cargo.toml","Cargo.lock"]}
+      ]
     }
   }]
 }

@@ -1,0 +1,144 @@
+# Praxis Decision IR v1
+
+Decision IR (intermediate representation) is a compact instruction format for
+the action the model chooses. A trusted workflow maps an opcode to a capability;
+Praxis lowers it into the normal gateway dispatcher. Contracts, checks, rollback
+and task-owned receipts still determine whether the action succeeded.
+
+It uses the configured chat model and endpoint, including Ollama. There is no
+additional IR endpoint or model setting. State routing and its probability
+threshold continue to use the existing Decision-router configuration.
+
+## First use
+
+Rebuild Praxis and update the opt-in plugin manifest:
+
+```bash
+mkdir -p plugins/verified-rust
+cp examples/plugins/verified-rust/plugin.json plugins/verified-rust/plugin.json
+```
+
+Use the configured `PLUGINS_DIR` if different. Restart Praxis and select
+`verified-implementation` as `settings.sm_file` for a **new task**. Install the
+workflow in the active runtime's `contexts` directory. The pinned `ROOT_DIR` is
+the project root; author checks run there. Ensure `cargo` and `rustfmt` are on
+Praxis's PATH. Adapt the plugin's edition, commands and resource scopes for the
+project. This example assumes Rust edition 2021.
+
+The workflow enables both normal capability calls and `execute_decision`.
+Normal `modify_source`, `build_workspace` and `run_workspace_tests` calls use the
+same execution path and can be mixed with IR calls in the same task.
+
+| Opcode | Capability | Example instruction |
+| --- | --- | --- |
+| `R` | `inspect_file` | `1 R {"path":"src/lib.rs"}` |
+| `M` | `verified_rust/modify_source` | `1 M {"path":"src/lib.rs","expected_sha256":"<hash from R>","content":"<replacement source>"}` |
+| `B` | `verified_rust/build_workspace` | `1 B {"scope":"workspace"}` |
+| `T` | `verified_rust/run_workspace_tests` | `1 T {"scope":"workspace"}` |
+| `C` | `agent_complete` | `1 C` |
+
+Send **one instruction per tool call**, using the tool name `execute_decision`:
+
+```json
+{"ir":"1 T {\"scope\":\"workspace\"}"}
+```
+
+Encode source newlines as JSON string escapes. Use the actual 64-character hash
+returned by inspection. The model receives the canonical action receipt and
+check output; the archive retains the outer tool name and original call ID.
+
+Completion and `done` require current receipts for `modify_source`,
+`build_workspace`, and `run_workspace_tests`. Rolled-back edits, failed tests
+and model claims cannot satisfy a guard. Edits invalidate prior build/test
+evidence, so run those after the last edit. Verification capabilities preserve
+the source receipt. For verification tasks requiring no edit, continue using
+`verified-capabilities`.
+
+## Native source edits
+
+`"handler":{"type":"source_edit"}` accepts exactly required string fields
+`path`, `expected_sha256` and `content`, under a closed schema. It requires
+`workspace_write`, `non_idempotent`, and no generic compensation handler. The
+contract owns pre/post checks and the total timeout.
+
+Praxis validates an existing regular UTF-8 file, a normalized path inside the
+pinned physical root, and the expected bytes/mode. Symlinks, hardlinks, missing
+files, unchanged content and model-supplied commands are rejected. Originals
+are saved in the **same durable journal as `apply_patch`** before replacement.
+V1 edits one existing file, bounded to 1 MiB; creation/deletion remains available
+through `apply_patch`. The complete serialized capability input also has the
+existing 1 MiB bound, including JSON overhead and escaping.
+Durable native source edits currently require Unix.
+
+An exact check argument `{source_path}` becomes the validated absolute file
+path as one argv operand. Programs, cwd and embedded text are never expanded.
+Use it in programs expecting a file operand; trusted authors must not use it as
+interpreted shell/program text. The bundled contract runs
+`rustfmt --check --edition 2021 <source_path>`, then
+`cargo check --locked --workspace`. Formatting is checked, not rewritten.
+Separate build/test capabilities produce their own receipts.
+
+Only fresh passing postconditions plus durable commit publish action authority.
+The edited file is automatically included in the first postcondition's resource
+scopes even if the author declared none (the 16-scope bound still applies).
+External edits therefore stale the source receipt. Guards resample resources
+and the shared workspace revision.
+
+Failed checks, timeout or cancellation restore original bytes and permissions.
+Dropping the execution future uses the same native rollback; process death
+leaves a journal for recovery. Conflicting external edits are preserved and
+reported as `rollback_conflict`, with completion blocked. `rolled_back` also has
+`verified:false`. Rollback covers the edited file; verifier programs and their
+other effects remain trusted author policy. Existing journal/sampling limits
+apply.
+
+## Workflow declarations and limits
+
+```text
+[decision_ir]
+R = inspect_file
+M = verified_rust/modify_source
+B = verified_rust/build_workspace
+T = verified_rust/run_workspace_tests
+C = agent_complete
+```
+
+Mappings use unique uppercase single-letter opcodes, pinned with the workflow
+and root. Targets are `inspect_file`, `agent_complete`, or a uniquely owned
+enabled **contracted** `plugin/tool`. The target and `execute_decision` must also
+be allowed in the current state and enabled in the tool database. An opcode
+grants no extra permission. Legacy tools, raw shell calls, arbitrary builtins
+and recursive IR cannot be targets.
+
+Unknown versions/opcodes, batches, duplicate operand keys, nested operands and
+trailing instructions fail closed. Flat scalar operands use the existing
+capability schema. IR text is bounded to 2 MiB and 32 operand keys; individual
+capability limits still apply. Put `_output` on the outer call, never inside IR.
+Each instruction consumes one tool-call budget slot. Original call IDs reach
+the capability engine, preserving replay protection. Both gateway dispatchers
+support IR; the standalone router/plugin API does not execute IR or contracts.
+
+This is the first executable representation. Patch/artifact references, batch
+plans, broader facts and measured token/behavior improvements remain future
+work. V1 keeps original capability schemas available and makes no token-saving
+or Decision-router quality claim.
+
+## Validation
+
+```bash
+cargo test --locked --lib source_capability
+cargo test --locked --lib decision_ir
+cargo test --locked --lib source_capability_bundled_rust -- --ignored
+```
+
+The real Cargo test rolls back a formatted but type-invalid edit, then verifies
+a valid edit, build and regression tests permit completion. With a real Microsoft
+POML CLI configured through `POML_CLI`, include the full gateway tests:
+
+```bash
+cargo test --locked --lib decision_ir -- --include-ignored --test-threads=1
+```
+
+These use an offline scripted model and real local processes. They cover chat
+and agent loops, permissions, receipts, rollback, call IDs, normal/IR equivalence
+and tool budgets without paid inference.

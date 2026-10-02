@@ -366,12 +366,12 @@ fn capability_relative_install_paths_are_absolute_for_workspace_cwd() {
 fn capability_bundled_semantic_example_has_checks_and_receipt_guards() {
     let registry = load_all_plugins(Path::new("examples/plugins"));
     let plugin = registry.get("verified_rust").unwrap();
-    assert_eq!(plugin.tools.len(), 2);
+    assert_eq!(plugin.tools.len(), 3);
     for tool in &plugin.tools {
         contracts::validate_tool(&plugin.name, tool).unwrap();
         assert_eq!(
             serde_json::to_value(&tool.handler).unwrap(),
-            json!({"type":"verification"})
+            if tool.name == "modify_source" { json!({"type":"source_edit"}) } else { json!({"type":"verification"}) }
         );
     }
     let sm =
