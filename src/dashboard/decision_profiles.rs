@@ -31,6 +31,7 @@ pub async fn probe(Json(probe):Json<Probe>)->Result<Json<Value>,Error> {
         .map_err(|e|bad(format!("Decision error: {e}")))?;
     Ok(Json(json!({"results":results.iter().map(|d|json!({
         "label":d.label,"state":probe.profile.state_map.get(&d.label),"probability":d.probability,
+        "confidence":d.confidence,"usage":d.usage,
         "meets_threshold":d.probability>=probe.profile.minimum_probability,
     })).collect::<Vec<_>>(),"elapsed_ms":start.elapsed().as_millis(),
         "notice":"Classification only: no context, state, history or permissions changed. Probabilities are not calibrated certainty."})))

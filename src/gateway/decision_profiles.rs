@@ -8,6 +8,8 @@ use std::{collections::BTreeMap, path::{Path,PathBuf}};
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct DecisionProfile {
+    #[serde(default)]
+    pub backend: DecisionBackend,
     pub endpoint: String,
     pub model: String,
     pub instructions: String,
@@ -17,6 +19,9 @@ pub struct DecisionProfile {
     pub schema: Value,
     pub state_field: String,
     pub state_map: BTreeMap<String,String>,
+    /// Optional System One descriptions; otherwise state targets describe choices.
+    #[serde(default)]
+    pub criteria: BTreeMap<String,String>,
     #[serde(default="default_mode")]
     pub mode: String,
     #[serde(default="default_cache")]
@@ -30,6 +35,9 @@ pub struct DecisionProfile {
     #[serde(default)]
     pub reevaluate: Reevaluate,
 }
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all="snake_case")]
+pub enum DecisionBackend { #[default] Native, Ollama }
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all="snake_case")]
 pub enum Reevaluate { TaskEntry, #[default] EveryStep }
@@ -61,11 +69,23 @@ impl DecisionProfile {
         ensure!(!self.model.trim().is_empty() && self.model.len()<=256, "A served model alias is required");
         ensure!(!self.instructions.trim().is_empty() && self.instructions.len()<=32000,"Instructions must be 1–32000 bytes");
         ensure!(self.schema.is_object() && self.schema.to_string().len()<=32000,"Schema must be an object of at most 32000 bytes");
-        ensure!(self.timeout_ms>=50 && self.timeout_ms<=10000,"Timeout must be 50–10000 ms");
+        let maximum_timeout=if self.backend==DecisionBackend::Ollama {300000} else {10000};
+        ensure!(self.timeout_ms>=50 && self.timeout_ms<=maximum_timeout,"Decision timeout outside backend limits");
         ensure!(self.max_context_chars>=256 && self.max_context_chars<=32000,"Context bound must be 256–32000 characters");
         ensure!(self.minimum_probability.is_finite() && (0.0..=1.0).contains(&self.minimum_probability),"Probability threshold must be in [0,1]");
         ensure!(!self.mode.is_empty() && self.mode.len()<=32 && !self.mode.chars().any(char::is_control),"Invalid Decision mode");
         let choices=self.choices()?;
+        if self.backend==DecisionBackend::Ollama {
+            ensure!(url.path().ends_with("/v1/systemone"),"Ollama Decision endpoint must end in /v1/systemone");
+            ensure!((2..=26).contains(&choices.len()),"System One choice questions require 2–26 choices");
+            if !self.criteria.is_empty() {
+                ensure!(self.criteria.len()==choices.len(),"Describe every System One choice exactly once");
+                for label in &choices {
+                    let description=self.criteria.get(*label).context("Missing System One choice description")?;
+                    ensure!(!description.trim().is_empty() && description.len()<=4096,"Invalid System One choice description");
+                }
+            }
+        }
         ensure!(self.state_map.len()==choices.len(),"Map every routing choice exactly once");
         for label in choices {
             let state=self.state_map.get(label).context("Missing routing choice in state_map")?;

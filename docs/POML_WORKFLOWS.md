@@ -62,6 +62,12 @@ The model selects a declared **real `active_state`** using `set_context`. There 
 
 The default `custom_data.state_eval_policy` is `continuous`: reevaluate after evidence/tool steps as well as on task entry. `entry`, `fixed` and the separate trusted `decision` router are experimental comparison arms, not claimed optimizations. `tests/fixtures/20-tasks.json` contains twenty natural user tasks and private observer rubrics; user tasks never ask for a switch. The runner defaults to all four arms (80 task runs) and can prepare a frozen snapshot without inference. See the [Decision experiment protocol](DECISION_ROUTER_EXPERIMENT.md), `scripts/bench_state_machine.py` and [the reliability work log](LOCAL_MODEL_RELIABILITY.md) for evidence and limits. An offline scripted integration test is not live acceptance; more transitions alone are not a benefit.
 
+The experiment also supports `--provider ollama` with separate solving/routing
+model tags on one URL. Ollama's native `/v1/systemone` backend preserves the
+selected-choice probability threshold; `confidence` is a separate diagnostic.
+The bundled `task-router-ollama` profile can also be selected in ordinary Praxis
+contexts. It requires Ollama 0.35.0+ and an installed System One model.
+
 ### Configurable response-tag prefix
 
 ```text

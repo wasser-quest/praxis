@@ -30,7 +30,7 @@ struct ObservedProvider {
 #[async_trait::async_trait]
 impl LLMProvider for ObservedProvider {
     fn name(&self) -> &str {
-        "llamacpp"
+        self.inner.name()
     }
     fn as_any(&self) -> &dyn std::any::Any {
         self
