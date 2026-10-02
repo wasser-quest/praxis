@@ -19,11 +19,12 @@ use std::{
 };
 
 struct ObservedProvider {
-    inner: LlamaCppProvider,
+    inner: Box<dyn LLMProvider>,
     fixture_file: PathBuf,
     artifacts: PathBuf,
-    calls: AtomicUsize,
+    calls: Arc<AtomicUsize>,
     state_user: Option<(crate::db::Database, String)>,
+    routing_trace: Option<Arc<state_machine_live_tests::RoutingTrace>>,
 }
 
 #[async_trait::async_trait]
@@ -48,6 +49,9 @@ impl ObservedProvider {
         on_delta: Option<&(dyn Fn(crate::gateway::llm::provider::StreamDelta) + Send + Sync)>,
     ) -> anyhow::Result<ChatResponse> {
         let n = self.calls.fetch_add(1, Ordering::SeqCst);
+        if let Some(trace) = &self.routing_trace {
+            trace.drain(n)?;
+        }
         let prefix = self.artifacts.join(format!("call-{n:02}"));
         std::fs::write(
             prefix.with_extension("request.json"),
@@ -189,11 +193,12 @@ async fn local_model_live_tool_calling() -> anyhow::Result<()> {
     }
     crate::db::memory_profiles::create_profile(&db, &user, &marker)?;
     let provider = ObservedProvider {
-        inner: LlamaCppProvider::new(std::env::var("PRAXIS_LIVE_API_KEY").ok(), model, url),
+        inner: Box::new(LlamaCppProvider::new(std::env::var("PRAXIS_LIVE_API_KEY").ok(), model, url)),
         fixture_file: fixture_file.clone(),
         artifacts: out.clone(),
-        calls: AtomicUsize::new(0),
+        calls: Arc::new(AtomicUsize::new(0)),
         state_user: None,
+        routing_trace: None,
     };
     let state = GatewayState {
         db: db.clone(),

@@ -149,9 +149,16 @@ sample; guards always evaluate current evidence again.
 
 ## Next implementation slices
 
-1. Stronger filesystem isolation for uncooperative concurrent writers.
-2. Plugin effect metadata and typed preconditions/postconditions, with conservative
-   defaults and explicit compensation semantics for non-transactional APIs.
+1. Finish the [four-arm Decision-router experiment](DECISION_ROUTER_EXPERIMENT.md)
+   and compare task behavior, policy compliance and cost on live models.
+2. Generalize named checks and patch receipts into plugin action/effect contracts
+   with typed preconditions/postconditions, idempotency and explicit rollback or
+   compensation semantics. The current host-file implementation is a foundation;
+   a generic plugin contract lifecycle is still missing.
+3. Extend `.sm` guards beyond named checks to general runtime-verified facts and
+   receipts that model-written context cannot forge.
+4. Gradually replace raw terminal orchestration with semantic capabilities.
+5. Evaluate a compact Praxis Decision IR after those semantics and evidence exist.
 
 Run `cargo test --locked --lib action_contract` for the offline contract tests.
 The handler regression `contract_agent_rejects_unverified_completion_then_recovers`
