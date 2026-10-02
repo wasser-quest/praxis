@@ -625,6 +625,7 @@ impl Database {
     fn merge_context_with_actor(&self, user_id: &str, updates: serde_json::Value, from_agent: bool) -> anyhow::Result<Context> {
         anyhow::ensure!(updates.is_object(), "Context updates must be an object");
         let mut ctx = self.load_context(user_id)?;
+        let before_contract_update = ctx.clone();
         let previous_template = ctx.settings.system_template.clone();
         let previous_skill = ctx.settings.active_skill.clone();
         let previous_show_thinking = ctx.settings.show_thinking;
@@ -697,6 +698,7 @@ impl Database {
                 crate::skills::lookup_skill(self, std::path::Path::new("skills"), name)?;
             }
         }
+        if from_agent { crate::gateway::action_contracts::validate_context(&before_contract_update, &ctx)?; }
         self.save_context(&ctx)?;
         Ok(ctx)
     }

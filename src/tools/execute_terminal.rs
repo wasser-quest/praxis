@@ -23,7 +23,7 @@ impl TerminalResult {
 // Per stream, before UTF-8 decoding. Even replacement decoding fits the common
 // 8 MiB response archive. Draining continues after the cap to avoid pipe deadlock.
 const MAX_FOREGROUND_CAPTURE: usize = 1024 * 1024;
-async fn capture(mut stream: impl tokio::io::AsyncRead + Unpin) -> std::io::Result<(String, bool)> {
+pub(crate) async fn capture(mut stream: impl tokio::io::AsyncRead + Unpin) -> std::io::Result<(String, bool)> {
     let mut kept = Vec::new();
     let mut lost = false;
     let mut chunk = [0u8; 8192];

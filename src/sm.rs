@@ -65,6 +65,12 @@ pub struct StateMachine {
     /// Merged into `settings.tool_group_definitions` on every routing pass.
     #[serde(default)]
     pub tool_groups: HashMap<String, Vec<String>>,
+    /// Trusted, named verifier commands. Never populated from model context.
+    #[serde(default)]
+    pub checks: HashMap<String, crate::gateway::action_contracts::CheckContract>,
+    /// Destination state (or `_complete`) -> required current check receipts.
+    #[serde(default)]
+    pub guards: HashMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -189,6 +195,10 @@ pub fn parse(content: &str) -> Result<StateMachine, SmError> {
                     current_state_name = None;
                     current_section = Some("tool_groups".to_string());
                 }
+                "checks" | "guards" => {
+                    current_state_name = None;
+                    current_section = Some(parts[0].to_string());
+                }
                 other => {
                     return Err(SmError::ParseError(format!(
                         "Line {}: Unknown section [{}]",
@@ -259,6 +269,21 @@ pub fn parse(content: &str) -> Result<StateMachine, SmError> {
                     .collect();
                 sm.tool_groups.insert(key, tools);
             }
+            Some("checks") => {
+                let (key, value) = parse_assignment(trimmed, line_num)?;
+                let contract: crate::gateway::action_contracts::CheckContract =
+                    serde_json::from_str(&value).map_err(|e| SmError::ParseError(format!("Line {}: invalid check: {e}", line_num + 1)))?;
+                contract.validate().map_err(|e| SmError::ParseError(e.to_string()))?;
+                if key.is_empty() || !key.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') || sm.checks.insert(key, contract).is_some() {
+                    return Err(SmError::ParseError("Check names must be unique identifiers".into()));
+                }
+            }
+            Some("guards") => {
+                let (key, value) = parse_assignment(trimmed, line_num)?;
+                if !value.starts_with('[') || !value.ends_with(']') || sm.guards.insert(key, parse_array(&value).into_iter().map(|s| s.trim_matches('"').to_string()).collect()).is_some() {
+                    return Err(SmError::ParseError("Guards must be unique arrays of check names".into()));
+                }
+            }
             _ => {
                 if trimmed.contains('=') && !trimmed.contains("->") {
                     let (key, value) = parse_assignment(trimmed, line_num)?;
@@ -272,6 +297,11 @@ pub fn parse(content: &str) -> Result<StateMachine, SmError> {
         }
     }
 
+    for (target, required) in &sm.guards {
+        if (target != "_complete" && (target == "_default" || !sm.states.contains_key(target))) || required.is_empty() || required.iter().any(|name| !sm.checks.contains_key(name)) {
+            return Err(SmError::ParseError(format!("Invalid guard '{target}': expected a state or _complete and declared checks")));
+        }
+    }
     Ok(sm)
 }
 
@@ -865,6 +895,10 @@ pub fn transition_to(
     context: &mut serde_json::Value,
     target_state: &str,
 ) -> bool {
+    let user = context.get("user_id").and_then(|v| v.as_str()).unwrap_or("");
+    if crate::gateway::action_contracts::require_for_workflow(user, sm, target_state).is_err() {
+        return false;
+    }
     if let Some(state) = sm.states.get(target_state) {
         // Persistent skill selection belongs to the user, not automated state
         // transitions (including agent_next and tag-driven transitions).

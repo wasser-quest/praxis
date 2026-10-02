@@ -788,6 +788,14 @@ role: "system".to_string(),
             }
             ctx = state.db.load_context(user_id)?;
             if ctx.settings.done {
+                if let Err(error) = super::action_contracts::require(user_id, "_complete") {
+                    ctx.settings.done = false;
+                    state.db.save_context(&ctx)?;
+                    let mut message = crate::db::messages::Message::assistant(format!("Execution guard rejected completion: {error}"));
+                    message.role = "system".into();
+                    state.db.add_message(user_id, &message)?;
+                    continue;
+                }
                 tracing::info!(user_id, turn, "Current task explicitly marked complete");
                 completed = true;
                 break;
@@ -923,13 +931,26 @@ role: "system".to_string(),
             final_message_id = Some(state.db.add_message(user_id, &msg)?);
         }
 
+        let mut guard_error = None;
+        if completed {
+            if let Err(error) = super::action_contracts::require(user_id, "_complete") {
+                completed = false;
+                guard_error = Some(error.to_string());
+                if let Some(exec) = &mut last_tag_execution { exec.should_complete = false; }
+            }
+        }
         if advanced {
             let sm = sm::load_file(crate::gateway::prompt::workflow_name(&ctx)).map_err(|e| anyhow::anyhow!("{e}"))?;
             let mut value = serde_json::to_value(&ctx)?;
             if let Some(next) = sm::advance_workflow(&sm, &value) {
-                anyhow::ensure!(sm::transition_to(&sm, &mut value, &next), "SM target state does not exist: {next}");
-                ctx = serde_json::from_value(value)?;
-                ctx.settings.active_state = ctx.active_state.clone();
+                match super::action_contracts::require_for_workflow(user_id, &sm, &next) {
+                    Ok(()) => {
+                        anyhow::ensure!(sm::transition_to(&sm, &mut value, &next), "SM target state does not exist: {next}");
+                        ctx = serde_json::from_value(value)?;
+                        ctx.settings.active_state = ctx.active_state.clone();
+                    }
+                    Err(error) => guard_error = Some(error.to_string()),
+                }
             }
             advanced = false;
         }
@@ -938,6 +959,17 @@ role: "system".to_string(),
 
         if completed {
             break;
+        }
+
+        // A plain final answer cannot bypass the completion contract either.
+        if guard_error.is_none() {
+            guard_error = super::action_contracts::require(user_id, "_complete").err().map(|e| e.to_string());
+        }
+        if let Some(error) = guard_error {
+            let mut message = crate::db::messages::Message::assistant(format!("Execution guard rejected completion/transition: {error}"));
+            message.role = "system".into();
+            state.db.add_message(user_id, &message)?;
+            continue;
         }
 
         // Drain all injected user messages and add them for the next turn
@@ -1016,6 +1048,9 @@ async fn execute_tool_call(
         Ok(args) => args,
         Err(error) => return format!("Error: {error}; tool not executed"),
     };
+    if let Err(error) = super::action_contracts::before_tool(user_id, &tc.function.name) {
+        return format!("Error: {error}; tool not executed");
+    }
     let ctx_data = db
         .load_context(user_id)
         .ok()
@@ -1026,6 +1061,8 @@ async fn execute_tool_call(
     let plugin_secrets = plugins.secrets_for_tool(&tc.function.name, &all_secrets);
 
     match tc.function.name.as_str() {
+        "run_check" => super::action_contracts::run(user_id, &tc.id, &args).await
+            .unwrap_or_else(|e| format!("Error: {e}")),
         "read_tool_result" => crate::tools::tool_output::run(db, user_id, &args)
             .unwrap_or_else(|e| format!("Error: {e}")),
         "search_tools" => crate::tools::discovery::search(db, plugins, user_id, &args)

@@ -384,7 +384,10 @@ role: "system".to_string(),
         }
     }
 
-    let reply = response.content.unwrap_or_default();
+    let mut reply = response.content.unwrap_or_default();
+    if let Err(error) = super::action_contracts::require(user_id, "_complete") {
+        reply.push_str(&format!("\n\nTask incomplete — runtime verification required: {error}"));
+    }
 
     let mut msg = crate::db::messages::Message::assistant(reply.clone());
     if cumulative_total_tokens > 0 {
@@ -622,6 +625,9 @@ async fn execute_tool_call(
         Ok(args) => args,
         Err(error) => return format!("Error: {error}; tool not executed"),
     };
+    if let Err(error) = super::action_contracts::before_tool(user_id, &tc.function.name) {
+        return format!("Error: {error}; tool not executed");
+    }
     let ctx_data = db
         .load_context(user_id)
         .ok()
@@ -632,6 +638,8 @@ async fn execute_tool_call(
     let plugin_secrets = plugins.secrets_for_tool(&tc.function.name, &all_secrets);
 
     match tc.function.name.as_str() {
+        "run_check" => super::action_contracts::run(user_id, &tc.id, &args).await
+            .unwrap_or_else(|e| format!("Error: {e}")),
         "read_tool_result" => crate::tools::tool_output::run(db, user_id, &args)
             .unwrap_or_else(|e| format!("Error: {e}")),
         "search_tools" => crate::tools::discovery::search(db, plugins, user_id, &args)

@@ -43,6 +43,13 @@ fn canonical_tool(name: &str) -> Option<&'static crate::db::tools::Tool> {
 
 fn build_registry() -> Vec<ToolMeta> {
     let mut tools = vec![
+        ToolMeta {
+            name: "run_check",
+            description: "Run a named workflow check and record trusted execution evidence",
+            category: ToolCategory::Action,
+            params_schema: crate::gateway::action_contracts::definition().parameters,
+            default_enabled: true,
+        },
         // Action tools
         ToolMeta {
             name: "execute_terminal",

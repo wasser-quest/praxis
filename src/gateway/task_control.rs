@@ -7,6 +7,7 @@ use std::{collections::HashSet, sync::{Arc, Mutex}};
 use tokio_util::sync::CancellationToken;
 
 struct TaskState {
+    verification: Mutex<super::action_contracts::VerificationState>,
     token: CancellationToken,
     tools: Mutex<HashSet<String>>,
     show_thinking: std::sync::atomic::AtomicBool,
@@ -28,6 +29,7 @@ pub fn begin(user: &str) -> anyhow::Result<TaskGuard> {
         ),
         Entry::Vacant(entry) => {
             let state = Arc::new(TaskState {
+                verification: Mutex::new(super::action_contracts::VerificationState::default()),
                 token: CancellationToken::new(),
                 tools: Mutex::new(HashSet::new()),
                 show_thinking: std::sync::atomic::AtomicBool::new(false),
@@ -39,6 +41,12 @@ pub fn begin(user: &str) -> anyhow::Result<TaskGuard> {
             Ok(TaskGuard { user: user.into(), state })
         }
     }
+}
+
+pub(crate) fn with_verification<T>(user: &str, f: impl FnOnce(&mut super::action_contracts::VerificationState) -> anyhow::Result<T>) -> anyhow::Result<T> {
+    let task = TASKS.get(user).ok_or_else(|| anyhow::anyhow!("Verification requires an active task"))?;
+    let mut ledger = task.verification.lock().map_err(|_| anyhow::anyhow!("Verification lock unavailable"))?;
+    f(&mut ledger)
 }
 pub const TEMPLATE_OMITTED_MARKER: &str = "--template not rendered context to big--";
 pub fn claim_decision_entry(user: &str) -> bool {

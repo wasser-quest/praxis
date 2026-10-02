@@ -26,6 +26,9 @@ pub mod prompt;
 pub mod prompt_change;
 pub mod rate_limiter;
 pub mod task_control;
+pub mod action_contracts;
+#[cfg(test)]
+mod action_contract_tests;
 pub mod templates;
 pub mod tool_results;
 pub mod ws_handler;
