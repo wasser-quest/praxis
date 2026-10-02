@@ -74,6 +74,9 @@ pub struct StateMachine {
     /// Destination -> task-owned, verified plugin capability receipts.
     #[serde(default)]
     pub action_guards: HashMap<String, Vec<String>>,
+    /// Trusted Decision IR opcode -> native tool or plugin/tool capability.
+    #[serde(default)]
+    pub decision_ir: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -198,7 +201,7 @@ pub fn parse(content: &str) -> Result<StateMachine, SmError> {
                     current_state_name = None;
                     current_section = Some("tool_groups".to_string());
                 }
-                "checks" | "guards" | "action_guards" => {
+                "checks" | "guards" | "action_guards" | "decision_ir" => {
                     current_state_name = None;
                     current_section = Some(parts[0].to_string());
                 }
@@ -286,6 +289,15 @@ pub fn parse(content: &str) -> Result<StateMachine, SmError> {
                 let names: Vec<String> = parse_array(&value).into_iter().map(|s| s.trim_matches('"').to_string()).collect();
                 if !value.starts_with('[') || !value.ends_with(']') || sm.action_guards.insert(key, names).is_some() {
                     return Err(SmError::ParseError("Action guards must be unique arrays of plugin/tool names".into()));
+                }
+            }
+            Some("decision_ir") => {
+                let (key, value) = parse_assignment(trimmed, line_num)?;
+                let target = value.trim_matches('"').to_string();
+                if !crate::gateway::decision_ir::valid_mapping(&key, &target)
+                    || sm.decision_ir.len() >= 26
+                    || sm.decision_ir.insert(key, target).is_some() {
+                    return Err(SmError::ParseError("Decision IR requires unique A..Z opcodes mapped to inspect_file, agent_complete or plugin/tool capabilities".into()));
                 }
             }
             Some("guards") => {

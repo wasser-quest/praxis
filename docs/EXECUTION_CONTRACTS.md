@@ -161,8 +161,10 @@ The physical canonical root and action definitions are pinned for each task.
 The user accepted the live three-task/four-arm Ollama pilot as functional routing
 evidence. It does not establish a quality benefit; broader evaluation and observer
 fixes remain separate. Next execution work is richer dynamic verified facts,
-additional adapters and remote reconciliation, broader migration from raw shell
-orchestration, then compact Praxis Decision IR. Generic compensation does not
+additional adapters and remote reconciliation, and broader migration from raw shell
+orchestration. [Praxis Decision IR v1](DECISION_IR.md) and native `modify_source`
+now support the verified source-edit/build/test loop through workflow-pinned
+opcodes. Generic compensation does not
 replace the durable native file-patch journal.
 
 Run `cargo test --locked --lib action_contract` for the offline contract tests.

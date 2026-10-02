@@ -34,6 +34,11 @@ install or run itself. Upgrading from plugin v1.0 only requires replacing the
 manifest and restarting; the former request script is no longer used. Start a
 new task after changing the pinned workflow or capability definitions.
 
+Plugin v1.2 also provides native transactional `modify_source`. Select
+`verified-implementation` to require a source-edit receipt together with build
+and test receipts, and optionally call those capabilities through compact IR.
+See [Decision IR and native source edits](DECISION_IR.md) for setup and examples.
+
 ## Manifest
 
 ```json
@@ -69,7 +74,8 @@ new task after changing the pinned workflow or capability definitions.
 
 This illustrates the declaration; adapter scripts and safe snapshot handling
 must be supplied by the plugin author. Use Praxis's existing `apply_patch` for
-durable transactional host-file edits with expected hashes and crash recovery.
+durable transactional host-file edits with expected hashes and crash recovery,
+or the native `source_edit` adapter for one existing source file.
 Check `cwd` and arguments are relative to the project root, not the plugin
 folder; installed handler and compensation script paths resolve from the plugin
 folder. No model input interpolates check commands.
@@ -92,7 +98,7 @@ The initial input schema supports a closed flat object with string, boolean,
 integer and number properties, required fields, enums, string length bounds
 and numeric bounds. Unsupported nested schemas/keywords fail closed.
 Inputs are checked before effects; model-supplied contracts are rejected as
-undeclared fields. Script, HTTP GET/POST and native verification handlers are
+undeclared fields. Script, HTTP GET/POST, native verification and native source-edit handlers are
 supported. Other builtin handlers still require a semantic adapter. Contract names use ASCII
 letters/digits/underscore/hyphen, with at most 128 bytes per identifier.
 
@@ -120,6 +126,17 @@ condition output determine success. Failed reruns revoke prior action evidence.
 Verification programs may write generated artifacts/caches outside declared
 logical source scopes. The author remains responsible for choosing appropriate
 programs and capturing every relevant build input.
+
+## Native source-edit adapter
+
+Use `"handler":{"type":"source_edit"}` with `workspace_write`,
+`non_idempotent`, and exactly `path`, `expected_sha256`, `content` string inputs.
+It shares the durable patch journal and publishes a normal action receipt only
+after commit. Failed checks, cancellation and a dropped future trigger native
+rollback; conflicting external edits remain preserved. Generic compensation is
+not permitted. Trusted checks may use an exact `{source_path}` argument for the
+validated absolute file path. See the
+[source-edit contract and limits](DECISION_IR.md#native-source-edits).
 
 ## Receipts and guards
 
@@ -149,6 +166,8 @@ separate under `result`; a handler printing `verified:true` cannot publish proof
 | `failed` | Attempted action failed; no configured compensation. |
 | `compensated` | Failed action cleanup independently checked; original action remains unverified. |
 | `compensation_failed` | Cleanup failed or its effects remain uncertain; incomplete. |
+| `rolled_back` | Native source edit restored; original action remains unverified. |
+| `rollback_conflict` | Native restoration conflicts with an external edit; incomplete. |
 
 The live authority ledger belongs to the task, outside editable model/context
 data. Contract definitions and the canonical physical root are pinned. Call IDs
@@ -178,12 +197,14 @@ timeouts. See existing [freshness limits](EXECUTION_CONTRACTS.md).
 Generic compensation is not an atomic transaction and does not provide durable
 crash recovery or cleanup after a dropped execution future. An interrupted task
 cannot produce passing proof. The native `apply_patch` journal remains the
-durable host-file mechanism. External timeout/cancellation/handler errors may
+durable host-file mechanism, also reused by native source edits. External timeout/cancellation/handler errors may
 finish remotely after cleanup; those remain `compensation_failed`, even if local
 cleanup checks pass. Remote reconciliation needs a future domain adapter.
 
-Next: richer verified facts, additional semantic adapters, gradual migration of
-raw terminal workflows, then the compact Praxis Decision IR. The build/test example is a first migration; other workflows and capabilities
+The initial [Praxis Decision IR](DECISION_IR.md) lowers compact instructions
+to the same verified capability execution. Next: richer verified facts,
+additional adapters and gradual migration of raw terminal workflows.
+The source/build/test example is a first migration; other workflows and capabilities
 still need their own adapters.
 
 Validation: `cargo test --locked --lib capability_`. Include ignored tests with a

@@ -143,6 +143,7 @@ pub struct VerificationState {
     actions: HashMap<String, ActionEvidence>,
     action_pins: HashMap<String, String>,
     action_calls: HashSet<String>,
+    decision_ir: HashMap<String, String>,
 }
 impl VerificationState {
     pub(crate) fn bind(
@@ -154,6 +155,7 @@ impl VerificationState {
         if sm.checks.is_empty()
             && sm.guards.is_empty()
             && sm.action_guards.is_empty()
+            && sm.decision_ir.is_empty()
             && self.policy.is_none()
         {
             return Ok(());
@@ -161,11 +163,12 @@ impl VerificationState {
         let root = root.canonicalize()?;
         anyhow::ensure!(root.is_dir(), "Verification root must be a directory");
         if let Some((name, checks, guards, pinned)) = &self.policy {
-            anyhow::ensure!(name == workflow && checks == &sm.checks && guards == &sm.guards && self.action_guards == sm.action_guards && pinned == &root,
+            anyhow::ensure!(name == workflow && checks == &sm.checks && guards == &sm.guards && self.action_guards == sm.action_guards && self.decision_ir == sm.decision_ir && pinned == &root,
                 "Action-contract policy and root are pinned for this task; changes require a new task");
         } else {
             self.task_id = uuid::Uuid::new_v4().to_string();
             self.action_guards = sm.action_guards.clone();
+            self.decision_ir = sm.decision_ir.clone();
             self.policy = Some((workflow.into(), sm.checks.clone(), sm.guards.clone(), root));
         }
         Ok(())
@@ -310,6 +313,15 @@ pub(crate) fn action_root(user: &str) -> anyhow::Result<PathBuf> {
             })
     })
 }
+pub(crate) fn decision_ir_mapping(user: &str) -> anyhow::Result<HashMap<String, String>> {
+    task_control::with_verification(user, |ledger| {
+        anyhow::ensure!(
+            ledger.policy.is_some() && !ledger.decision_ir.is_empty(),
+            "Decision IR requires a pinned workflow [decision_ir] section"
+        );
+        Ok(ledger.decision_ir.clone())
+    })
+}
 pub(crate) fn start_action(
     user: &str,
     call: &str,
@@ -356,6 +368,19 @@ pub(crate) fn publish_action(
     checks: &[CheckContract],
     evidence: &[CheckEvidence],
 ) -> anyhow::Result<()> {
+    publish_action_finalized(user, ticket, receipt, checks, evidence, || Ok(()))
+}
+
+/// Publish native transactional evidence only after durable commit. The task
+/// lock protects identity through finalization; failures leave rollback armed.
+pub(crate) fn publish_action_finalized(
+    user: &str,
+    ticket: &ActionTicket,
+    receipt: &crate::plugins::contracts::ActionReceipt,
+    checks: &[CheckContract],
+    evidence: &[CheckEvidence],
+    finalize: impl FnOnce() -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
     let cancel =
         task_control::cancellation(user).ok_or_else(|| anyhow::anyhow!("Task cancelled"))?;
     anyhow::ensure!(!cancel.is_cancelled(), "Task cancelled");
@@ -382,6 +407,17 @@ pub(crate) fn publish_action(
                     == receipt.workspace_revision
                 && !cancel.is_cancelled(),
             "Capability evidence is stale"
+        );
+        finalize()?;
+        anyhow::ensure!(
+            !cancel.is_cancelled()
+                && checks
+                    .iter()
+                    .zip(evidence)
+                    .all(|(check, snapshot)| snapshot.current(check, root))
+                && crate::tools::apply_patch::journal::workspace_revision(root)?
+                    == receipt.workspace_revision,
+            "Capability evidence changed during commit"
         );
         let mut authority = receipt.clone();
         authority.conditions.clear(); // tool archive owns diagnostics; ledger stores authority only
@@ -626,7 +662,7 @@ pub fn instructions(user: &str) -> String {
             Some((_, checks, guards, _)) => format!("\n\n[EXECUTION CONTRACTS]\nAvailable run_check names: {:?}. Required checks by destination (_complete means completion): {:?}. Only runtime receipts authorize these transitions. Run checks after your last mutation. Declared resource changes, including external edits, invalidate evidence; rerun the affected checks. On Unix, any transactional patch or pending-journal recovery for this root invalidates prior receipts across Praxis processes, including checks without resource scopes; rerun all required checks. For controlled host edits use inspect_file to obtain expected_sha256, then apply_patch with edits and named checks. Only a committed patch publishes passing evidence; rolled_back or rollback_conflict means incomplete work. Missing evidence blocks completion; report incomplete work honestly.\n", checks.keys().collect::<Vec<_>>(), guards) + &format!("Required capabilities by destination: {:?}. Only committed, task-owned action receipts authorize these guards; handler claims and compensated failures cannot. Shared workspace changes invalidate action evidence.\n", ledger.action_guards),
             None => String::new(),
         })
-    }).unwrap_or_default()
+    }).unwrap_or_default() + &super::decision_ir::instructions(user)
 }
 
 pub async fn run(user: &str, call: &str, args: &serde_json::Value) -> anyhow::Result<String> {

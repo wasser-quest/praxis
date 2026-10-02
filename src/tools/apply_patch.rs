@@ -1,6 +1,7 @@
 //! Bounded file compensation with a private write-ahead journal; not a sandbox.
 //! Each file is published with rename; the batch is not atomically visible.
 pub(crate) mod journal;
+pub(crate) mod source_edit;
 #[cfg(all(test, unix))]
 mod recovery_tests;
 #[cfg(all(test, unix))]

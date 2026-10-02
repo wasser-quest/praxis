@@ -182,6 +182,7 @@ pub(crate) fn get_default_tools() -> Vec<Tool> {
     vec![
         crate::gateway::action_contracts::definition(),
         crate::tools::apply_patch::definition(),
+        crate::gateway::decision_ir::definition(),
         crate::tools::apply_patch::inspect_definition(),
         crate::tools::tool_output::definition(),
         Tool {

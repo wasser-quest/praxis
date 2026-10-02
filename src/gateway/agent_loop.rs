@@ -574,9 +574,12 @@ role: "system".to_string(),
                     let args_preview: serde_json::Value =
                         serde_json::from_str(&tc.function.arguments).unwrap_or_default();
                     let preview = match tc.function.name.as_str() {
-                        "write_file" | "edit_file" => serde_json::json!({
+                        "write_file" | "edit_file" | "modify_source" => serde_json::json!({
                             "path": args_preview.get("path").cloned().unwrap_or_default(),
                             "content_bytes": tc.function.arguments.len(),
+                        }),
+                        "execute_decision" => serde_json::json!({
+                            "ir_bytes": args_preview.get("ir").and_then(serde_json::Value::as_str).map(str::len),
                         }),
                         "read_file" | "get_context" | "rag_search" => serde_json::json!({
                             "path": args_preview.get("path").cloned().unwrap_or_default(),
@@ -1038,6 +1041,15 @@ async fn execute_tool_call(
     plugins: &crate::plugins::PluginRegistry,
 ) -> String {
     tracing::info!(tool = %tc.function.name, args_bytes = tc.function.arguments.len(), "execute_tool_call: dispatching");
+
+    let resolved;
+    let tc = if tc.function.name == "execute_decision" {
+        resolved = match super::decision_ir::resolve(db, user_id, tc, plugins) {
+            Ok(call) => call,
+            Err(error) => return format!("Error: {error}; decision not executed"),
+        };
+        &resolved
+    } else { tc };
 
     let args: serde_json::Value = match serde_json::from_str(&tc.function.arguments) {
         Ok(v) => v,

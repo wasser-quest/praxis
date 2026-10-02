@@ -1,0 +1,20 @@
+@name verified-implementation
+@version 1.0
+@steps [working, done]
+
+[state working]
+settings.activated_tools = ["execute_decision", "inspect_file", "modify_source", "build_workspace", "run_workspace_tests", "agent_complete", "get_context", "read_tool_result"]
+
+[state done]
+settings.activated_tools = ["execute_decision", "agent_complete", "get_context", "read_tool_result"]
+
+[decision_ir]
+R = inspect_file
+M = verified_rust/modify_source
+B = verified_rust/build_workspace
+T = verified_rust/run_workspace_tests
+C = agent_complete
+
+[action_guards]
+done = [verified_rust/modify_source, verified_rust/build_workspace, verified_rust/run_workspace_tests]
+_complete = [verified_rust/modify_source, verified_rust/build_workspace, verified_rust/run_workspace_tests]

@@ -27,6 +27,7 @@ pub mod prompt_change;
 pub mod rate_limiter;
 pub mod task_control;
 pub mod action_contracts;
+pub mod decision_ir;
 pub(crate) mod resource_snapshots;
 #[cfg(test)]
 mod action_contract_tests;

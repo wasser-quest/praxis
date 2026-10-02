@@ -92,7 +92,7 @@ pub(crate) fn identifier(value: &str) -> bool {
 }
 fn validate_handler(handler: &PluginHandler) -> anyhow::Result<()> {
     match handler {
-        PluginHandler::Verification(_) => {}
+        PluginHandler::Verification(_) | PluginHandler::SourceEdit(_) => {}
         PluginHandler::Script { path, interpreter } => anyhow::ensure!(
             !path.is_empty()
                 && !path.contains('\0')
@@ -134,8 +134,11 @@ fn validate_checks(checks: &[CheckContract], required: bool) -> anyhow::Result<(
 pub(crate) fn validate_tool(plugin: &str, tool: &PluginTool) -> anyhow::Result<()> {
     let Some(contract) = &tool.contract else {
         anyhow::ensure!(
-            !matches!(&tool.handler, PluginHandler::Verification(_)),
-            "Native verification requires an action contract"
+            !matches!(
+                &tool.handler,
+                PluginHandler::Verification(_) | PluginHandler::SourceEdit(_)
+            ),
+            "Native adapters require an action contract"
         );
         return Ok(());
     };
@@ -143,6 +146,30 @@ pub(crate) fn validate_tool(plugin: &str, tool: &PluginTool) -> anyhow::Result<(
         anyhow::ensure!(
             contract.effect == EffectClass::Verification,
             "Native verification requires effect=verification"
+        );
+    }
+    if matches!(&tool.handler, PluginHandler::SourceEdit(_)) {
+        anyhow::ensure!(
+            contract.effect == EffectClass::WorkspaceWrite
+                && contract.idempotency == Idempotency::NonIdempotent
+                && contract.compensation.is_none(),
+            "Native source edits require workspace_write, non_idempotent and native rollback"
+        );
+        let fields = ["path", "expected_sha256", "content"];
+        anyhow::ensure!(
+            tool.parameters["properties"]
+                .as_object()
+                .is_some_and(|props| props.len() == fields.len()
+                    && fields
+                        .iter()
+                        .all(|key| props.get(*key).is_some_and(|s| s["type"] == "string")))
+                && tool.parameters["required"]
+                    .as_array()
+                    .is_some_and(|required| required.len() == fields.len()
+                        && fields
+                            .iter()
+                            .all(|key| required.contains(&Value::String((*key).into())))),
+            "Native source edit input requires exactly path, expected_sha256 and content strings"
         );
     }
     anyhow::ensure!(
@@ -158,8 +185,11 @@ pub(crate) fn validate_tool(plugin: &str, tool: &PluginTool) -> anyhow::Result<(
     validate_checks(&contract.postconditions, true)?;
     if let Some(cleanup) = &contract.compensation {
         anyhow::ensure!(
-            !matches!(&cleanup.handler, PluginHandler::Verification(_)),
-            "Native verification cannot perform compensation"
+            !matches!(
+                &cleanup.handler,
+                PluginHandler::Verification(_) | PluginHandler::SourceEdit(_)
+            ),
+            "Native adapters cannot perform compensation"
         );
         anyhow::ensure!(
             contract.effect.mutates() && (1..=300).contains(&cleanup.timeout_secs),
@@ -312,7 +342,7 @@ fn truncate(text: &mut String) -> bool {
     text.truncate(end);
     lost
 }
-async fn conditions(
+pub(crate) async fn conditions(
     checks: &[CheckContract],
     phase: &'static str,
     root: &Path,
@@ -376,6 +406,9 @@ pub(crate) async fn execute(
         .contract
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("Missing capability contract"))?;
+    if matches!(&tool.handler, PluginHandler::SourceEdit(_)) {
+        return crate::tools::apply_patch::source_edit::run(plugin, tool, user, call, args).await;
+    }
     let cancel = task_control::cancellation(user)
         .ok_or_else(|| anyhow::anyhow!("Capability requires an active task"))?;
     anyhow::ensure!(!cancel.is_cancelled(), "Task cancelled");
@@ -385,34 +418,7 @@ pub(crate) async fn execute(
     if contract.effect.mutates() {
         task_control::invalidate_workspace(&root)?;
     }
-    let key = format!("{}/{}", plugin.name, tool.name);
-    let fingerprint = format!(
-        "{:x}",
-        Sha256::digest(serde_json::to_vec(&(
-            plugin.name.as_str(),
-            plugin.version.as_str(),
-            tool
-        ))?)
-    );
-    let ticket = action_contracts::start_action(user, call, &key, &fingerprint)?;
-    let mut receipt = ActionReceipt {
-        id: uuid::Uuid::new_v4().to_string(),
-        task_id: ticket.task_id.clone(),
-        call_id: call.into(),
-        action: key,
-        contract_sha256: fingerprint,
-        effect: contract.effect,
-        idempotency: contract.idempotency,
-        revision: ticket.revision,
-        workspace_revision: None,
-        attempted: false,
-        outcome: "precondition_failed",
-        failure: None,
-        verified: false,
-        compensation_attempted: false,
-        compensation_verified: false,
-        conditions: Vec::new(),
-    };
+    let (ticket, mut receipt) = start_receipt(plugin, tool, user, call)?;
     let scoped: HashMap<String, String> = plugin
         .secrets
         .iter()
@@ -512,6 +518,47 @@ pub(crate) async fn execute(
     Ok(serde_json::json!({"receipt":receipt,"result":result}).to_string())
 }
 
+pub(crate) fn start_receipt(
+    plugin: &Plugin,
+    tool: &PluginTool,
+    user: &str,
+    call: &str,
+) -> anyhow::Result<(action_contracts::ActionTicket, ActionReceipt)> {
+    let contract = tool
+        .contract
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("Missing capability contract"))?;
+    let key = format!("{}/{}", plugin.name, tool.name);
+    let fingerprint = format!(
+        "{:x}",
+        Sha256::digest(serde_json::to_vec(&(
+            plugin.name.as_str(),
+            plugin.version.as_str(),
+            tool
+        ))?)
+    );
+    let ticket = action_contracts::start_action(user, call, &key, &fingerprint)?;
+    let receipt = ActionReceipt {
+        id: uuid::Uuid::new_v4().to_string(),
+        task_id: ticket.task_id.clone(),
+        call_id: call.into(),
+        action: key,
+        contract_sha256: fingerprint,
+        effect: contract.effect,
+        idempotency: contract.idempotency,
+        revision: ticket.revision,
+        workspace_revision: None,
+        attempted: false,
+        outcome: "precondition_failed",
+        failure: None,
+        verified: false,
+        compensation_attempted: false,
+        compensation_verified: false,
+        conditions: Vec::new(),
+    };
+    Ok((ticket, receipt))
+}
+
 async fn handler(
     handler: &PluginHandler,
     args: &Value,
@@ -524,6 +571,7 @@ async fn handler(
         // exactly once in the shared lifecycle; only their fresh receipts prove
         // success. This acknowledgement carries no verification authority.
         PluginHandler::Verification(_) => Ok(serde_json::json!({"requested":true})),
+        PluginHandler::SourceEdit(_) => Err("handler_failed"), // native transaction dispatch only
         PluginHandler::Http { url, method } => {
             let client = reqwest::Client::builder()
                 .redirect(reqwest::redirect::Policy::none())

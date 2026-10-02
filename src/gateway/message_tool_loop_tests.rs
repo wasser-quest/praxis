@@ -272,6 +272,217 @@ fn assert_paired_history(state: &GatewayState, user: &str, expected_calls: usize
 
 #[cfg(unix)]
 #[tokio::test]
+#[ignore = "Requires real POML; local postcondition processes and model are offline"]
+async fn decision_ir_source_rollback_then_verified_completion_in_chat_and_agent() {
+    let source = tempfile::Builder::new()
+        .prefix("ir-source-")
+        .tempfile_in(".")
+        .unwrap();
+    let path = source.path().file_name().unwrap().to_str().unwrap();
+    let workflow = tempfile::Builder::new()
+        .prefix("ir-workflow-")
+        .suffix(".sm")
+        .tempfile_in("contexts")
+        .unwrap();
+    std::fs::write(workflow.path(), "@steps [working, done]\n[state working]\nsettings.activated_tools = [\"execute_decision\",\"inspect_file\",\"modify_source\",\"build_project\",\"run_tests\",\"agent_complete\"]\n[state done]\nsettings.activated_tools = [\"execute_decision\",\"agent_complete\"]\n[decision_ir]\nR = inspect_file\nM = native/modify_source\nB = native/build_project\nT = native/run_tests\nC = agent_complete\n[action_guards]\n_complete = [native/modify_source, native/build_project, native/run_tests]\n").unwrap();
+    for flow in ["message", "agent"] {
+        std::fs::write(source.path(), "old").unwrap();
+        let ir = |id: &str, instruction: String| {
+            call(
+                id,
+                "execute_decision",
+                serde_json::json!({"ir":instruction}),
+            )
+        };
+        let edit = |content: &str| {
+            format!(
+                "1 M {}",
+                serde_json::json!({"path":path,"expected_sha256":crate::tools::apply_patch::hash(b"old"),"content":content})
+            )
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let (mut state, user, requests) = fixture(
+            dir.path(),
+            vec![
+                Step::Reply(reply(None, vec![ir("early-complete", "1 C".into())])),
+                Step::Reply(reply(
+                    None,
+                    vec![ir(
+                        "inspect",
+                        format!("1 R {}", serde_json::json!({"path":path})),
+                    )],
+                )),
+                Step::Reply(reply(None, vec![ir("bad-edit", edit("bad"))])),
+                Step::Reply(reply(None, vec![ir("good-edit", edit("good"))])),
+                Step::Reply(reply(None, vec![ir("edit-only-complete", "1 C".into())])),
+                Step::Reply(reply(None, vec![ir("build", "1 B".into())])),
+                Step::Reply(reply(None, vec![ir("build-only-complete", "1 C".into())])),
+                Step::Reply(reply(None, vec![ir("tests", "1 T".into())])),
+                Step::Reply(reply(
+                    Some("Verified IR implementation. [[AGENT:COMPLETE]]"),
+                    vec![],
+                )),
+            ],
+        );
+        let mut tools:Vec<_> = ["build_project","run_tests"].into_iter().map(|name| serde_json::json!({
+            "name":name,"description":name,"parameters":{"type":"object","properties":{},"additionalProperties":false},
+            "handler":{"type":"verification"},
+            "contract":{"effect":"verification","idempotency":"idempotent","timeout_secs":5,"postconditions":[{"program":"/bin/true","resources":[path]}]}
+        })).collect();
+        tools.push(serde_json::json!({"name":"modify_source","description":"edit","handler":{"type":"source_edit"},
+            "parameters":{"type":"object","properties":{"path":{"type":"string"},"expected_sha256":{"type":"string"},"content":{"type":"string"}},"required":["path","expected_sha256","content"],"additionalProperties":false},
+            "contract":{"effect":"workspace_write","idempotency":"non_idempotent","timeout_secs":5,"postconditions":[{"program":"/bin/sh","args":["-c",format!("test \"$(cat {path})\" = good")],"resources":[path]}]}
+        }));
+        let mut registry = crate::plugins::PluginRegistry::new();
+        registry.register(serde_json::from_value(serde_json::json!({"name":"native","description":"native","version":"1","tools":tools})).unwrap());
+        state.plugins = Arc::new(registry);
+        state.db.merge_context(&user,serde_json::json!({"settings.sm_file":workflow.path().file_stem().unwrap().to_str().unwrap(),"settings.max_llm_turns":if flow=="message"{1}else{12},"settings.max_tool_calls":12,"settings.compaction_enabled":false})).unwrap();
+        let response = if flow == "message" {
+            handle_message(
+                &state,
+                &user,
+                "Implement with verified capabilities.",
+                Some("web"),
+            )
+            .await
+            .unwrap()
+        } else {
+            let result = crate::gateway::agent_loop::run_agent_loop(
+                &state,
+                &user,
+                "Implement with verified capabilities.",
+                Default::default(),
+                None,
+            )
+            .await
+            .unwrap();
+            assert!(result.completed);
+            result.response
+        };
+        assert!(
+            response.contains("Verified IR implementation"),
+            "{flow}: {response}"
+        );
+        assert_eq!(std::fs::read(source.path()).unwrap(), b"good");
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 9, "{flow}");
+        assert!(requests[0].messages[0]
+            .content
+            .as_deref()
+            .unwrap()
+            .contains("[DECISION IR]"));
+        let history = state.db.get_messages(&user, 100).unwrap();
+        for id in [
+            "early-complete",
+            "edit-only-complete",
+            "build-only-complete",
+        ] {
+            assert!(
+                history
+                    .iter()
+                    .find(|m| m.tool_call_id.as_deref() == Some(id))
+                    .unwrap()
+                    .content
+                    .contains("requires current verified capabilities"),
+                "{flow}: {id}"
+            );
+        }
+        for (id, outcome) in [
+            ("bad-edit", "rolled_back"),
+            ("good-edit", "committed"),
+            ("build", "committed"),
+            ("tests", "committed"),
+        ] {
+            let message = history
+                .iter()
+                .find(|m| m.tool_call_id.as_deref() == Some(id))
+                .unwrap();
+            assert_eq!(message.tool_name.as_deref(), Some("execute_decision"));
+            let data: serde_json::Value = serde_json::from_str(&message.content).unwrap();
+            assert_eq!(data["receipt"]["outcome"], outcome, "{flow}: {id}");
+            assert_eq!(data["receipt"]["call_id"], id);
+        }
+        assert!(crate::gateway::task_control::cancellation(&user).is_none());
+    }
+    workflow.close().unwrap();
+    source.close().unwrap();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+#[ignore = "Requires real POML; offline model and local process counter"]
+async fn decision_ir_instructions_obey_the_existing_tool_budget() {
+    let counter = tempfile::Builder::new()
+        .prefix("ir-counter-")
+        .tempfile_in(".")
+        .unwrap();
+    let path = counter.path().file_name().unwrap().to_str().unwrap();
+    let workflow = tempfile::Builder::new()
+        .prefix("ir-budget-")
+        .suffix(".sm")
+        .tempfile_in("contexts")
+        .unwrap();
+    std::fs::write(workflow.path(),"[state working]\nsettings.activated_tools = [\"execute_decision\",\"count_operation\"]\n[decision_ir]\nT = native/count_operation\n").unwrap();
+    for flow in ["message", "agent"] {
+        std::fs::write(counter.path(), "").unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let (mut state, user, _requests) = fixture(
+            dir.path(),
+            vec![
+                Step::Reply(reply(
+                    None,
+                    vec![
+                        call("first", "execute_decision", serde_json::json!({"ir":"1 T"})),
+                        call(
+                            "second",
+                            "execute_decision",
+                            serde_json::json!({"ir":"1 T"}),
+                        ),
+                    ],
+                )),
+                Step::Reply(reply(Some("Stopped at the tool budget."), vec![])),
+            ],
+        );
+        let mut registry = crate::plugins::PluginRegistry::new();
+        registry.register(serde_json::from_value(serde_json::json!({"name":"native","description":"native","version":"1","tools":[{
+            "name":"count_operation","description":"counter","handler":{"type":"verification"},"parameters":{"type":"object","properties":{},"additionalProperties":false},
+            "contract":{"effect":"verification","idempotency":"idempotent","timeout_secs":5,"postconditions":[{"program":"/bin/sh","args":["-c",format!("printf x >> {path}")]}]}
+        }]})).unwrap());
+        state.plugins = Arc::new(registry);
+        state.db.merge_context(&user,serde_json::json!({"settings.sm_file":workflow.path().file_stem().unwrap().to_str().unwrap(),"settings.max_llm_turns":if flow=="message"{1}else{3},"settings.max_tool_calls":1,"settings.compaction_enabled":false})).unwrap();
+        if flow == "message" {
+            handle_message(&state, &user, "Execute within the budget.", None)
+                .await
+                .unwrap();
+        } else {
+            crate::gateway::agent_loop::run_agent_loop(
+                &state,
+                &user,
+                "Execute within the budget.",
+                Default::default(),
+                None,
+            )
+            .await
+            .unwrap();
+        }
+        assert_eq!(std::fs::read(counter.path()).unwrap(), b"x", "{flow}");
+        let history = state.db.get_messages(&user, 100).unwrap();
+        let skipped = &history
+            .iter()
+            .find(|m| m.tool_call_id.as_deref() == Some("second"))
+            .unwrap()
+            .content;
+        assert!(
+            skipped.starts_with("Error:") && skipped.contains("tool not executed"),
+            "{flow}: {skipped}"
+        );
+    }
+    workflow.close().unwrap();
+    counter.close().unwrap();
+}
+
+#[cfg(unix)]
+#[tokio::test]
 #[ignore = "Requires the real Microsoft POML CLI; model, handler and checks are offline"]
 async fn capability_agent_requires_receipt_then_recovers_with_real_plugin() {
     let workflow = tempfile::Builder::new().prefix("capability-workflow-").suffix(".sm").tempfile_in("contexts").unwrap();
