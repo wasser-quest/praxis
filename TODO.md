@@ -9,12 +9,22 @@
 - [x] Configurable tag prefix (`settings.tag_prefix`)
 - [x] Free router integration (`settings.use_freerouter`)
 - [x] Decision routing (pre-request, CAS commit, failure-safe)
-- [x] 20-task experiment with 4 arms (5/20 tasks done, decision arm works)
+- [x] Four-arm experiment runner and offline evidence-scoring validation (live comparison remains open)
 - [x] Context compaction before requests (shared service)
 
 ## In Progress 🔄
-- [ ] Complete 20-task × 4-arm experiment (15 tasks remaining: 06-20)
-- [ ] Run decision arm on all 20 tasks
+- [ ] Recover and validate the historical 5/20-task checkpoint and its original runtime snapshot
+- [ ] Complete the paired 20-task × 4-arm live comparison; keep historical and v2 measurements separate
+- [ ] Review quality, policy compliance and cost against fixed/entry/continuous before claiming Decision benefit
+
+### Verified Execution — next sequence
+- [x] Named-check receipts, guarded transitions/completion and transactional host-file patches
+- [ ] Generic plugin action/effect contracts with preconditions, postconditions, idempotency and compensation
+- [ ] General runtime-verified facts/receipts in `.sm` transition guards
+- [ ] Semantic capabilities replacing raw terminal orchestration gradually
+- [ ] Compact Praxis Decision IR after execution semantics and evaluation evidence
+
+Protocol and current evidence: [Decision-router experiment](docs/DECISION_ROUTER_EXPERIMENT.md).
 
 ## Not Started ❌
 ### Trusted-Template Lifecycle Actions
@@ -42,8 +52,9 @@
 - [ ] Archive artifacts outside `/tmp`
 
 ## Notes
-- Decision server: `http://100.105.88.246:11440` (qwen3-1.7B, working)
-- Chat model: `http://100.105.88.246:11435` (qwen3.8-27B, working)
-- pgpu router: `http://100.105.88.246:8080` (slot 1 healthy)
+- Historical Decision server: `http://100.105.88.246:11440` (qwen3-1.7B)
+- Historical chat model: `http://100.105.88.246:11435` (qwen3.8-27B)
+- Historical pgpu router: `http://100.105.88.246:8080` (slot 1)
+- Solver/Decision reachability from the current workspace failed on 2026-10-02; historical healthy status is not current validation.
 - Benchmark artifacts: `/tmp/praxis-live-baseline-9uao6aup/`
 - State experiment: `/tmp/praxis-live-baseline-9uao6aup/state-experiment-4arm/`
