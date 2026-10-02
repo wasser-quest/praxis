@@ -44,6 +44,20 @@ fn canonical_tool(name: &str) -> Option<&'static crate::db::tools::Tool> {
 fn build_registry() -> Vec<ToolMeta> {
     let mut tools = vec![
         ToolMeta {
+            name: "apply_patch",
+            description: "Apply scoped file edits with expected hashes, trusted checks and rollback",
+            category: ToolCategory::Action,
+            params_schema: crate::tools::apply_patch::definition().parameters,
+            default_enabled: true,
+        },
+        ToolMeta {
+            name: "inspect_file",
+            description: "Inspect a scoped file and get its content hash for transactional edits",
+            category: ToolCategory::Action,
+            params_schema: crate::tools::apply_patch::inspect_definition().parameters,
+            default_enabled: true,
+        },
+        ToolMeta {
             name: "run_check",
             description: "Run a named workflow check and record trusted execution evidence",
             category: ToolCategory::Action,

@@ -1,9 +1,11 @@
-# Execution contracts: first slice
+# Execution contracts
 
 Praxis can now require **runtime-produced evidence** before entering a workflow
 state or completing a task. This is opt-in; existing workflows have no guards.
 Select `verified-coding` as the workflow to try the bundled example when running
 Praxis from its Rust project root. Adapt commands and `cwd` for your workspace.
+For scoped file edits with expected hashes and automatic compensation, see
+[transactional patches](TRANSACTIONAL_PATCHES.md).
 
 ```text
 [checks]
@@ -70,10 +72,10 @@ relative to observed tool execution, not a filesystem snapshot or content hash.
 
 ## Next implementation slices
 
-1. Transactional `apply_patch` capability: scoped paths, expected content hashes,
-   snapshot, atomic apply and restoration on failed postconditions.
-2. Resource-bound receipts: bind checks to an immutable tree hash and reject
+1. Resource-bound receipts: bind checks to an immutable tree hash and reject
    external/concurrent edits, including background work.
+2. Durable recovery of interrupted file transactions and stronger filesystem
+   isolation for concurrent writers.
 3. Plugin effect metadata and typed preconditions/postconditions, with conservative
    defaults and explicit compensation semantics for non-transactional APIs.
 

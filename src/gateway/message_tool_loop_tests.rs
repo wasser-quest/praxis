@@ -48,6 +48,53 @@ async fn decision_routing_rerenders_before_chat_and_agent_requests() {
     }
 }
 
+#[cfg(unix)]
+#[tokio::test]
+#[ignore = "Requires real POML; model and postcondition processes are offline"]
+async fn patch_tools_rollback_then_commit_across_all_three_loops() {
+    use crate::tools::apply_patch::hash;
+    for flow in ["message", "agent", "standalone"] {
+        let source=tempfile::Builder::new().prefix("patch-source-").tempfile_in(".").unwrap();
+        let expected=tempfile::Builder::new().prefix("patch-expected-").tempfile_in(".").unwrap();
+        std::fs::write(source.path(),"before").unwrap(); std::fs::write(expected.path(),"good").unwrap();
+        let path=source.path().file_name().unwrap().to_str().unwrap();
+        let check=serde_json::json!({"program":"/usr/bin/cmp","args":["-s",path,expected.path().file_name().unwrap().to_str().unwrap()],"timeout_secs":5});
+        let workflow=tempfile::Builder::new().prefix("patch-workflow-").suffix(".sm").tempfile_in("contexts").unwrap();
+        std::fs::write(workflow.path(),format!("[state working]\nsettings.activated_tools = [\"inspect_file\", \"apply_patch\", \"agent_complete\"]\n[checks]\ntests = {check}\n[guards]\n_complete = [tests]\n")).unwrap();
+        let edit=|content:&str|serde_json::json!({"edits":[{"path":path,"expected_sha256":hash(b"before"),"content":content}],"checks":["tests"]});
+        let dir=tempfile::tempdir().unwrap();
+        let (state,user,requests)=fixture(dir.path(),vec![
+            Step::Reply(reply(None,vec![call("inspect","inspect_file",serde_json::json!({"path":path}))])),
+            Step::Reply(reply(None,vec![call("bad-patch","apply_patch",edit("bad"))])),
+            Step::Reply(reply(None,vec![call("good-patch","apply_patch",edit("good"))])),
+            Step::Reply(reply(Some("Verified patch completed."),vec![])),
+        ]);
+        state.db.merge_context(&user,serde_json::json!({"settings.sm_file":workflow.path().file_stem().unwrap().to_str().unwrap(),"settings.max_llm_turns":if flow=="message" {1} else {8},"settings.max_tool_calls":8,"settings.compaction_enabled":false})).unwrap();
+        let response=match flow {
+            "message"=>handle_message(&state,&user,"Apply a verified edit.",Some("web")).await.unwrap(),
+            "agent"=>crate::gateway::agent_loop::run_agent_loop(&state,&user,"Apply a verified edit.",Default::default(),None).await.unwrap().response,
+            _=>{let tools=crate::db::tools::to_tool_definitions(&state.db).unwrap(); state.llm.get().chat_with_tools(&state.db,&user,vec![],tools,Some(5),None,None,None).await.unwrap().response},
+        };
+        assert!(response.contains("Verified patch completed"),"{flow}: {response}");
+        assert_eq!(std::fs::read(source.path()).unwrap(),b"good");
+        let requests=requests.lock().unwrap(); assert_eq!(requests.len(),4,"{flow}");
+        let output=|turn:usize,id:&str|->serde_json::Value {
+            let message=requests[turn].messages.iter().find(|m|m.tool_call_id.as_deref()==Some(id)).unwrap();
+            serde_json::from_str(message.content.as_deref().unwrap()).unwrap()
+        };
+        assert_eq!(output(1,"inspect")["sha256"],hash(b"before"));
+        assert_eq!(output(2,"bad-patch")["receipt"]["outcome"],"rolled_back");
+        assert_eq!(output(2,"bad-patch")["checks"][0]["receipt"]["verified"],false);
+        assert_eq!(output(3,"good-patch")["receipt"]["outcome"],"committed");
+        assert_eq!(output(3,"good-patch")["checks"][0]["receipt"]["verified"],true);
+        for name in ["inspect_file","apply_patch"] { assert!(requests[0].tools.as_ref().unwrap().iter().any(|t|t.function.name==name),"{flow}: {name}"); }
+        // Fail visibly if a runtime/fixture leaves generated shipped-path files.
+        workflow.close().unwrap();
+        source.close().unwrap();
+        expected.close().unwrap();
+    }
+}
+
 enum Step {
     Reply(ChatResponse),
     Unavailable,

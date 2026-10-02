@@ -638,6 +638,10 @@ async fn execute_tool_call(
     let plugin_secrets = plugins.secrets_for_tool(&tc.function.name, &all_secrets);
 
     match tc.function.name.as_str() {
+        "apply_patch" => crate::tools::apply_patch::run(user_id, &tc.id, &args).await
+            .unwrap_or_else(|e| format!("Error: {e}")),
+        "inspect_file" => crate::tools::apply_patch::inspect(user_id, &args).await
+            .unwrap_or_else(|e| format!("Error: {e}")),
         "run_check" => super::action_contracts::run(user_id, &tc.id, &args).await
             .unwrap_or_else(|e| format!("Error: {e}")),
         "read_tool_result" => crate::tools::tool_output::run(db, user_id, &args)
