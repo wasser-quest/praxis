@@ -38,12 +38,12 @@ fn contract_guards_require_current_runtime_evidence() {
     assert_eq!(forged["checks"]["tests"]["verified"], true);
     assert!(ledger.require("_complete").is_err());
     let revision = ledger.start_check("tests").unwrap();
-    ledger.finish_check("tests", revision, Outcome::Passed, Some(0), "call-1");
+    ledger.finish_check("tests", revision, Outcome::Passed, Some(0), "call-1", None);
     assert!(ledger.require("done").is_ok());
     ledger.invalidate();
     assert!(ledger.require("done").is_err());
     // A late success from an older revision cannot authorize completion.
-    ledger.finish_check("tests", revision, Outcome::Passed, Some(0), "call-2");
+    ledger.finish_check("tests", revision, Outcome::Passed, Some(0), "call-2", None);
     assert!(ledger.require("_complete").is_err());
 }
 
@@ -55,10 +55,10 @@ fn contract_failed_rerun_revokes_success_and_policy_is_pinned() {
         .bind("guarded", &workflow, std::path::Path::new("."))
         .unwrap();
     let rev = ledger.start_check("tests").unwrap();
-    ledger.finish_check("tests", rev, Outcome::Passed, Some(0), "pass");
+    ledger.finish_check("tests", rev, Outcome::Passed, Some(0), "pass", None);
     ledger.start_check("tests").unwrap();
     assert!(ledger.require("done").is_err());
-    ledger.finish_check("tests", rev, Outcome::Failed, Some(1), "fail");
+    ledger.finish_check("tests", rev, Outcome::Failed, Some(1), "fail", None);
     assert!(ledger.require("done").is_err());
     assert!(ledger
         .bind("other", &workflow, std::path::Path::new("."))
@@ -78,7 +78,7 @@ fn contract_receipts_do_not_survive_new_task() {
     bind(user, "guarded", &workflow, std::path::Path::new(".")).unwrap();
     super::task_control::with_verification(user, |ledger| {
         let rev = ledger.start_check("tests")?;
-        ledger.finish_check("tests", rev, Outcome::Passed, Some(0), "old");
+        ledger.finish_check("tests", rev, Outcome::Passed, Some(0), "old", None);
         Ok(())
     })
     .unwrap();
@@ -235,7 +235,18 @@ async fn contract_database_and_completion_tools_reject_before_persistence() {
     super::task_control::with_verification(user, |ledger| {
         for name in ["build", "tests"] {
             let rev = ledger.start_check(name)?;
-            ledger.finish_check(name, rev, Outcome::Passed, Some(0), "runtime-check");
+            let resources = super::resource_snapshots::capture(
+                std::path::Path::new("."),
+                &workflow.checks[name].resources,
+            )?;
+            ledger.finish_check(
+                name,
+                rev,
+                Outcome::Passed,
+                Some(0),
+                "runtime-check",
+                Some(resources),
+            );
         }
         Ok(())
     })

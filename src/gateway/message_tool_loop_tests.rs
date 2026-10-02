@@ -58,7 +58,7 @@ async fn patch_tools_rollback_then_commit_across_all_three_loops() {
         let expected=tempfile::Builder::new().prefix("patch-expected-").tempfile_in(".").unwrap();
         std::fs::write(source.path(),"before").unwrap(); std::fs::write(expected.path(),"good").unwrap();
         let path=source.path().file_name().unwrap().to_str().unwrap();
-        let check=serde_json::json!({"program":"/usr/bin/cmp","args":["-s",path,expected.path().file_name().unwrap().to_str().unwrap()],"timeout_secs":5});
+        let check=serde_json::json!({"program":"/usr/bin/cmp","args":["-s",path,expected.path().file_name().unwrap().to_str().unwrap()],"timeout_secs":5,"resources":[path,expected.path().file_name().unwrap().to_str().unwrap()]});
         let workflow=tempfile::Builder::new().prefix("patch-workflow-").suffix(".sm").tempfile_in("contexts").unwrap();
         std::fs::write(workflow.path(),format!("[state working]\nsettings.activated_tools = [\"inspect_file\", \"apply_patch\", \"agent_complete\"]\n[checks]\ntests = {check}\n[guards]\n_complete = [tests]\n")).unwrap();
         let edit=|content:&str|serde_json::json!({"edits":[{"path":path,"expected_sha256":hash(b"before"),"content":content}],"checks":["tests"]});
@@ -87,6 +87,7 @@ async fn patch_tools_rollback_then_commit_across_all_three_loops() {
         assert_eq!(output(2,"bad-patch")["checks"][0]["receipt"]["verified"],false);
         assert_eq!(output(3,"good-patch")["receipt"]["outcome"],"committed");
         assert_eq!(output(3,"good-patch")["checks"][0]["receipt"]["verified"],true);
+        assert_eq!(output(3,"good-patch")["checks"][0]["receipt"]["resources"]["sha256"].as_str().unwrap().len(),64);
         for name in ["inspect_file","apply_patch"] { assert!(requests[0].tools.as_ref().unwrap().iter().any(|t|t.function.name==name),"{flow}: {name}"); }
         // Fail visibly if a runtime/fixture leaves generated shipped-path files.
         workflow.close().unwrap();
@@ -95,8 +96,47 @@ async fn patch_tools_rollback_then_commit_across_all_three_loops() {
     }
 }
 
+#[cfg(unix)]
+#[tokio::test]
+#[ignore = "Requires real POML; external writer and model are offline fixtures"]
+async fn resource_contract_agent_rejects_external_mutation_then_rechecks() {
+    let source = tempfile::Builder::new().prefix("resource-source-").tempfile_in(".").unwrap();
+    std::fs::write(source.path(), "before").unwrap();
+    let path = source.path().file_name().unwrap().to_str().unwrap();
+    let check = serde_json::json!({"program":"/bin/true","timeout_secs":5,"resources":[path]});
+    let workflow = tempfile::Builder::new().prefix("resource-workflow-").suffix(".sm").tempfile_in("contexts").unwrap();
+    std::fs::write(workflow.path(), format!("[state working]\nsettings.activated_tools = [\"run_check\", \"agent_complete\"]\n[checks]\ntests = {check}\n[guards]\n_complete = [tests]\n")).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let (state, user, requests) = fixture(dir.path(), vec![
+        Step::Reply(reply(None, vec![call("before-write", "run_check", serde_json::json!({"name":"tests"}))])),
+        Step::ExternalWrite(source.path().to_path_buf(), "external".into(), reply(Some("Finished. [[AGENT:COMPLETE]]"), vec![])),
+        Step::Reply(reply(None, vec![call("after-write", "run_check", serde_json::json!({"name":"tests"}))])),
+        Step::Reply(reply(Some("Verified completion. [[AGENT:COMPLETE]]"), vec![])),
+    ]);
+    state.db.merge_context(&user, serde_json::json!({
+        "settings.sm_file":workflow.path().file_stem().unwrap().to_str().unwrap(),
+        "settings.max_llm_turns":8,"settings.max_tool_calls":4,"settings.compaction_enabled":false
+    })).unwrap();
+    let result = crate::gateway::agent_loop::run_agent_loop(&state, &user, "Verify before completing.", Default::default(), None).await.unwrap();
+    assert!(result.completed);
+    assert!(result.response.contains("Verified completion"));
+    assert_eq!(requests.lock().unwrap().len(), 4);
+    let history = state.db.get_messages(&user, 100).unwrap();
+    assert!(history.iter().any(|m| m.role == "system" && m.content.contains("Execution guard rejected")));
+    let receipt = |id: &str| -> serde_json::Value {
+        let message = history.iter().find(|m| m.tool_call_id.as_deref() == Some(id)).unwrap();
+        serde_json::from_str::<serde_json::Value>(&message.content).unwrap()["receipt"].clone()
+    };
+    assert_eq!(receipt("before-write")["verified"], true);
+    assert_eq!(receipt("after-write")["verified"], true);
+    assert_ne!(receipt("before-write")["resources"]["sha256"], receipt("after-write")["resources"]["sha256"]);
+    workflow.close().unwrap();
+    source.close().unwrap();
+}
+
 enum Step {
     Reply(ChatResponse),
+    ExternalWrite(std::path::PathBuf, String, ChatResponse),
     Unavailable,
     ReadLastOutput,
     Cancel(ChatResponse),
@@ -124,6 +164,10 @@ impl LLMProvider for ScriptedProvider {
             .expect("unexpected extra generation")
         {
             Step::Reply(response) => Ok(response),
+            Step::ExternalWrite(path, content, response) => {
+                std::fs::write(path, content).unwrap();
+                Ok(response)
+            }
             Step::Unavailable => Err(ProviderError::new(ErrorKind::Unavailable).into()),
             Step::ReadLastOutput => {
                 let text = request.messages.iter().rev().find(|m| m.role == "tool").unwrap().content.as_deref().unwrap();
