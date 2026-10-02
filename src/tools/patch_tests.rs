@@ -129,7 +129,7 @@ fn edit(path: &str, before: Option<&str>, after: Option<&str>) -> Value {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn patch_restoration_uses_memory_snapshot_if_check_changes_staging_files() {
+async fn patch_checks_cannot_observe_staged_restoration_files() {
     let root = tempfile::tempdir().unwrap();
     let user = "patch-snapshot-integrity";
     std::fs::write(root.path().join("a"), "before").unwrap();
@@ -137,13 +137,17 @@ async fn patch_restoration_uses_memory_snapshot_if_check_changes_staging_files()
         user,
         root.path(),
         "/bin/sh",
-        &[
-            "-c",
-            "for f in .praxis-patch-*; do printf corrupt > \"$f\"; done; exit 1",
-        ],
+        &["-c", "find . -name '.praxis-patch-*' | wc -l; exit 1"],
         5,
     );
     let result = patch(user, vec![edit("a", Some("before"), Some("after"))]).await;
+    assert_eq!(
+        result["checks"][0]["output"]["stdout"]
+            .as_str()
+            .unwrap()
+            .trim(),
+        "0"
+    );
     assert_eq!(result["receipt"]["outcome"], "rolled_back");
     assert_eq!(std::fs::read(root.path().join("a")).unwrap(), b"before");
     assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 1);

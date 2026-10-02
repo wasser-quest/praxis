@@ -9,8 +9,8 @@ For scoped file edits with expected hashes and automatic compensation, see
 
 ```text
 [checks]
-build = {"program":"cargo","args":["check","--locked"],"cwd":".","timeout_secs":300}
-tests = {"program":"cargo","args":["test","--locked","--lib"],"cwd":".","timeout_secs":300}
+build = {"program":"cargo","args":["check","--locked"],"cwd":".","timeout_secs":300,"resources":["src","Cargo.toml","Cargo.lock"]}
+tests = {"program":"cargo","args":["test","--locked","--lib"],"cwd":".","timeout_secs":300,"resources":["src","Cargo.toml","Cargo.lock"]}
 
 [guards]
 done = [build, tests]
@@ -39,9 +39,37 @@ cleanup is not guaranteed.
 
 The returned receipt includes task/call/check IDs, a workspace revision, outcome,
 exit status and `verified`. A receipt is verified only when the configured process
-exits with status zero, without cancellation, in the current revision. It proves
-**that check passed**, not that the implementation meets every requirement.
+exits with status zero, without cancellation, in the current revision, and any
+declared resources remain unchanged. It proves **that check passed**, not that the implementation meets every requirement.
 The normal tool-output archive retains the returned receipt and captured output.
+
+## Declared resources
+
+Optional `resources` lists files or directories relative to the pinned `ROOT_DIR`,
+independently of the check's `cwd`. The runtime samples them before and after the
+check, before receipt publication, and whenever a guard needs that evidence.
+An external edit or another task's write therefore blocks a guard without needing
+an observed tool revision change. Rerun the affected check to restore evidence.
+A process that changes its own declared resources returns `resources_changed`,
+even if its exit status is zero. An unreadable or unsupported scope fails closed;
+if the initial sample fails, the check is not started.
+
+Scoped receipts include `resources: {sha256, paths, entries, bytes}`. The digest
+binds the canonical workspace location, normalized paths, contents, file types,
+directory membership (including empty directories), missing declared paths, and
+permissions. On Unix permissions include the mode bits; other platforms bind the
+read-only flag. Contents are hashed, not included in the receipt. There are no
+implicit exclusions or dependency discovery: authors must declare every relevant
+input. Keep generated build output outside source scopes when checks write it.
+`resources:["."]` includes the entire root and often exceeds these bounds.
+
+Each check permits up to 16 unique normalized paths, 4096 inventory entries,
+16 MiB of file bytes, and 64 directory levels below a scope root. Absolute paths,
+`..`, aliases such as `./src`, backslashes, symlinks, special files and non-UTF-8
+names are rejected. Missing paths are supported so later creation invalidates
+evidence. Omitted or empty `resources` preserves revision-only behavior and omits
+the resource object from receipts. The bundled example scopes Rust source and
+manifests; extend it for any additional build inputs in your project.
 
 ## Authority and freshness
 
@@ -67,18 +95,26 @@ This is a runtime protocol, not a sandbox or formal proof. Trusted check program
 plugins, workflow files and the runtime remain in the trusted computing base.
 Raw shell/file tools can affect resources outside this protocol; external writers
 and already-running background jobs can change files without advancing the
-ledger. Use controlled foreground capabilities for guarded work. Freshness is
-relative to observed tool execution, not a filesystem snapshot or content hash.
+ledger. Declared scopes detect differences at the sampling boundaries, but do
+not freeze files. Transient writes restored between samples and writes after the
+last sample can escape detection; metadata stability checks cannot provide an
+atomic multi-file snapshot. Resources outside declared scopes are not covered.
+Use controlled foreground capabilities and an isolated workspace for guarded
+work. Inventory size is bounded, but filesystem I/O latency is not governed by
+the check-process timeout. Archived `verified:true` records a past successful
+sample; guards always evaluate current evidence again.
 
 ## Next implementation slices
 
-1. Resource-bound receipts: bind checks to an immutable tree hash and reject
-   external/concurrent edits, including background work.
-2. Durable recovery of interrupted file transactions and stronger filesystem
+1. Durable recovery of interrupted file transactions and stronger filesystem
    isolation for concurrent writers.
-3. Plugin effect metadata and typed preconditions/postconditions, with conservative
+2. Plugin effect metadata and typed preconditions/postconditions, with conservative
    defaults and explicit compensation semantics for non-transactional APIs.
 
 Run `cargo test --locked --lib action_contract` for the offline contract tests.
 The handler regression `contract_agent_rejects_unverified_completion_then_recovers`
 also exercises a scripted model with the real POML renderer (requires POML_CLI).
+
+Resource regressions: `cargo test --locked --lib resource_`. The ignored
+`resource_contract_agent_rejects_external_mutation_then_rechecks` test uses the
+real POML renderer and an offline external-writer fixture.

@@ -116,23 +116,25 @@ impl Transaction {
                 );
                 // Cooperative writers are locked; hostile path swaps are outside
                 // this protocol. Refuse detectable path/content/mode changes.
-                match file.restore.take() {
-                    Some(temp) => {
+                match &file.before {
+                    Some(original) => {
                         // A check can touch adjacent staging files. The memory
                         // snapshot remains authoritative for restoration.
-                        let temp = if snapshot(temp.path())
-                            .ok()
-                            .flatten()
-                            .as_ref()
-                            .is_some_and(|saved| matches_before(file, Some(saved)))
-                        {
-                            temp
-                        } else {
-                            let original = file
-                                .before
-                                .as_ref()
-                                .ok_or_else(|| anyhow::anyhow!("Missing original snapshot"))?;
-                            stage(&path, &original.bytes, Some(&original.permissions))?
+                        let temp = match file.restore.take() {
+                            Some(temp)
+                                if snapshot(temp.path()).ok().flatten().as_ref().is_some_and(
+                                    |saved| {
+                                        saved.bytes == original.bytes
+                                            && same_permissions(
+                                                &saved.permissions,
+                                                &original.permissions,
+                                            )
+                                    },
+                                ) =>
+                            {
+                                temp
+                            }
+                            _ => stage(&path, &original.bytes, Some(&original.permissions))?,
                         };
                         if file.after.is_none() {
                             temp.persist_noclobber(&path).map_err(|e| e.error)?;
@@ -438,16 +440,21 @@ pub async fn run(user: &str, call: &str, args: &serde_json::Value) -> anyhow::Re
     .to_string();
     let mut checks = Vec::new();
     if apply.is_ok() {
+        // Runtime staging is not part of the inputs being checked. Retain the
+        // authoritative memory originals; rebuild restoration files if needed.
+        for file in &mut transaction.files {
+            file.restore.take();
+        }
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(300);
         for (name, contract) in &transaction.policy.checks {
-            let (outcome, code, output) = match tokio::time::timeout_at(
+            let (outcome, code, output, resources) = match tokio::time::timeout_at(
                 deadline,
                 action_contracts::execute(contract, &transaction.root, &cancel),
             )
             .await
             .unwrap_or(Err(Outcome::TimedOut))
             {
-                Ok((outcome, mut output)) => {
+                Ok((outcome, mut output, resources)) => {
                     // A batch result remains bounded even for verbose checks.
                     for (text, truncated) in [
                         (&mut output.stdout, &mut output.stdout_truncated),
@@ -466,12 +473,14 @@ pub async fn run(user: &str, call: &str, args: &serde_json::Value) -> anyhow::Re
                         outcome,
                         Some(output.exit_code),
                         serde_json::to_value(output)?,
+                        resources,
                     )
                 }
                 Err(outcome) => (
                     outcome,
                     None,
                     serde_json::json!({"error":"Check did not complete"}),
+                    None,
                 ),
             };
             let outcome = if cancel.is_cancelled() {
@@ -479,7 +488,7 @@ pub async fn run(user: &str, call: &str, args: &serde_json::Value) -> anyhow::Re
             } else {
                 outcome
             };
-            checks.push((name.clone(), outcome, code, output));
+            checks.push((name.clone(), outcome, code, output, resources));
             if outcome != Outcome::Passed || code != Some(0) {
                 reason = serde_json::to_value(outcome)?
                     .as_str()
@@ -499,12 +508,26 @@ pub async fn run(user: &str, call: &str, args: &serde_json::Value) -> anyhow::Re
             reason = "cancelled".into();
         }
     }
+    let resources: Vec<_> = checks
+        .iter()
+        .map(|(_, _, _, _, snapshot)| snapshot.clone())
+        .collect();
+    if reason == "checks_passed"
+        && !action_contracts::patch_resources_current(&transaction.policy, &resources)
+    {
+        reason = "resources_changed".into();
+    }
     let receipts = if reason == "checks_passed" {
-        match action_contracts::publish_patch(user, &transaction.policy, call) {
+        match action_contracts::publish_patch(user, &transaction.policy, call, &resources) {
             Ok(receipts) => Some(receipts),
             Err(_) => {
                 reason = if cancel.is_cancelled() {
                     "cancelled"
+                } else if !action_contracts::patch_resources_current(
+                    &transaction.policy,
+                    &resources,
+                ) {
+                    "resources_changed"
                 } else {
                     "task_or_revision_changed"
                 }
@@ -525,7 +548,7 @@ pub async fn run(user: &str, call: &str, args: &serde_json::Value) -> anyhow::Re
     let check_results: Vec<_> = checks
         .into_iter()
         .enumerate()
-        .map(|(index, (name, outcome, code, output))| {
+        .map(|(index, (name, outcome, code, output, resources))| {
             let receipt = receipts
                 .as_ref()
                 .and_then(|all| all.get(index))
@@ -539,6 +562,7 @@ pub async fn run(user: &str, call: &str, args: &serde_json::Value) -> anyhow::Re
                     outcome,
                     exit_code: code,
                     verified: false,
+                    resources,
                 });
             serde_json::json!({"receipt":receipt,"output":output})
         })
