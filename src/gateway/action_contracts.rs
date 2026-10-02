@@ -128,6 +128,10 @@ impl VerificationState {
         let Some(checks) = guards.get(target) else {
             return Ok(());
         };
+        anyhow::ensure!(
+            !crate::tools::apply_patch::journal::pending_exists(root),
+            "Execution guard requires interrupted-patch recovery first"
+        );
         let missing: Vec<_> = checks
             .iter()
             .filter(|name| {
@@ -147,6 +151,15 @@ impl VerificationState {
     pub(crate) fn invalidate(&mut self) {
         self.revision = self.revision.saturating_add(1);
         self.receipts.clear();
+    }
+    pub(crate) fn invalidate_root(&mut self, root: &Path) {
+        if self
+            .policy
+            .as_ref()
+            .is_some_and(|(_, _, _, pinned)| pinned.canonicalize().is_ok_and(|p| p == root))
+        {
+            self.invalidate();
+        }
     }
     pub(crate) fn start_check(&mut self, name: &str) -> anyhow::Result<u64> {
         anyhow::ensure!(
@@ -342,11 +355,11 @@ pub(crate) fn publish_patch(
     policy: &PatchPolicy,
     call: &str,
     resources: &[Option<ResourceSnapshot>],
+    finalize: impl FnOnce() -> anyhow::Result<()>,
 ) -> anyhow::Result<Vec<ExecutionReceipt>> {
-    anyhow::ensure!(
-        task_control::cancellation(user).is_some_and(|token| !token.is_cancelled()),
-        "Task cancelled"
-    );
+    let cancel =
+        task_control::cancellation(user).ok_or_else(|| anyhow::anyhow!("Task cancelled"))?;
+    anyhow::ensure!(!cancel.is_cancelled(), "Task cancelled");
     anyhow::ensure!(
         patch_resources_current(policy, resources),
         "Resource snapshots changed during patch"
@@ -374,6 +387,14 @@ pub(crate) fn publish_patch(
         if !receipts.iter().all(|receipt| receipt.verified) {
             ledger.invalidate();
             anyhow::bail!("Resource snapshots changed before receipt publication");
+        }
+        if let Err(error) = finalize() {
+            ledger.invalidate();
+            return Err(error);
+        }
+        if cancel.is_cancelled() {
+            ledger.invalidate();
+            anyhow::bail!("Task cancelled during receipt publication");
         }
         Ok(receipts)
     })
@@ -431,6 +452,15 @@ pub async fn run(user: &str, call: &str, args: &serde_json::Value) -> anyhow::Re
         _ = cancel.cancelled() => anyhow::bail!("Task cancelled"),
         lock = crate::tools::apply_patch::FILE_OPERATIONS.lock() => lock,
     };
+    let root = task_control::with_verification(user, |ledger| {
+        let (_, checks, _, root) = ledger
+            .policy
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("No check policy"))?;
+        anyhow::ensure!(checks.contains_key(name), "Unknown check");
+        Ok(root.clone())
+    })?;
+    let _workspace = crate::tools::apply_patch::journal::ready(&root)?;
     let (contract, root, revision) = task_control::with_verification(user, |ledger| {
         let revision = ledger.start_check(name)?;
         let (_, checks, _, root) = ledger
