@@ -79,6 +79,8 @@
     "minimax_tts_model": null,
     "mimo_voice_id": null,
     "mimo_tts_type": null,
+    "mimo_tts_base_url": null,
+    "mimo_tts_model": null,
     "history_with_toolcalls": true,
     "only_tool_calls_no_history": false,
     "download": false,
@@ -125,7 +127,15 @@
     "vm_screenshot_enabled": true,
     "vm_screenshot_limit": 5000,
     "vm_keyboard_layout": "us",
-    "tool_history_limit": 50
+    "tool_history_limit": 50,
+    "tool_result_limit": null,
+    "activated_tools": [],
+    "full_tool_categories": [],
+    "full_tool_schemas": [],
+    "tool_group_definitions": {},
+    "tool_groups": null,
+    "tool_discovery_mode": "DescriptionOnly",
+    "use_decision_router": true
   },
   "custom_data": {
     "user_prompt": "POML_CURRENT_INPUT_SENTINEL café 日本語 {{not_evaluated}}",

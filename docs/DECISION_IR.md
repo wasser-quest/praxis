@@ -25,6 +25,55 @@ the project root; author checks run there. Ensure `cargo` and `rustfmt` are on
 Praxis's PATH. Adapt the plugin's edition, commands and resource scopes for the
 project. This example assumes Rust edition 2021.
 
+### Select the workflow and its prompt together
+
+The bundled workflow now selects `templates/verified-implementation.poml` in
+both `working` and `done` and disables persona Decision routing. The prompt
+explains actual tool-call arguments, expected hashes, full-file replacements,
+receipts, rollback, and guarded completion. It reports setup mismatches rather
+than searching for a substitute workflow. A template alone grants no capability.
+
+Stop the previous task and merge these fields into the **current chat's** context
+through the dashboard, keeping the other settings:
+
+```json
+{
+  "mode": "agent",
+  "sm_file": "verified-implementation",
+  "active_state": "working",
+  "settings": {
+    "sm_file": "verified-implementation",
+    "system_template": "verified-implementation",
+    "active_state": "working",
+    "use_decision_router": false,
+    "decision_profile": "off",
+    "done": false
+  }
+}
+```
+
+`settings.sm_file` takes precedence over the top-level `sm_file`. Set
+`settings.system_template` explicitly when switching an existing chat: a retained
+manual template such as `states/standard/standard` can keep workflow routing from
+applying the new state's settings. Editing only the `default` context does not
+update an already-forked chat. `working` exists in several workflows and is not
+proof that IR is active.
+
+For an existing separate test project such as `ir-snake`, update **both** its
+`ROOT_DIR/contexts/verified-implementation.sm` and
+`ROOT_DIR/templates/verified-implementation.poml`, as well as the installed plugin
+manifest. The template is self-contained; it has no shared-template includes.
+Changing shell environment variables does not update an already-running Praxis
+process. Restart after a plugin or root change, then begin a new task.
+
+Only the actual offered tool schemas establish tool availability. The POML
+`tools` field is discovery metadata and may omit explicitly activated tools.
+The runtime-appended opcode table and contract guards remain authoritative.
+Normal calls remain compatible; ask for `execute_decision` explicitly when
+testing IR. In the tool archive, expect `execute_decision` calls with canonical
+capability names inside the receipts. `agent_complete` need not switch
+`active_state` to `done`.
+
 The workflow enables both normal capability calls and `execute_decision`.
 Normal `modify_source`, `build_workspace` and `run_workspace_tests` calls use the
 same execution path and can be mixed with IR calls in the same task.
@@ -124,6 +173,16 @@ work. V1 keeps original capability schemas available and makes no token-saving
 or Decision-router quality claim.
 
 ## Validation
+
+Strictly render the new prompt against the existing full, sparse, null and chat
+fixtures without contacting a model:
+
+```bash
+python3 scripts/test_poml_templates.py --template verified-implementation.poml
+```
+
+Set `POML_CLI` to the installed Microsoft JavaScript CLI, or pass its path through
+`--cli`. This verifies rendering; it does not establish live model behavior.
 
 ```bash
 cargo test --locked --lib source_capability
