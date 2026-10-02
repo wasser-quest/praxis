@@ -43,6 +43,12 @@ exits with status zero, without cancellation, in the current revision, and any
 declared resources remain unchanged. It proves **that check passed**, not that the implementation meets every requirement.
 The normal tool-output archive retains the returned receipt and captured output.
 
+Interrupted file patches [recover before the next scoped operation](PATCH_RECOVERY.md).
+On Unix, checks and scoped file operations share a private journal/lock directory
+beside the root, so its parent must be writable. Outstanding journals block
+guarded transitions/completion, and recovery revokes
+live receipts for tasks using that root. Recovery does not restore past evidence.
+
 ## Declared resources
 
 Optional `resources` lists files or directories relative to the pinned `ROOT_DIR`,
@@ -106,8 +112,7 @@ sample; guards always evaluate current evidence again.
 
 ## Next implementation slices
 
-1. Durable recovery of interrupted file transactions and stronger filesystem
-   isolation for concurrent writers.
+1. Stronger filesystem isolation for uncooperative concurrent writers.
 2. Plugin effect metadata and typed preconditions/postconditions, with conservative
    defaults and explicit compensation semantics for non-transactional APIs.
 

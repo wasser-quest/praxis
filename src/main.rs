@@ -40,6 +40,11 @@ enum Cli {
         #[arg(long)]
         overwrite: bool,
     },
+    /// Recover interrupted host file patches offline, preserving conflicting files
+    RecoverPatches {
+        #[arg(long, default_value = ".")]
+        directory: PathBuf,
+    },
     /// Manage the Praxis system service
     Service {
         #[command(subcommand)]
@@ -344,6 +349,13 @@ fn pin_install_root() {
 
 async fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    if let Cli::RecoverPatches { directory } = &cli {
+        let report = praxis::tools::apply_patch::recover(directory).await?;
+        println!("{report}");
+        let report: serde_json::Value = serde_json::from_str(&report)?;
+        anyhow::ensure!(report["outcome"] != "conflict", "Recovery conflicts require operator resolution");
+        return Ok(());
+    }
     // Offline repair must not load .env, unlock secrets, initialize a database
     // or start services. It only touches the explicit public-asset allow-list.
     if let Cli::RepairAssets { directory, update_dashboard, overwrite } = &cli {
@@ -449,6 +461,7 @@ async fn run() -> anyhow::Result<()> {
         Cli::Restore { file, yes } => return handle_restore(&file, yes).await,
         Cli::Chat { .. } => unreachable!(),
         Cli::RepairAssets { .. } => unreachable!(),
+        Cli::RecoverPatches { .. } => unreachable!(),
         Cli::Service { .. } => unreachable!(),
         Cli::Plugin { .. } => unreachable!(),
         Cli::Skill { .. } => unreachable!(),
@@ -1587,6 +1600,12 @@ mod tests {
         initialize_tls_provider();
         let current = rustls::crypto::CryptoProvider::get_default().unwrap();
         assert!(std::sync::Arc::ptr_eq(&original, current));
+    }
+
+    #[test]
+    fn test_cli_parsing_recover_patches() {
+        let cli = Cli::try_parse_from(["praxis", "recover-patches", "--directory", "/synthetic/workspace"]).unwrap();
+        assert!(matches!(cli, Cli::RecoverPatches { directory } if directory == PathBuf::from("/synthetic/workspace")));
     }
 
     #[test]

@@ -1,5 +1,8 @@
-//! Bounded file compensation, not a filesystem sandbox or crash-recovery journal.
+//! Bounded file compensation with a private write-ahead journal; not a sandbox.
 //! Each file is published with rename; the batch is not atomically visible.
+pub(crate) mod journal;
+#[cfg(all(test, unix))]
+mod recovery_tests;
 use crate::gateway::{
     action_contracts::{self, ExecutionReceipt, Outcome, PatchPolicy},
     task_control,
@@ -50,9 +53,6 @@ struct Prepared {
     before: Option<Snapshot>,
     after: Option<Vec<u8>>,
     after_permissions: Option<Permissions>,
-    staged: Option<tempfile::NamedTempFile>,
-    restore: Option<tempfile::NamedTempFile>,
-    applied: bool,
 }
 #[derive(Serialize)]
 struct FileReceipt {
@@ -70,6 +70,8 @@ struct PatchReceipt {
     reason: String,
     files: Vec<FileReceipt>,
     rollback_conflicts: Vec<String>,
+    journal_id: String,
+    recovery_pending: bool,
 }
 struct Transaction {
     user: String,
@@ -77,88 +79,60 @@ struct Transaction {
     root: PathBuf,
     files: Vec<Prepared>,
     armed: bool,
+    journal: journal::Active,
 }
 impl Transaction {
     fn apply(&mut self, cancel: &tokio_util::sync::CancellationToken) -> anyhow::Result<()> {
-        // No target is touched until the whole batch has been snapshotted/staged.
-        for file in &mut self.files {
+        // No target is touched until all originals and intents are durably journaled.
+        for (index, file) in self.files.iter_mut().enumerate() {
             anyhow::ensure!(!cancel.is_cancelled(), "Task cancelled");
             let path = scoped_path(&self.root, &file.path)?;
             anyhow::ensure!(
                 matches_before(file, snapshot(&path)?.as_ref()),
                 "File changed after preflight"
             );
-            match file.staged.take() {
-                Some(temp) if file.before.is_none() => {
-                    temp.persist_noclobber(&path).map_err(|e| e.error)?;
-                }
-                Some(temp) => {
-                    temp.persist(&path).map_err(|e| e.error)?;
+            self.journal.intent(index)?;
+            match &file.after {
+                Some(bytes) => {
+                    let permissions = file
+                        .after_permissions
+                        .as_ref()
+                        .ok_or_else(|| anyhow::anyhow!("Missing replacement permissions"))?;
+                    let temp = self.journal.stage(index, bytes, permissions)?;
+                    scoped_path(&self.root, &file.path)?;
+                    anyhow::ensure!(
+                        matches_before(file, snapshot(&path)?.as_ref()),
+                        "File changed before publication"
+                    );
+                    if file.before.is_none() {
+                        temp.persist_noclobber(&path).map_err(|error| error.error)?;
+                    } else {
+                        temp.persist(&path).map_err(|error| error.error)?;
+                    }
                 }
                 None => {
+                    scoped_path(&self.root, &file.path)?;
+                    anyhow::ensure!(
+                        matches_before(file, snapshot(&path)?.as_ref()),
+                        "File changed before deletion"
+                    );
                     fs::remove_file(&path)?;
                 }
             }
-            file.applied = true;
+            journal::sync_directory(
+                path.parent()
+                    .ok_or_else(|| anyhow::anyhow!("Missing parent"))?,
+            )?;
         }
         Ok(())
     }
     fn rollback(&mut self) -> Vec<String> {
         action_contracts::invalidate_patch(&self.user, &self.policy.task_id);
-        let mut conflicts = Vec::new();
-        for file in self.files.iter_mut().rev().filter(|file| file.applied) {
-            let result = (|| -> anyhow::Result<()> {
-                let path = scoped_path(&self.root, &file.path)?;
-                let current = snapshot(&path)?;
-                anyhow::ensure!(
-                    matches_after(file, current.as_ref()),
-                    "File changed since patch publication"
-                );
-                // Cooperative writers are locked; hostile path swaps are outside
-                // this protocol. Refuse detectable path/content/mode changes.
-                match &file.before {
-                    Some(original) => {
-                        // A check can touch adjacent staging files. The memory
-                        // snapshot remains authoritative for restoration.
-                        let temp = match file.restore.take() {
-                            Some(temp)
-                                if snapshot(temp.path()).ok().flatten().as_ref().is_some_and(
-                                    |saved| {
-                                        saved.bytes == original.bytes
-                                            && same_permissions(
-                                                &saved.permissions,
-                                                &original.permissions,
-                                            )
-                                    },
-                                ) =>
-                            {
-                                temp
-                            }
-                            _ => stage(&path, &original.bytes, Some(&original.permissions))?,
-                        };
-                        if file.after.is_none() {
-                            temp.persist_noclobber(&path).map_err(|e| e.error)?;
-                        } else {
-                            temp.persist(&path).map_err(|e| e.error)?;
-                        }
-                    }
-                    None => {
-                        fs::remove_file(&path)?;
-                    }
-                }
-                anyhow::ensure!(
-                    matches_before(file, snapshot(&path)?.as_ref()),
-                    "Restored file no longer matches original snapshot"
-                );
-                Ok(())
-            })();
-            if result.is_err() {
-                conflicts.push(file.path.clone());
-            }
-            file.applied = false;
-        }
+        let conflicts = match self.journal.rollback() {
+            Ok(report) => report.conflicts,
+            Err(_) => self.files.iter().map(|file| file.path.clone()).collect(),
+        };
         self.armed = false;
-        conflicts.sort();
         conflicts
     }
     fn unchanged(&self) -> anyhow::Result<()> {
@@ -267,7 +241,7 @@ fn same_permissions(a: &Permissions, b: &Permissions) -> bool {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        a.mode() == b.mode()
+        a.mode() & 0o7777 == b.mode() & 0o7777
     }
     #[cfg(not(unix))]
     {
@@ -295,24 +269,6 @@ fn matches_after(file: &Prepared, current: Option<&Snapshot>) -> bool {
         }
         _ => false,
     }
-}
-fn stage(
-    path: &Path,
-    bytes: &[u8],
-    permissions: Option<&Permissions>,
-) -> anyhow::Result<tempfile::NamedTempFile> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| anyhow::anyhow!("Missing parent"))?;
-    let mut temp = tempfile::Builder::new()
-        .prefix(".praxis-patch-")
-        .tempfile_in(parent)?;
-    temp.write_all(bytes)?;
-    if let Some(permissions) = permissions {
-        temp.as_file().set_permissions(permissions.clone())?;
-    }
-    temp.as_file().sync_all()?;
-    Ok(temp)
 }
 fn prepare(root: &Path, edits: Vec<Edit>) -> anyhow::Result<Vec<Prepared>> {
     let mut names = HashSet::new();
@@ -359,26 +315,26 @@ fn prepare(root: &Path, edits: Vec<Edit>) -> anyhow::Result<Vec<Prepared>> {
             total <= MAX_BATCH_BYTES,
             "Original plus replacement bytes exceed 4 MiB batch limit"
         );
-        let staged = after
-            .as_ref()
-            .map(|bytes| stage(&path, bytes, before.as_ref().map(|s| &s.permissions)))
-            .transpose()?;
-        let restore = before
-            .as_ref()
-            .map(|s| stage(&path, &s.bytes, Some(&s.permissions)))
-            .transpose()?;
-        let after_permissions = staged
-            .as_ref()
-            .map(|temp| temp.as_file().metadata().map(|meta| meta.permissions()))
-            .transpose()?;
+        let after_permissions = match &after {
+            Some(_) => Some(match &before {
+                Some(snapshot) => snapshot.permissions.clone(),
+                None => {
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        Permissions::from_mode(0o600)
+                    }
+                    #[cfg(not(unix))]
+                    anyhow::bail!("Durable patches currently require Unix")
+                }
+            }),
+            None => None,
+        };
         files.push(Prepared {
             path: edit.path,
             before,
             after,
             after_permissions,
-            staged,
-            restore,
-            applied: false,
         });
     }
     Ok(files)
@@ -396,6 +352,7 @@ pub async fn inspect(user: &str, args: &serde_json::Value) -> anyhow::Result<Str
     let _lock = tokio::select! { biased; _ = cancel.cancelled() => anyhow::bail!("Task cancelled"), lock = FILE_OPERATIONS.lock() => lock };
     let policy = action_contracts::patch_policy(user, &[], false)?;
     let root = policy.root.canonicalize()?;
+    let _workspace = journal::ready(&root)?;
     let snapshot = snapshot(&scoped_path(&root, &request.path)?)?;
     let sha256 = snapshot.as_ref().map(|s| hash(&s.bytes));
     let content = snapshot.map(|s| String::from_utf8(s.bytes)).transpose()?;
@@ -417,14 +374,19 @@ pub async fn run(user: &str, call: &str, args: &serde_json::Value) -> anyhow::Re
     let cancel = task_control::cancellation(user)
         .ok_or_else(|| anyhow::anyhow!("Patch requires an active task"))?;
     let _lock = tokio::select! { biased; _ = cancel.cancelled() => anyhow::bail!("Task cancelled"), lock = FILE_OPERATIONS.lock() => lock };
-    let policy = action_contracts::patch_policy(user, &request.checks, true)?;
+    let policy = action_contracts::patch_policy(user, &request.checks, false)?;
     let root = policy.root.canonicalize()?;
+    let workspace = journal::ready(&root)?
+        .ok_or_else(|| anyhow::anyhow!("Durable patches currently require Unix"))?;
+    let policy = action_contracts::patch_policy(user, &request.checks, true)?;
     let files = prepare(&root, request.edits)?;
+    let journal = journal::Active::begin(workspace, &files)?;
     let mut transaction = Transaction {
         user: user.into(),
         policy,
         root,
         files,
+        journal,
         armed: true,
     };
     let apply = transaction.apply(&cancel);
@@ -440,11 +402,6 @@ pub async fn run(user: &str, call: &str, args: &serde_json::Value) -> anyhow::Re
     .to_string();
     let mut checks = Vec::new();
     if apply.is_ok() {
-        // Runtime staging is not part of the inputs being checked. Retain the
-        // authoritative memory originals; rebuild restoration files if needed.
-        for file in &mut transaction.files {
-            file.restore.take();
-        }
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(300);
         for (name, contract) in &transaction.policy.checks {
             let (outcome, code, output, resources) = match tokio::time::timeout_at(
@@ -517,12 +474,19 @@ pub async fn run(user: &str, call: &str, args: &serde_json::Value) -> anyhow::Re
     {
         reason = "resources_changed".into();
     }
+    let mut journal_failed = false;
     let receipts = if reason == "checks_passed" {
-        match action_contracts::publish_patch(user, &transaction.policy, call, &resources) {
+        match action_contracts::publish_patch(user, &transaction.policy, call, &resources, || {
+            let result = transaction.journal.commit();
+            journal_failed = result.is_err();
+            result
+        }) {
             Ok(receipts) => Some(receipts),
             Err(_) => {
                 reason = if cancel.is_cancelled() {
                     "cancelled"
+                } else if journal_failed {
+                    "journal_commit_failed"
                 } else if !action_contracts::patch_resources_current(
                     &transaction.policy,
                     &resources,
@@ -541,6 +505,9 @@ pub async fn run(user: &str, call: &str, args: &serde_json::Value) -> anyhow::Re
     let committed = receipts.is_some();
     let conflicts = if committed {
         transaction.armed = false;
+        // A durable commit remains committed if cleanup fails. The retained
+        // journal blocks guards until explicit/automatic cleanup succeeds.
+        let _ = transaction.journal.cleanup();
         Vec::new()
     } else {
         transaction.rollback()
@@ -590,13 +557,22 @@ pub async fn run(user: &str, call: &str, args: &serde_json::Value) -> anyhow::Re
             })
             .collect(),
         rollback_conflicts: conflicts,
+        journal_id: transaction.journal.id().into(),
+        recovery_pending: journal::pending_exists(&transaction.root),
     };
     Ok(serde_json::json!({"receipt":receipt,"checks":check_results}).to_string())
 }
 
+/// Offline recovery: no checks, task ownership, providers or secrets are loaded.
+pub async fn recover(directory: &Path) -> anyhow::Result<String> {
+    let _operation = FILE_OPERATIONS.lock().await;
+    let mut workspace = journal::Workspace::open(directory)?;
+    Ok(serde_json::to_string_pretty(&workspace.recover()?)?)
+}
+
 pub fn definition() -> crate::db::tools::Tool {
     crate::db::tools::Tool { name:"apply_patch".into(), is_enabled:true,
-        description:Some("Apply 1..16 bounded host file edits under the pinned workflow root, using expected SHA-256 hashes from inspect_file (null means nonexistent). Supply full replacement content; null deletes. All paths must have existing parents and no symlinks/hardlinks. Run 1..8 named author checks; commit fresh receipts only if all pass, otherwise restore owned edits. A rollback conflict preserves changed files and must be reported as incomplete. Per-file publication is atomic; the batch is not atomically visible. No VM redirection or crash recovery.".into()),
+        description:Some("Apply 1..16 bounded host file edits under the pinned workflow root, using expected SHA-256 hashes from inspect_file (null means nonexistent). Supply full replacement content; null deletes. All paths must have existing parents and no symlinks/hardlinks. Run 1..8 named author checks; commit fresh receipts only if all pass, otherwise restore owned edits. A rollback conflict preserves changed files and must be reported as incomplete. Per-file publication is atomic; the batch is not atomically visible. Interrupted transactions use a private durable journal and recover before the next file/check operation. No VM redirection; Unix only.".into()),
         parameters:serde_json::json!({"type":"object","properties":{
             "edits":{"type":"array","minItems":1,"maxItems":16,"items":{"type":"object","properties":{"path":{"type":"string"},"expected_sha256":{"type":["string","null"],"pattern":"^[0-9a-f]{64}$"},"content":{"type":["string","null"]}},"required":["path","expected_sha256","content"],"additionalProperties":false}},
             "checks":{"type":"array","minItems":1,"maxItems":8,"uniqueItems":true,"items":{"type":"string"}}
@@ -608,7 +584,7 @@ pub fn inspect_definition() -> crate::db::tools::Tool {
         parameters:serde_json::json!({"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false}) }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 
@@ -623,6 +599,8 @@ mod tests {
         ],"checks":["tests"]}))
         .unwrap();
         let files = prepare(root.path(), request.edits).unwrap();
+        let journal =
+            journal::Active::begin(journal::Workspace::open(root.path()).unwrap(), &files).unwrap();
         // A nonparticipating writer races preflight on the second file.
         fs::write(root.path().join("b"), "external").unwrap();
         let mut transaction = Transaction {
@@ -635,6 +613,7 @@ mod tests {
             },
             root: root.path().to_path_buf(),
             files,
+            journal,
             armed: true,
         };
         assert!(transaction

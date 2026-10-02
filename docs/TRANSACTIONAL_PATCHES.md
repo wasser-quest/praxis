@@ -2,7 +2,8 @@
 
 `inspect_file` and `apply_patch` extend execution contracts with bounded file
 edits and compensation. They require an active task with a pinned workflow that
-defines checks. Both use the pinned `ROOT_DIR` and operate on the **host**, even
+defines checks. Interrupted transactions use a [durable journal](PATCH_RECOVERY.md).
+This version requires a Unix host and a writable parent for the workspace. Both use the pinned `ROOT_DIR` and operate on the **host**, even
 when terminal tools use a VM. The bundled `verified-coding` workflow allows these
 tools instead of raw writes and shell commands in its coding group. Other
 workflows can activate or discover them explicitly.
@@ -42,23 +43,25 @@ guards that require additional ones.
 ## Execution and evidence
 
 1. Revoke previous evidence. Validate every path, expected hash, data limit and
-   check name; snapshot originals and stage replacement/restoration files in the
-   same directories. A preflight error changes no target files.
-2. Recheck each original just before publication. Publish each file with rename
+   check name; snapshot originals in memory and persist a private journal outside
+   the root. A preflight error changes no target files.
+2. Recheck each original just before publication. Persist its intent, stage its
+   replacement in the same directory, then publish each file with rename
    (or remove it for deletion); creations refuse to clobber an existing file.
-   Preserve the permissions of existing files. New files use the temporary-file
-   default permissions, normally owner-only access on Unix.
-3. Discard disk restoration files so resource samples and check programs see no
-   runtime staging files. Keep original contents and permissions in memory for
-   compensation. Run named checks in order using the existing bounded verifier.
-   Stop on the first failure, timeout or cancellation. Each author timeout still applies, and
-   the whole verification sequence has a 300-second deadline. Inspect edited
+   Preserve the permissions of existing files. New files use owner-only `0600`
+   permissions.
+3. Checks see no runtime staging files after successful publication. Originals
+   remain in memory and the durable journal for compensation. Run named checks
+   in order using the existing bounded verifier.
+   Stop on the first failure, timeout or cancellation. Each author timeout still
+   applies, and the whole verification sequence has a 300-second deadline. Inspect edited
    files after each passing check and again before committing evidence.
 4. Publish passing receipts together only after every requested check succeeds,
    edited files still match the proposed bytes/permissions, and task identity and
    workspace revision are unchanged. Declared resources for every check must still
    match its sample, including earlier checks after later checks run. A committed
-   patch can then satisfy guards.
+   patch can then satisfy guards after its commit decision is synchronized and
+   journal cleanup completes.
 5. Otherwise revoke evidence and restore applied files in reverse order. Restore
    only when a file still matches this patch's published bytes and permissions.
    Rebuild restoration files from the in-memory originals when needed; an I/O
@@ -89,9 +92,10 @@ archived receipt, and restoration conflicts are logged only as a count.
 - 1–8 unique named checks. Check stdout and stderr in the transaction response
   are each capped at 64 KiB, with truncation flags; full edited contents are not
   included in the receipt.
-- This runtime serializes transactional edits, inspections and named checks
-  across tasks. Raw writes, shell commands, plugins, other runtime processes and
-  external writers do not participate in that lock.
+- Transactional edits, inspections, named checks and recovery are serialized
+  across tasks and cooperative Praxis processes. Another process fails with a
+  busy-workspace error rather than waiting. Raw writes, shell commands, plugins
+  and external writers do not participate in the advisory lock.
 - Publication is atomic **per file**. Readers can observe a partially published
   multi-file batch; this is a compensating transaction, not an atomic filesystem
   snapshot. Path/hash rechecks catch detectable changes, but there is still a
@@ -99,9 +103,11 @@ archived receipt, and restoration conflicts are logged only as a count.
 - Only listed files are compensated. Check side effects, build artifacts,
   ownership, timestamps, extended attributes and unrelated files are outside the
   snapshot. Check programs must be trusted and should leave edited sources alone.
-- In-memory snapshots and scope guards do not recover from process termination,
-  power loss, or a host crash. There is no durable recovery journal or directory
-  fsync protocol. Use an isolated workspace and version control for that boundary.
+- A write-ahead journal and file/directory synchronization support recovery
+  after process termination. Recovery runs before the next scoped operation or
+  with `praxis recover-patches`; passing receipts are never restored. Filesystem
+  durability, conflicts and remaining crash boundaries are documented in
+  [patch recovery](PATCH_RECOVERY.md).
 - Committed receipts use the per-task observed-tool revision and any author
   declared resource hashes. Later guards recheck those hashes, detecting changes
   by other tasks or external writers within the declared scope. These are

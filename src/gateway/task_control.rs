@@ -48,6 +48,15 @@ pub(crate) fn with_verification<T>(user: &str, f: impl FnOnce(&mut super::action
     let mut ledger = task.verification.lock().map_err(|_| anyhow::anyhow!("Verification lock unavailable"))?;
     f(&mut ledger)
 }
+pub(crate) fn invalidate_workspace(root: &std::path::Path) -> anyhow::Result<()> {
+    // Release DashMap shard guards before taking ledger locks. Task teardown
+    // and other ledger callers must remain free to access the task map.
+    let tasks: Vec<_> = TASKS.iter().map(|task| task.value().clone()).collect();
+    for task in tasks {
+        task.verification.lock().map_err(|_| anyhow::anyhow!("Verification lock unavailable"))?.invalidate_root(root);
+    }
+    Ok(())
+}
 pub const TEMPLATE_OMITTED_MARKER: &str = "--template not rendered context to big--";
 pub fn claim_decision_entry(user: &str) -> bool {
     TASKS.get(user).is_some_and(|task| !task.decision_entry_claimed.swap(true,std::sync::atomic::Ordering::Relaxed))
