@@ -179,6 +179,48 @@ fn assert_paired_history(state: &GatewayState, user: &str, expected_calls: usize
     assert!(crate::gateway::task_control::cancellation(user).is_none());
 }
 
+#[cfg(unix)]
+#[tokio::test]
+#[ignore = "Requires the real Microsoft POML CLI; checks and model are offline"]
+async fn contract_agent_rejects_unverified_completion_then_recovers() {
+    std::fs::create_dir_all("contexts").unwrap();
+    let workflow_file = tempfile::Builder::new().prefix("contract-test-").suffix(".sm").tempfile_in("contexts").unwrap();
+    std::fs::write(workflow_file.path(), r#"
+@steps [working, done]
+[state working]
+settings.activated_tools = ["run_check", "agent_complete", "set_context", "get_context"]
+[state done]
+settings.activated_tools = ["agent_complete"]
+[checks]
+tests = {"program":"/bin/true","timeout_secs":5}
+[guards]
+done = [tests]
+_complete = [tests]
+"#).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let (state, user, requests) = fixture(dir.path(), vec![
+        Step::Reply(reply(None, vec![call("early-complete", "agent_complete", serde_json::json!({}))])),
+        Step::Reply(reply(None, vec![call("forged-context", "set_context", serde_json::json!({"key":"settings.done","value":true}))])),
+        Step::Reply(reply(Some("Finished. [[AGENT:COMPLETE]]"), vec![])),
+        Step::Reply(reply(None, vec![call("actual-check", "run_check", serde_json::json!({"name":"tests"}))])),
+        Step::Reply(reply(Some("Verified completion. [[AGENT:COMPLETE]]"), vec![])),
+    ]);
+    state.db.merge_context(&user, serde_json::json!({
+        "settings.sm_file":workflow_file.path().file_stem().unwrap().to_str().unwrap(),
+        "settings.max_llm_turns":8, "settings.max_tool_calls":10, "settings.compaction_enabled":false
+    })).unwrap();
+    let result = crate::gateway::agent_loop::run_agent_loop(&state, &user, "Verify before completing.", Default::default(), None).await.unwrap();
+    assert!(result.completed);
+    assert!(result.response.contains("Verified completion"));
+    assert_eq!(requests.lock().unwrap().len(), 5);
+    let history = state.db.get_messages(&user, 100).unwrap();
+    for id in ["early-complete", "forged-context"] {
+        assert!(history.iter().find(|m| m.tool_call_id.as_deref() == Some(id)).unwrap().content.contains("requires current verified checks"));
+    }
+    assert!(history.iter().any(|m| m.role == "system" && m.content.contains("Execution guard rejected")));
+    assert!(history.iter().find(|m| m.tool_call_id.as_deref() == Some("actual-check")).unwrap().content.contains("\"verified\":true"));
+}
+
 #[tokio::test]
 #[cfg(unix)]
 #[ignore = "Requires Node and POML_CLI; synthetic provider and temporary shell/file fixtures only"]

@@ -44,6 +44,7 @@ pub(crate) async fn route_in(root:&Path,state:&GatewayState,ctx:Context,input:&s
         if decision.probability<profile.minimum_probability {return Ok((state.db.load_context(&ctx.user_id)?,"low_probability",probability));}
         let target=profile.state_map.get(&decision.label).ok_or_else(||anyhow::anyhow!("Decision target missing"))?;
         if ctx.active_state.as_deref()==Some(target) {return Ok((state.db.load_context(&ctx.user_id)?,"unchanged",probability));}
+        super::action_contracts::require_for_workflow(&ctx.user_id, &workflow, target)?;
         // Revalidate file policy as well as DB state after the asynchronous call.
         anyhow::ensure!(decision_profiles::load(&root.join("decisions"),name)?==profile,"Decision profile changed during classification");
         let mut next=ctx.clone();next.active_state=Some(target.clone());next.settings.active_state=Some(target.clone());

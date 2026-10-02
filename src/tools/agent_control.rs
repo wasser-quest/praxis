@@ -22,6 +22,7 @@ pub async fn run(
         .map_err(|e| format!("Failed to load context: {}", e))?;
 
     let signal_name = format!("{:?}", signal);
+    let before = ctx.clone();
 
     match signal {
         AgentControlSignal::Next => {
@@ -51,6 +52,7 @@ pub async fn run(
             }
         }
         AgentControlSignal::Complete => {
+            crate::gateway::action_contracts::require(user_id, "_complete").map_err(|e| e.to_string())?;
             ctx.settings.done = true;
         }
         AgentControlSignal::Path(path) => {
@@ -86,6 +88,7 @@ pub async fn run(
         }
     }
 
+    crate::gateway::action_contracts::validate_context(&before, &ctx).map_err(|e| e.to_string())?;
     db.save_context(&ctx)
         .map_err(|e| format!("Failed to save context: {}", e))?;
 

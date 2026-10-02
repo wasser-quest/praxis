@@ -168,6 +168,10 @@ impl LLMRouter {
         model: Option<&str>,
     ) -> anyhow::Result<ChatWithToolsResult> {
         let _task = crate::gateway::task_control::begin(user_id)?;
+        let context = db.load_context(user_id)?;
+        let workflow = crate::sm::load_file(crate::gateway::prompt::workflow_name(&context))
+            .map_err(|e| anyhow::anyhow!("Cannot load verification policy: {e}"))?;
+        crate::gateway::action_contracts::bind(user_id, crate::gateway::prompt::workflow_name(&context), &workflow, std::path::Path::new("."))?;
         let mut tools = tools;
         for tool in &mut tools { crate::tools::tool_output::augment_definition(tool); }
         if !tools.is_empty() && crate::db::tools::get(db, "read_tool_result").is_ok_and(|t| t.is_enabled) {
@@ -229,7 +233,10 @@ impl LLMRouter {
             // If no tool calls, we're done
             let tool_calls = match response.tool_calls {
                 Some(calls) if !calls.is_empty() => calls,
-                _ => break,
+                _ => {
+                    crate::gateway::action_contracts::require(user_id, "_complete")?;
+                    break;
+                }
             };
 
             // Execute each tool call
@@ -253,7 +260,10 @@ impl LLMRouter {
                 tracing::info!(tool = %tool_call.function.name, args_bytes = tool_call.function.arguments.len(), "Executing tool call");
 
                 // Handle agent control signals specially
+                crate::gateway::action_contracts::before_tool(user_id, &tool_call.function.name)?;
                 let result_str = match tool_call.function.name.as_str() {
+                    "run_check" => crate::gateway::action_contracts::run(user_id, &tool_call.id, &args).await
+                        .unwrap_or_else(|e| format!("Error: {e}")),
                     "read_tool_result" => crate::tools::tool_output::run(db, user_id, &args)
                         .unwrap_or_else(|e| format!("Error: {e}")),
                     "use_skill" => crate::tools::use_skill::run(db, &args).await
@@ -261,14 +271,15 @@ impl LLMRouter {
                     "update_template" => crate::tools::update_template::run(db, &args).await
                         .unwrap_or_else(|e| format!("Error: {}", e)),
                     "agent_complete" => {
-                        agent_signal = AgentSignalFromTool::Done;
-                        crate::tools::agent_control::run(
+                        match crate::tools::agent_control::run(
                             db,
                             user_id,
                             crate::tools::agent_control::AgentControlSignal::Complete,
                         )
-                        .await
-                        .unwrap_or_else(|e| format!("Error: {}", e))
+                        .await {
+                            Ok(result) => { agent_signal = AgentSignalFromTool::Done; result }
+                            Err(error) => format!("Error: {error}"),
+                        }
                     }
                     "agent_next" => {
                         agent_signal = AgentSignalFromTool::Next;
@@ -598,6 +609,7 @@ impl LLMRouter {
             }
 
             if agent_signal == AgentSignalFromTool::Done {
+                crate::gateway::action_contracts::require(user_id, "_complete")?;
                 break;
             }
         }

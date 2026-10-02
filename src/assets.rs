@@ -33,6 +33,7 @@ macro_rules! asset {
 const BUNDLED_ASSETS: &[Asset] = &[
     asset!("contexts/standard.sm"),
     asset!("contexts/20-tasks.sm"),
+    asset!("contexts/verified-coding.sm"),
     asset!("templates/20-tasks.poml"),
     asset!("workflows/tts-api.json"),
     asset!("workflows/tts-qwen3-api.json"),
