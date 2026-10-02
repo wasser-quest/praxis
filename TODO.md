@@ -10,6 +10,7 @@
 - [x] Free router integration (`settings.use_freerouter`)
 - [x] Decision routing (pre-request, CAS commit, failure-safe)
 - [x] Four-arm experiment runner and offline evidence-scoring validation (live comparison remains open)
+- [x] Ollama chat/System One integration with model selection and probability-threshold routing (live comparison remains open)
 - [x] Context compaction before requests (shared service)
 
 ## In Progress 🔄

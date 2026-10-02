@@ -74,11 +74,17 @@ fn copy_directory(source: &std::path::Path, target: &std::path::Path) -> anyhow:
     Ok(())
 }
 
+struct StateTaskModel<'a> {
+    name: &'a str,
+    provider: &'a str,
+    thinking: &'a str,
+}
+
 async fn run_state_task(
     task: &serde_json::Value,
     arm: &str,
     out: &std::path::Path,
-    model: &str,
+    model: StateTaskModel<'_>,
     decision_profile: Option<crate::gateway::decision_profiles::DecisionProfile>,
     inference_kind: &str,
     provider_factory: impl FnOnce(PathBuf) -> Box<dyn LLMProvider>,
@@ -117,13 +123,13 @@ async fn run_state_task(
         .ok_or_else(|| anyhow::anyhow!("Missing prompt"))?
         .replace("{fixture}", &fixture_file.to_string_lossy());
     let mut ctx = db.load_context(&user)?;
-    ctx.settings.provider = Some("llamacpp".into());
-    ctx.settings.model = Some(model.into());
+    ctx.settings.provider = Some(model.provider.into());
+    ctx.settings.model = Some(model.name.into());
     ctx.settings.sm_file = Some("20-tasks".into());
     ctx.settings.system_template = Some("20-tasks".into());
     ctx.active_state = Some(task["initial_state"].as_str().unwrap_or("standard").into());
     ctx.settings.active_state = ctx.active_state.clone();
-    ctx.settings.thinking_mode = "low".into();
+    ctx.settings.thinking_mode = model.thinking.into();
     ctx.settings.show_thinking = true;
     ctx.settings.compaction_enabled = false;
     ctx.settings.max_llm_turns = Some(1); // real chat tool-followup pipeline
@@ -159,7 +165,7 @@ async fn run_state_task(
         secrets: Default::default(),
         llm: crate::gateway::LlmHandle::new(LLMRouter::with_providers(
             vec![Box::new(provider)],
-            "llamacpp".into(),
+            model.provider.into(),
             vec![],
             ResilienceConfig {
                 max_attempts: 1,
@@ -203,6 +209,13 @@ async fn local_model_live_state_task() -> anyhow::Result<()> {
     );
     let url = std::env::var("PRAXIS_LIVE_URL")?;
     let model = std::env::var("PRAXIS_LIVE_MODEL")?;
+    let provider = std::env::var("PRAXIS_LIVE_PROVIDER").unwrap_or_else(|_| "llamacpp".into());
+    anyhow::ensure!(
+        ["llamacpp", "ollama"].contains(&provider.as_str()),
+        "Unsupported live provider"
+    );
+    let thinking = std::env::var("PRAXIS_LIVE_THINKING")
+        .unwrap_or_else(|_| if provider == "ollama" { "auto" } else { "low" }.into());
     let out = PathBuf::from(std::env::var("PRAXIS_LIVE_ARTIFACTS")?);
     let id = std::env::var("PRAXIS_STATE_CASE")?;
     let arm = std::env::var("PRAXIS_STATE_ARM")?;
@@ -223,13 +236,31 @@ async fn local_model_live_state_task() -> anyhow::Result<()> {
         None
     };
     let solver_model = model.clone();
-    run_state_task(task, &arm, &out, &model, profile, "live", move |_| {
-        Box::new(LlamaCppProvider::new(
-            std::env::var("PRAXIS_LIVE_API_KEY").ok(),
-            solver_model,
-            url,
-        ))
-    })
+    let use_ollama = provider == "ollama";
+    run_state_task(
+        task,
+        &arm,
+        &out,
+        StateTaskModel {
+            name: &model,
+            provider: &provider,
+            thinking: &thinking,
+        },
+        profile,
+        "live",
+        move |_| {
+            let key = std::env::var("PRAXIS_LIVE_API_KEY").ok();
+            if use_ollama {
+                Box::new(crate::gateway::llm::ollama::OllamaProvider::new(
+                    url.trim_end_matches('/').into(),
+                    solver_model,
+                    key,
+                ))
+            } else {
+                Box::new(LlamaCppProvider::new(key, solver_model, url))
+            }
+        },
+    )
     .await
 }
 
@@ -311,7 +342,11 @@ async fn state_experiment_offline_router_uses_confirmed_file_evidence() -> anyho
             &task,
             "decision",
             &out,
-            "scripted-solver",
+            StateTaskModel {
+                name: "scripted-solver",
+                provider: "llamacpp",
+                thinking: "low",
+            },
             Some(profile),
             "scripted",
             |file| {
@@ -374,6 +409,162 @@ async fn state_experiment_offline_router_uses_confirmed_file_evidence() -> anyho
             if failed { 0 } else { 1 }
         );
         assert_eq!(scored["deterministic_transitions"], json!([]));
+    }
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "Requires real POML_CLI; Ollama chat and System One are local HTTP fixtures"]
+async fn state_experiment_offline_ollama_systemone_preserves_probability_threshold(
+) -> anyhow::Result<()> {
+    use wiremock::{
+        matchers::{method, path},
+        Mock, MockServer, Request, Respond, ResponseTemplate,
+    };
+    struct Classifier {
+        probability: f64,
+    }
+    impl Respond for Classifier {
+        fn respond(&self, request: &Request) -> ResponseTemplate {
+            let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
+            assert_eq!(body["model"], "nimble:latest");
+            let state = body["state"].as_str().unwrap();
+            assert!(!state.contains("acceptable_states") && !state.contains("checks"));
+            let evidence = state.contains("EVIDENCE_ERROR_MARKER");
+            let label = if evidence { "E" } else { "A" };
+            let probability = if evidence { self.probability } else { 0.95 };
+            let criteria = body["questions"]["category"]["criteria"]
+                .as_object()
+                .unwrap();
+            let mut probabilities = serde_json::Map::new();
+            for key in criteria.keys() {
+                probabilities.insert(key.clone(), json!(0.0));
+            }
+            probabilities.insert(label.into(), json!(probability));
+            probabilities.insert(
+                if evidence { "A" } else { "E" }.into(),
+                json!(1.0 - probability),
+            );
+            // Opposing confidence values prove that the probability threshold
+            // uses the selected choice probability, never the confidence metric.
+            ResponseTemplate::new(200).set_body_json(json!({"model":"nimble:latest",
+                "answers":{"category":{"type":"choice","choice":label,"probabilities":probabilities,
+                    "confidence":if probability<0.8 {0.99} else {0.01}}},
+                "usage":{"input_tokens":25,"output_tokens":1}}))
+        }
+    }
+    struct Solver;
+    impl Respond for Solver {
+        fn respond(&self, request: &Request) -> ResponseTemplate {
+            let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
+            assert_eq!(body["model"], "solver:latest");
+            assert_eq!(body["stream"], true);
+            assert!(
+                body.get("think").is_none(),
+                "Use model defaults for ordinary Ollama models"
+            );
+            let messages = body["messages"].as_array().unwrap();
+            let evidence = messages.iter().any(|m| {
+                m["role"] == "tool"
+                    && m["content"]
+                        .as_str()
+                        .is_some_and(|s| s.contains("EVIDENCE_ERROR_MARKER"))
+            });
+            let message = if evidence {
+                json!({"role":"assistant","content":"cause: use math.isclose; regression test"})
+            } else {
+                let prompt = messages.iter().rev().find(|m| m["role"] == "user").unwrap()
+                    ["content"]
+                    .as_str()
+                    .unwrap();
+                let file = prompt.strip_prefix("Read file: ").unwrap();
+                json!({"role":"assistant","content":"","tool_calls":[{"function":{"name":"read_file","arguments":{"path":file}}}]})
+            };
+            ResponseTemplate::new(200).insert_header("content-type","application/x-ndjson")
+                .set_body_string(json!({"model":"solver:latest","message":message,"done":true,"done_reason":"stop",
+                    "prompt_eval_count":50,"eval_count":10}).to_string()+"\n")
+        }
+    }
+    for probability in [0.79, 0.8, 0.95] {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/systemone"))
+            .respond_with(Classifier { probability })
+            .expect(2)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/api/chat"))
+            .respond_with(Solver)
+            .expect(2)
+            .mount(&server)
+            .await;
+        let mut profile = crate::gateway::decision_profiles::load(
+            std::path::Path::new("decisions"),
+            "task-router",
+        )?;
+        profile.backend = crate::gateway::decision_profiles::DecisionBackend::Ollama;
+        profile.endpoint = format!("{}/v1/systemone", server.uri());
+        profile.model = "nimble:latest".into();
+        let outer = tempfile::tempdir()?;
+        let out = outer.path().join("run");
+        let task = json!({"id":"synthetic","initial_state":"standard","acceptable_states":["debugger"],
+            "prompt":"Read file: {fixture}","fixture":"EVIDENCE_ERROR_MARKER: a concrete failure.","checks":["cause","math.isclose"]});
+        let url = server.uri();
+        run_state_task(
+            &task,
+            "decision",
+            &out,
+            StateTaskModel {
+                name: "solver:latest",
+                provider: "ollama",
+                thinking: "auto",
+            },
+            Some(profile),
+            "scripted",
+            move |_| {
+                Box::new(crate::gateway::llm::ollama::OllamaProvider::new(
+                    url,
+                    "solver:latest".into(),
+                    None,
+                ))
+            },
+        )
+        .await?;
+        let expected = if probability >= 0.8 {
+            "debugger"
+        } else {
+            "standard"
+        };
+        let observed: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(out.join("call-01.request.json"))?)?;
+        assert_eq!(observed["observed_state"]["active_state"], expected);
+        let trace: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(out.join("decision-routes.json"))?)?;
+        assert_eq!(trace["events"][1]["route"]["probability"], probability);
+        assert_eq!(
+            trace["events"][1]["route"]["status"],
+            if probability >= 0.8 {
+                "applied"
+            } else {
+                "low_probability"
+            }
+        );
+        assert_eq!(trace["events"][1]["route"]["usage"]["input_tokens"], 25);
+        let scored=std::process::Command::new("python3")
+            .args(["-c","import json,sys; sys.path.insert(0,'scripts'); from bench_state_machine import analyse_run; print(json.dumps(analyse_run(sys.argv[1])))"])
+            .arg(&out).output()?;
+        anyhow::ensure!(scored.status.success(), "Ollama experiment scorer failed");
+        let scored: serde_json::Value = serde_json::from_slice(&scored.stdout)?;
+        assert_eq!(scored["evidence_read"], true);
+        assert_eq!(scored["task_rubric_ok"], true);
+        assert_eq!(scored["policy_followed"], true);
+        assert_eq!(
+            scored["decision_transitions"].as_array().unwrap().len(),
+            usize::from(probability >= 0.8)
+        );
+        assert_eq!(scored["prompt_tokens"], 100);
+        assert_eq!(scored["inference_kind"], "scripted");
     }
     Ok(())
 }

@@ -112,3 +112,89 @@ async fn decision_client_cancellation_and_timeout_do_not_retry() {
     let cancel=tokio_util::sync::CancellationToken::new();cancel.cancel();
     assert!(decision_client::decide(&p,vec!["synthetic".into()],&cancel).await.is_err());
 }
+
+fn ollama_profile(endpoint: String) -> DecisionProfile {
+    serde_json::from_value(json!({
+        "backend":"ollama", "endpoint":endpoint, "model":"nimble:latest",
+        "instructions":"Classify the next task.",
+        "schema":{"category":{"type":"enum","choices":["A","B"]}},
+        "state_field":"category", "state_map":{"A":"standard","B":"debugger"},
+        "criteria":{"A":"Ordinary conversation","B":"Diagnose a software failure"},
+        "timeout_ms":1000, "minimum_probability":0.8
+    })).unwrap()
+}
+
+fn systemone_answer(probability: f64, confidence: f64) -> serde_json::Value {
+    json!({"model":"nimble:latest", "answers":{"category":{
+        "type":"choice", "choice":"B", "probabilities":{"A":1.0-probability,"B":probability},
+        "confidence":confidence}}, "usage":{"input_tokens":25,"output_tokens":1}})
+}
+
+#[tokio::test]
+async fn decision_ollama_systemone_uses_model_state_and_described_choices() {
+    let server=MockServer::start().await;
+    let p=ollama_profile(format!("{}/v1/systemone",server.uri()));
+    Mock::given(method("POST")).and(path("/v1/systemone"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(systemone_answer(0.91,0.15)))
+        .expect(1).mount(&server).await;
+    let result=decision_client::decide(&p,vec!["quoted evidence".into()],&Default::default()).await.unwrap();
+    assert_eq!(result[0].label,"B");
+    assert_eq!(result[0].probability,0.91);
+    assert_eq!(result[0].confidence,Some(0.15));
+    assert_eq!(result[0].usage.as_ref().unwrap().input_tokens,25);
+    let sent=server.received_requests().await.unwrap()[0].body_json::<serde_json::Value>().unwrap();
+    assert_eq!(sent["model"],"nimble:latest");
+    assert_eq!(sent["state"],"quoted evidence");
+    assert_eq!(sent["questions"]["category"]["type"],"choice");
+    assert_eq!(sent["questions"]["category"]["criteria"],json!(p.criteria));
+    assert!(sent.get("contexts").is_none() && sent.get("tools").is_none() && sent.get("stream").is_none());
+}
+
+#[test]
+fn decision_ollama_rejects_incomplete_or_inconsistent_probability_evidence() {
+    let p=ollama_profile("http://127.0.0.1:1/v1/systemone".into());
+    assert!(decision_client::validate_systemone(&p,&systemone_answer(0.91,0.15)).is_ok());
+    for (pointer,value) in [
+        ("/model",json!("different-model")),
+        ("/answers/category/type",json!("score")),
+        ("/answers/category/choice",json!("not-declared")),
+        ("/answers/category/probabilities/B",json!(null)),
+        ("/answers/category/probabilities/B",json!(1.5)),
+        ("/answers/category/probabilities/A",json!(0.5)),
+        ("/answers/category/probabilities/unknown",json!(0.01)),
+        ("/answers/category/confidence",json!(-1)),
+    ] {
+        let mut answer=systemone_answer(0.91,0.15);
+        if let Some(slot)=answer.pointer_mut(pointer) {*slot=value;}
+        else {answer["answers"]["category"]["probabilities"]["unknown"]=value;}
+        assert!(decision_client::validate_systemone(&p,&answer).is_err(),"accepted {pointer}");
+    }
+    assert!(decision_client::validate_systemone(&p,&systemone_answer(0.2,0.99)).is_err(),"Selected choice must be a maximum");
+    let mut missing=systemone_answer(0.91,0.15);
+    missing.as_object_mut().unwrap().remove("usage");
+    assert!(decision_client::validate_systemone(&p,&missing).unwrap().usage.is_none());
+}
+
+#[test]
+fn decision_ollama_profile_enforces_systemone_limits_and_keeps_native_defaults() {
+    use super::decision_profiles::DecisionBackend;
+    assert_eq!(profile("http://127.0.0.1:1/v1/decision".into()).backend,DecisionBackend::Native);
+    let p=ollama_profile("http://127.0.0.1:1/v1/systemone".into());
+    assert!(p.validate().is_ok());
+    let mut extended=p.clone();extended.timeout_ms=60000;assert!(extended.validate().is_ok());
+    let mut bad=p.clone();bad.criteria.remove("A");assert!(bad.validate().is_err());
+    bad=p.clone();bad.endpoint="http://127.0.0.1:1/api/chat".into();assert!(bad.validate().is_err());
+    bad=p.clone();bad.schema["category"]["choices"]=json!(["B"]);bad.state_map.remove("A");bad.criteria.remove("A");assert!(bad.validate().is_err());
+}
+
+#[tokio::test]
+async fn decision_ollama_cancellation_and_timeout_never_retry() {
+    let server=MockServer::start().await;
+    let mut p=ollama_profile(format!("{}/v1/systemone",server.uri()));p.timeout_ms=50;
+    Mock::given(method("POST")).respond_with(ResponseTemplate::new(200)
+        .set_body_json(systemone_answer(0.91,0.15)).set_delay(std::time::Duration::from_secs(1)))
+        .expect(1).mount(&server).await;
+    assert!(decision_client::decide(&p,vec!["synthetic".into()],&Default::default()).await.is_err());
+    let cancel=tokio_util::sync::CancellationToken::new();cancel.cancel();
+    assert!(decision_client::decide(&p,vec!["synthetic".into()],&cancel).await.is_err());
+}

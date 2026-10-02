@@ -2378,7 +2378,7 @@ async function editDecisionProfile(name = '') {
         reevaluate: 'every_step', timeout_ms: 2000, minimum_probability: 0.8
     }, null, 2);
     showModal('Decision profile', `
-        <p>Model, instructions and schema follow the Decision Playground protocol. The endpoint must serve the selected model; this editor does not download models or rent hardware. Do not put credentials in this JSON.</p>
+        <p>Native profiles use the Decision Playground protocol. For Ollama System One, use backend: "ollama" and a /v1/systemone endpoint with a System One model. minimum_probability gates the selected choice's probability; confidence is a separate diagnostic. This editor does not download models or rent hardware. Do not put credentials in this JSON.</p>
         <div class="form-group"><label>Profile name (without .json)</label><input id="decision-profile-name" value="${escapeHtml(name)}" ${name ? 'readonly' : ''}></div>
         <textarea id="decision-profile-json" class="code-editor" style="min-height:360px">${escapeHtml(content)}</textarea>
         <button class="btn btn-primary" onclick="saveDecisionProfile()">Save JSON file</button>

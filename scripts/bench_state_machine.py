@@ -8,6 +8,7 @@ import argparse
 from collections import Counter
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -64,6 +65,9 @@ def analyse_run(root):
     trace_complete = trace.get('complete') is True if arm == 'decision' or trace else True
     route_statuses = Counter()
     decision_elapsed_ms = 0
+    decision_probabilities, decision_confidences = [], []
+    decision_input_tokens = decision_output_tokens = 0
+    decision_usage_complete = True
     read_seen = False
     appropriate_after_evidence = False
     prompt_tokens = completion_tokens = 0
@@ -72,7 +76,7 @@ def analyse_run(root):
     pending_routes = list(routes)
 
     def apply_routes(before_call, actual):
-        nonlocal state, trace_complete, decision_elapsed_ms
+        nonlocal state, trace_complete, decision_elapsed_ms, decision_usage_complete, decision_input_tokens, decision_output_tokens
         matching = [event for event in pending_routes if event.get('before_call') == before_call]
         reevaluate = (fixture.get('decision_profile') or {}).get('reevaluate', 'every_step')
         if arm == 'decision' and reevaluate == 'every_step' and before_call < len(calls) and len(matching) != 1:
@@ -85,6 +89,14 @@ def analyse_run(root):
                 trace_complete = False
                 continue
             route_statuses[status] += 1
+            decision_probabilities.append(route.get('probability'))
+            decision_confidences.append(route.get('confidence'))
+            usage = route.get('usage') or {}
+            valid_usage = all(type(usage.get(key)) is int and usage[key] >= 0 for key in ['input_tokens','output_tokens'])
+            decision_usage_complete = decision_usage_complete and valid_usage
+            if valid_usage:
+                decision_input_tokens += usage['input_tokens']
+                decision_output_tokens += usage['output_tokens']
             elapsed = route.get('elapsed_ms')
             if isinstance(elapsed, (int, float)) and elapsed >= 0:
                 decision_elapsed_ms += elapsed
@@ -153,6 +165,7 @@ def analyse_run(root):
     apply_routes(len(calls), final_state)
     if pending_routes or (arm == 'decision' and not routes):
         trace_complete = False
+        decision_usage_complete = False
     if final_state is not None and state != final_state:
         deterministic.append({'from': state, 'to': final_state, 'after_call': 'last'})
     answer = http.get('response') or ''
@@ -176,6 +189,10 @@ def analyse_run(root):
                 deterministic_transitions=deterministic, redundant_state_writes=no_ops,
                 decision_transitions=decision_transitions, decision_calls=sum(route_statuses.values()),
                 decision_statuses=dict(route_statuses), decision_elapsed_ms=decision_elapsed_ms,
+                decision_probabilities=decision_probabilities, decision_confidences=decision_confidences,
+                decision_usage_complete=decision_usage_complete,
+                decision_input_tokens=decision_input_tokens if decision_usage_complete else None,
+                decision_output_tokens=decision_output_tokens if decision_usage_complete else None,
                 routing_trace_complete=trace_complete, model_state_attempts=state_attempts,
                 policy_followed=policy, tool_attempts=dict(Counter(attempts)),
                 blocked_batches=len(list(root.glob('call-*.guard.json'))),
@@ -230,6 +247,9 @@ def write_reports(output, rows, requested):
                           decision_transitions=sum(len(r['decision_transitions']) for r in selected),
                           decision_calls=sum(r['decision_calls'] for r in selected),
                           decision_elapsed_ms=sum(r['decision_elapsed_ms'] for r in selected),
+                          decision_usage_reported_runs=sum(r['decision_usage_complete'] for r in selected),
+                          decision_input_tokens=sum(r['decision_input_tokens'] for r in selected) if all(r['decision_usage_complete'] for r in selected) else None,
+                          decision_output_tokens=sum(r['decision_output_tokens'] for r in selected) if all(r['decision_usage_complete'] for r in selected) else None,
                           routing_trace_complete=sum(r['routing_trace_complete'] for r in selected),
                           redundant_state_writes=sum(len(r['redundant_state_writes']) for r in selected),
                           usage_reported_runs=sum(r['usage_complete'] for r in selected),
@@ -247,7 +267,7 @@ def write_reports(output, rows, requested):
                             'A higher state-switch count is not itself a benefit.',
                             'Runtime initialization/non-model changes are counted separately.',
                             'Latency includes queueing; concurrent GPU load is not controlled.',
-                            'Token counts cover the solving model only; classifier token usage is unavailable.',
+                            'Paired token deltas cover the solver only; classifier usage is reported separately when available.',
                             'Router elapsed time includes overhead; end-to-end latency already includes it.',
                             'Twenty distinct tasks with four arms means eighty task runs, not eighty distinct tasks.',
                             'One run per task/arm measures this corpus, not general reliability or statistical significance.',
@@ -287,13 +307,20 @@ def build_parser():
     parser.add_argument('--test-binary', required=True, type=Path)
     parser.add_argument('--runtime-root', type=Path, default=Path.cwd())
     parser.add_argument('--url', required=True)
+    parser.add_argument('--provider', choices=['llamacpp','ollama'], default='llamacpp')
     parser.add_argument('--model', required=True)
+    parser.add_argument('--thinking-mode', choices=['auto','off','on','low','medium','high','xhigh'],
+                        help='All arms use the same setting; default low for llama.cpp, auto for Ollama')
     parser.add_argument('--poml-cli', required=True, type=Path)
     parser.add_argument('--output', required=True, type=Path)
     parser.add_argument('--cases', default=','.join(f'{i:02}' for i in range(1,21)))
     parser.add_argument('--arms', default='fixed,entry,continuous,decision')
     parser.add_argument('--decision-profile', type=Path, help='Trusted profile; default: runtime-root/decisions/task-router.json')
-    parser.add_argument('--decision-url', help='Override the full /v1/decision endpoint in the isolated snapshot only')
+    parser.add_argument('--decision-provider', choices=['native','ollama'], help='Default profile backend; Ollama solver defaults to System One')
+    parser.add_argument('--decision-url', help='Full /v1/decision or Ollama /v1/systemone endpoint')
+    parser.add_argument('--decision-model', help='Served router model tag; Ollama defaults to nimble:latest')
+    parser.add_argument('--decision-minimum-probability', type=float, help='Selected-choice probability required to route (default profile value)')
+    parser.add_argument('--decision-timeout-ms', type=int, help='Override router timeout; System One defaults to 60000 ms')
     parser.add_argument('--prepare-only', action='store_true', help='Freeze the experiment without any network requests/inference')
     parser.add_argument('--resume', action='store_true', help='Continue an existing snapshot; completed task/arm pairs are never rerun')
     parser.add_argument('--allow-paid-live-inference', action='store_true')
@@ -323,15 +350,44 @@ def prepare_experiment(args, cases, arms):
         profile = load((args.decision_profile or source / 'decisions/task-router.json').resolve())
         if not isinstance(profile, dict):
             raise ValueError('A trusted Decision profile is required')
+        original_backend = profile.get('backend', 'native')
+        backend = args.decision_provider or ('ollama' if args.provider == 'ollama' and not args.decision_profile else original_backend)
+        profile['backend'] = backend
+        if backend == 'ollama':
+            if original_backend != 'ollama':
+                profile['endpoint'] = args.url.rstrip('/') + '/v1/systemone'
+                profile['model'] = 'nimble:latest'
+                profile['timeout_ms'] = 60000
+            choices = profile['schema'][profile['state_field']]['choices']
+            if not profile.get('criteria'):
+                profile['criteria'] = {}
+                for label in choices:
+                    description = re.search(r'(?:^|\n)' + re.escape(label) + r':\s*([^\n]+)', profile['instructions'])
+                    profile['criteria'][label] = description.group(1) if description else profile['state_map'][label]
         profile['endpoint'] = validate_url(args.decision_url or profile['endpoint'])
+        if args.decision_model:
+            profile['model'] = args.decision_model
+        if args.decision_minimum_probability is not None:
+            value = args.decision_minimum_probability
+            if not math.isfinite(value) or not 0 <= value <= 1:
+                raise ValueError('Decision probability threshold must be in [0,1]')
+            profile['minimum_probability'] = value
+        if args.decision_timeout_ms is not None:
+            profile['timeout_ms'] = args.decision_timeout_ms
+        limit = 300000 if backend == 'ollama' else 10000
+        if not 50 <= profile.get('timeout_ms', 2000) <= limit:
+            raise ValueError('Decision timeout outside backend limits')
+        if backend == 'ollama' and not profile['endpoint'].endswith('/v1/systemone'):
+            raise ValueError('Ollama Decision endpoint must end in /v1/systemone')
     configuration = dict(cases=cases, arms=arms, url=validate_url(args.url.rstrip('/')), model=args.model,
+                         provider=args.provider, thinking_mode=args.thinking_mode or ('auto' if args.provider == 'ollama' else 'low'),
                          decision_profile=profile, test_binary_sha256=digest(args.test_binary.resolve()),
                          observer_sha256=digest(Path(__file__).resolve()),
                          poml_cli_sha256=digest(args.poml_cli.resolve()))
     output = args.output.resolve()
     if args.resume:
         plan = load(output / 'plan.json')
-        if not plan or plan.get('version') != 2 or plan['configuration'] != configuration:
+        if not plan or plan.get('version') != 3 or plan['configuration'] != configuration:
             raise ValueError('Resume configuration differs; use the original inputs or a fresh output directory')
         verify_snapshot(plan)
         return plan
@@ -350,7 +406,7 @@ def prepare_experiment(args, cases, arms):
     if profile is not None:
         (frozen / 'decisions').mkdir()
         (frozen / 'decisions/task-router.json').write_text(json.dumps(profile, ensure_ascii=False, indent=2))
-    plan = dict(version=2, configuration=configuration, requested_runs=len(cases)*len(arms),
+    plan = dict(version=3, configuration=configuration, requested_runs=len(cases)*len(arms),
                 runtime_root=str(frozen), test_binary=str(binary), poml_cli=str(args.poml_cli.resolve()),
                 decision_profile=profile,
                 hashes={str(path.relative_to(frozen)): digest(path) for path in sorted(frozen.rglob('*')) if path.is_file()})
@@ -369,9 +425,13 @@ def verify_snapshot(plan):
         raise ValueError('Experiment observer changed; refuse to mix results')
 
 
-def backend_ready(url, model, headers=None):
-    def get(path):
-        request = urllib.request.Request(url.rstrip('/') + path, headers=headers or {})
+def backend_ready(url, model, headers=None, *, provider='llamacpp', require_tools=False, require_systemone=False):
+    def request_json(path, payload=None):
+        request_headers = dict(headers or {})
+        if payload is not None:
+            request_headers['Content-Type'] = 'application/json'
+        request = urllib.request.Request(url.rstrip('/') + path, headers=request_headers,
+                                         data=json.dumps(payload).encode() if payload is not None else None)
         with urllib.request.urlopen(request, timeout=15) as response:
             if response.status != 200:
                 raise ValueError('Backend is not ready')
@@ -379,8 +439,29 @@ def backend_ready(url, model, headers=None):
             if len(body) > 1024*1024:
                 raise ValueError('Backend readiness response exceeds limit')
             return json.loads(body)
-    get('/health')
-    props = get('/props')
+    if provider == 'ollama':
+        entries = request_json('/api/tags').get('models', [])
+        canonical = model if ':' in model.rsplit('/', 1)[-1] else model + ':latest'
+        aliases = {model, canonical}
+        matching = [entry for entry in entries if entry.get('name') in aliases or entry.get('model') in aliases]
+        if len(matching) != 1 or not isinstance(matching[0].get('digest'), str) or not matching[0]['digest']:
+            raise ValueError('Selected Ollama model is missing or has no stable digest; inspect /api/tags')
+        props = request_json('/api/show', {'model': model})
+        capabilities = props.get('capabilities')
+        if require_tools and isinstance(capabilities, list) and 'tools' not in capabilities:
+            raise ValueError('The selected solving model does not support tools')
+        version = None
+        if require_systemone:
+            version = request_json('/api/version').get('version')
+            match = re.fullmatch(r'(\d+)\.(\d+)\.(\d+)(?:[-+].*)?', version or '')
+            if not match or tuple(map(int, match.groups())) < (0,35,0):
+                raise ValueError('System One requires Ollama 0.35.0 or later')
+        identity = {key: props.get(key) for key in ['template','system','parameters','model_info','capabilities']}
+        selected_alias = next(matching[0][key] for key in ['name', 'model'] if matching[0].get(key) in aliases)
+        return dict(provider='ollama', model_alias=selected_alias, model_digest=matching[0]['digest'],
+                    ollama_version=version, metadata_sha256=hashlib.sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest())
+    request_json('/health')
+    props = request_json('/props')
     if props.get('model_alias') != model:
         raise ValueError('Loaded model differs from the requested model')
     # Do not archive provider configuration, keys, or arbitrary response bodies.
@@ -414,17 +495,20 @@ def main():
         return
     env = os.environ.copy()
     env.pop('GPU_ROUTER_URL', None)
-    env.update(POML_CLI=str(cli), PRAXIS_LIVE_URL=args.url, PRAXIS_LIVE_MODEL=args.model, ROOT_DIR=str(cwd))
+    env.update(POML_CLI=str(cli), PRAXIS_LIVE_URL=args.url.rstrip('/'), PRAXIS_LIVE_MODEL=args.model, ROOT_DIR=str(cwd),
+               PRAXIS_LIVE_PROVIDER=args.provider, PRAXIS_LIVE_THINKING=plan['configuration']['thinking_mode'])
     env.pop('PRAXIS_DECISION_PROFILE', None)
     if 'decision' in arms:
         env['PRAXIS_DECISION_PROFILE'] = str(cwd / 'decisions/task-router.json')
     headers = {'Authorization': 'Bearer '+env['PRAXIS_LIVE_API_KEY']} if env.get('PRAXIS_LIVE_API_KEY') else {}
-    endpoints = [('solver', args.url, args.model, headers)]
+    endpoints = [('solver', args.url, args.model, headers, dict(provider=args.provider, require_tools=args.provider=='ollama'))]
     if 'decision' in arms:
         profile = plan['decision_profile']
-        endpoints.append(('decision', profile['endpoint'].rsplit('/', 1)[0].removesuffix('/v1'), profile['model'], {}))
+        base = profile['endpoint'].rsplit('/', 1)[0].removesuffix('/v1')
+        ollama = profile.get('backend') == 'ollama'
+        endpoints.append(('decision', base, profile['model'], {}, dict(provider='ollama' if ollama else 'llamacpp', require_systemone=ollama)))
     try:
-        backends = {name: backend_ready(url, model, auth) for name, url, model, auth in endpoints}
+        backends = {name: backend_ready(url, model, auth, **options) for name, url, model, auth, options in endpoints}
     except Exception:
         (args.output / 'stopped.json').write_text(json.dumps({'phase':'preflight','reason':'Backend unavailable or wrong model; no inference started'}))
         raise SystemExit('Backend preflight failed; no inference started. See stopped.json.')
@@ -441,8 +525,8 @@ def main():
             if (case, arm) in completed:
                 continue
             try:
-                for name, url, model, auth in endpoints:
-                    if backend_ready(url, model, auth) != backends[name]:
+                for name, url, model, auth, options in endpoints:
+                    if backend_ready(url, model, auth, **options) != backends[name]:
                         raise ValueError('Backend changed')
                 verify_snapshot(plan)
             except Exception:
