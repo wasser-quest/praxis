@@ -48,15 +48,21 @@ guards that require additional ones.
    (or remove it for deletion); creations refuse to clobber an existing file.
    Preserve the permissions of existing files. New files use the temporary-file
    default permissions, normally owner-only access on Unix.
-3. Run named checks in order using the existing bounded verifier. Stop on the
-   first failure, timeout or cancellation. Each author timeout still applies, and
+3. Discard disk restoration files so resource samples and check programs see no
+   runtime staging files. Keep original contents and permissions in memory for
+   compensation. Run named checks in order using the existing bounded verifier.
+   Stop on the first failure, timeout or cancellation. Each author timeout still applies, and
    the whole verification sequence has a 300-second deadline. Inspect edited
    files after each passing check and again before committing evidence.
 4. Publish passing receipts together only after every requested check succeeds,
    edited files still match the proposed bytes/permissions, and task identity and
-   workspace revision are unchanged. A committed patch can then satisfy guards.
+   workspace revision are unchanged. Declared resources for every check must still
+   match its sample, including earlier checks after later checks run. A committed
+   patch can then satisfy guards.
 5. Otherwise revoke evidence and restore applied files in reverse order. Restore
    only when a file still matches this patch's published bytes and permissions.
+   Rebuild restoration files from the in-memory originals when needed; an I/O
+   failure during compensation is a rollback conflict.
    Preserve changed files and report conflicts instead of overwriting them.
 
 Normal tool-output archival retains the transaction receipt, proposed before and
@@ -96,9 +102,10 @@ archived receipt, and restoration conflicts are logged only as a count.
 - In-memory snapshots and scope guards do not recover from process termination,
   power loss, or a host crash. There is no durable recovery journal or directory
   fsync protocol. Use an isolated workspace and version control for that boundary.
-- Committed receipts still use the existing per-task observed-tool revision;
-  subsequent edits by another task or external writer are not detected by a
-  workspace tree hash in this slice.
+- Committed receipts use the per-task observed-tool revision and any author
+  declared resource hashes. Later guards recheck those hashes, detecting changes
+  by other tasks or external writers within the declared scope. These are
+  sampling boundaries, not a frozen filesystem; see [execution contracts](EXECUTION_CONTRACTS.md).
 
 Run `cargo test --locked --lib tools::patch_tests` for offline process/file tests.
 The ignored `patch_tools_rollback_then_commit_across_all_three_loops` regression

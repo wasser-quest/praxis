@@ -1,6 +1,9 @@
 //! Opt-in execution evidence. Authority lives in the owned task, never context
 //! JSON or model/tool text. The selected workflow policy is pinned for the task.
-use super::task_control;
+use super::{
+    resource_snapshots::{self, ResourceSnapshot},
+    task_control,
+};
 use crate::{db::contexts::Context, sm::StateMachine};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -19,6 +22,8 @@ pub struct CheckContract {
     pub cwd: String,
     #[serde(default = "default_timeout")]
     pub timeout_secs: u64,
+    #[serde(default)]
+    pub resources: Vec<String>,
 }
 fn default_cwd() -> String {
     ".".into()
@@ -53,6 +58,7 @@ impl CheckContract {
                 )),
             "Check cwd must be relative to the installation root without .."
         );
+        resource_snapshots::validate(&self.resources)?;
         Ok(())
     }
 }
@@ -65,6 +71,7 @@ pub enum Outcome {
     TimedOut,
     Cancelled,
     Error,
+    ResourcesChanged,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -77,6 +84,8 @@ pub struct ExecutionReceipt {
     pub outcome: Outcome,
     pub exit_code: Option<i32>,
     pub verified: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resources: Option<ResourceSnapshot>,
 }
 
 #[derive(Default)]
@@ -113,7 +122,7 @@ impl VerificationState {
         Ok(())
     }
     pub(crate) fn require(&self, target: &str) -> anyhow::Result<()> {
-        let Some((_, _, guards, _)) = &self.policy else {
+        let Some((_, definitions, guards, root)) = &self.policy else {
             return Ok(());
         };
         let Some(checks) = guards.get(target) else {
@@ -122,10 +131,13 @@ impl VerificationState {
         let missing: Vec<_> = checks
             .iter()
             .filter(|name| {
-                !self
-                    .receipts
-                    .get(*name)
-                    .is_some_and(|r| r.verified && r.revision == self.revision)
+                !self.receipts.get(*name).is_some_and(|r| {
+                    r.verified
+                        && r.revision == self.revision
+                        && definitions
+                            .get(*name)
+                            .is_some_and(|contract| resources_current(contract, root, &r.resources))
+                })
             })
             .cloned()
             .collect();
@@ -153,6 +165,7 @@ impl VerificationState {
         outcome: Outcome,
         code: Option<i32>,
         call: &str,
+        resources: Option<ResourceSnapshot>,
     ) -> ExecutionReceipt {
         let receipt = ExecutionReceipt {
             id: uuid::Uuid::new_v4().to_string(),
@@ -162,7 +175,19 @@ impl VerificationState {
             revision,
             outcome,
             exit_code: code,
-            verified: outcome == Outcome::Passed && code == Some(0) && revision == self.revision,
+            verified: outcome == Outcome::Passed
+                && code == Some(0)
+                && revision == self.revision
+                && self
+                    .policy
+                    .as_ref()
+                    .and_then(|(_, checks, _, root)| {
+                        checks
+                            .get(name)
+                            .map(|contract| resources_current(contract, root, &resources))
+                    })
+                    .unwrap_or(false),
+            resources,
         };
         self.receipts.insert(name.into(), receipt.clone());
         receipt
@@ -261,7 +286,7 @@ pub fn before_tool(user: &str, tool: &str) -> anyhow::Result<()> {
 pub fn definition() -> crate::db::tools::Tool {
     crate::db::tools::Tool {
         name: "run_check".into(),
-        description: Some("Run a trusted named check from the active .sm [checks] section. Praxis owns command, cwd and timeout; pass only the check name. A verified receipt permits guarded state/completion transitions for the current task until another potentially mutating tool runs. Exit 0 proves only the configured check passed, not general correctness.".into()),
+        description: Some("Run a trusted named check from the active .sm [checks] section. Praxis owns command, cwd and timeout; pass only the check name. A verified receipt permits guarded state/completion transitions for the current task while declared resources remain unchanged and until another potentially mutating tool runs. Exit 0 proves only the configured check passed, not general correctness.".into()),
         parameters: serde_json::json!({"type":"object","properties":{"name":{"type":"string","minLength":1,"maxLength":128}},"required":["name"],"additionalProperties":false}),
         is_enabled: true,
     }
@@ -316,30 +341,73 @@ pub(crate) fn publish_patch(
     user: &str,
     policy: &PatchPolicy,
     call: &str,
+    resources: &[Option<ResourceSnapshot>],
 ) -> anyhow::Result<Vec<ExecutionReceipt>> {
     anyhow::ensure!(
         task_control::cancellation(user).is_some_and(|token| !token.is_cancelled()),
         "Task cancelled"
+    );
+    anyhow::ensure!(
+        patch_resources_current(policy, resources),
+        "Resource snapshots changed during patch"
     );
     task_control::with_verification(user, |ledger| {
         anyhow::ensure!(
             ledger.task_id == policy.task_id && ledger.revision == policy.revision,
             "Task or workspace revision changed during patch"
         );
-        Ok(policy
+        let receipts: Vec<_> = policy
             .checks
             .iter()
-            .map(|(name, _)| {
-                ledger.finish_check(name, policy.revision, Outcome::Passed, Some(0), call)
+            .zip(resources)
+            .map(|((name, _), snapshot)| {
+                ledger.finish_check(
+                    name,
+                    policy.revision,
+                    Outcome::Passed,
+                    Some(0),
+                    call,
+                    snapshot.clone(),
+                )
             })
-            .collect())
+            .collect();
+        if !receipts.iter().all(|receipt| receipt.verified) {
+            ledger.invalidate();
+            anyhow::bail!("Resource snapshots changed before receipt publication");
+        }
+        Ok(receipts)
     })
+}
+
+pub(crate) fn resources_current(
+    contract: &CheckContract,
+    root: &Path,
+    snapshot: &Option<ResourceSnapshot>,
+) -> bool {
+    if contract.resources.is_empty() {
+        return snapshot.is_none();
+    }
+    snapshot.as_ref().is_some_and(|previous| {
+        resource_snapshots::capture(root, &contract.resources)
+            .is_ok_and(|current| &current == previous)
+    })
+}
+pub(crate) fn patch_resources_current(
+    policy: &PatchPolicy,
+    resources: &[Option<ResourceSnapshot>],
+) -> bool {
+    policy.checks.len() == resources.len()
+        && policy
+            .checks
+            .iter()
+            .zip(resources)
+            .all(|((_, contract), snapshot)| resources_current(contract, &policy.root, snapshot))
 }
 
 pub fn instructions(user: &str) -> String {
     task_control::with_verification(user, |ledger| {
         Ok(match &ledger.policy {
-            Some((_, checks, guards, _)) => format!("\n\n[EXECUTION CONTRACTS]\nAvailable run_check names: {:?}. Required checks by destination (_complete means completion): {:?}. Only runtime receipts authorize these transitions. Run checks after your last mutation. For controlled host edits use inspect_file to obtain expected_sha256, then apply_patch with edits and named checks. Only a committed patch publishes passing evidence; rolled_back or rollback_conflict means incomplete work. Missing evidence blocks completion; report incomplete work honestly.\n", checks.keys().collect::<Vec<_>>(), guards),
+            Some((_, checks, guards, _)) => format!("\n\n[EXECUTION CONTRACTS]\nAvailable run_check names: {:?}. Required checks by destination (_complete means completion): {:?}. Only runtime receipts authorize these transitions. Run checks after your last mutation. Declared resource changes, including external edits, invalidate evidence; rerun the affected checks. For controlled host edits use inspect_file to obtain expected_sha256, then apply_patch with edits and named checks. Only a committed patch publishes passing evidence; rolled_back or rollback_conflict means incomplete work. Missing evidence blocks completion; report incomplete work honestly.\n", checks.keys().collect::<Vec<_>>(), guards),
             None => String::new(),
         })
     }).unwrap_or_default()
@@ -372,16 +440,18 @@ pub async fn run(user: &str, call: &str, args: &serde_json::Value) -> anyhow::Re
         Ok((checks[name].clone(), root.clone(), revision))
     })?;
     let result = execute(&contract, &root, &cancel).await;
-    let (outcome, code, output) = match result {
-        Ok((outcome, output)) => (
+    let (outcome, code, output, resources) = match result {
+        Ok((outcome, output, resources)) => (
             outcome,
             Some(output.exit_code),
             serde_json::to_value(output)?,
+            resources,
         ),
         Err(outcome) => (
             outcome,
             None,
             serde_json::json!({"error":"Check did not complete; no verified evidence produced"}),
+            None,
         ),
     };
     let outcome = if cancel.is_cancelled() {
@@ -390,7 +460,7 @@ pub async fn run(user: &str, call: &str, args: &serde_json::Value) -> anyhow::Re
         outcome
     };
     let receipt = task_control::with_verification(user, |ledger| {
-        Ok(ledger.finish_check(name, revision, outcome, code, call))
+        Ok(ledger.finish_check(name, revision, outcome, code, call, resources))
     })?;
     Ok(serde_json::json!({"receipt":receipt,"output":output}).to_string())
 }
@@ -399,7 +469,14 @@ pub(crate) async fn execute(
     contract: &CheckContract,
     root: &Path,
     cancel: &tokio_util::sync::CancellationToken,
-) -> Result<(Outcome, crate::tools::execute_terminal::TerminalResult), Outcome> {
+) -> Result<
+    (
+        Outcome,
+        crate::tools::execute_terminal::TerminalResult,
+        Option<ResourceSnapshot>,
+    ),
+    Outcome,
+> {
     let root = root.canonicalize().map_err(|_| Outcome::Error)?;
     let cwd = root
         .join(&contract.cwd)
@@ -407,6 +484,17 @@ pub(crate) async fn execute(
         .map_err(|_| Outcome::Error)?;
     if !cwd.starts_with(&root) || !cwd.is_dir() {
         return Err(Outcome::Error);
+    }
+    if cancel.is_cancelled() {
+        return Err(Outcome::Cancelled);
+    }
+    let resources = if contract.resources.is_empty() {
+        None
+    } else {
+        Some(resource_snapshots::capture(&root, &contract.resources).map_err(|_| Outcome::Error)?)
+    };
+    if cancel.is_cancelled() {
+        return Err(Outcome::Cancelled);
     }
     let mut command = tokio::process::Command::new(&contract.program);
     command
@@ -461,9 +549,20 @@ pub(crate) async fn execute(
             },
         ))
     };
-    tokio::select! {
+    let result = tokio::select! {
         biased;
         _ = cancel.cancelled() => Err(Outcome::Cancelled),
         result = tokio::time::timeout(Duration::from_secs(contract.timeout_secs), collect) => result.unwrap_or(Err(Outcome::TimedOut)),
-    }
+    };
+    // End foreground descendants before sampling the resources again.
+    drop(_group);
+    let (outcome, output) = result?;
+    let outcome = if cancel.is_cancelled() {
+        Outcome::Cancelled
+    } else if !resources_current(contract, &root, &resources) {
+        Outcome::ResourcesChanged
+    } else {
+        outcome
+    };
+    Ok((outcome, output, resources))
 }
