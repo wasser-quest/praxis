@@ -1,0 +1,20 @@
+@name verified-capabilities
+@version 1.0
+@steps [working, done]
+
+[state working]
+settings.activated_tools = ["read_file", "inspect_file", "apply_patch", "run_check", "run_workspace_tests", "set_context", "get_context", "agent_complete", "read_tool_result"]
+
+[state done]
+settings.activated_tools = ["agent_complete", "get_context", "read_tool_result"]
+
+[checks]
+build = {"program":"cargo","args":["check","--locked"],"cwd":".","timeout_secs":300,"resources":["src","tests","Cargo.toml","Cargo.lock"]}
+
+[guards]
+done = [build]
+_complete = [build]
+
+[action_guards]
+done = [verified_rust/run_workspace_tests]
+_complete = [verified_rust/run_workspace_tests]

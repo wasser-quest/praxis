@@ -137,8 +137,8 @@ This is a runtime protocol, not a sandbox or formal proof. Trusted check program
 plugins, workflow files and the runtime remain in the trusted computing base.
 Raw shell/file tools can affect resources outside this protocol; external writers
 and already-running background jobs can change files without advancing the
-task ledger or shared revision. Only cooperating transactional patch/recovery
-operations advance the shared revision. Declared scopes detect differences at the
+task ledger or shared revision. Cooperating transactional patches, recovery and contracted mutating plugin
+actions advance the shared revision. Declared scopes detect differences at the
 sampling boundaries, but do not freeze files. Transient writes restored between samples and writes after the
 last sample can escape detection; metadata stability checks cannot provide an
 atomic multi-file snapshot. Resources outside declared scopes are not covered.
@@ -147,18 +147,22 @@ work. Inventory size is bounded, but filesystem I/O latency is not governed by
 the check-process timeout. Archived `verified:true` records a past successful
 sample; guards always evaluate current evidence again.
 
-## Next implementation slices
+## Plugin capabilities and next slices
 
-1. Finish the [four-arm Decision-router experiment](DECISION_ROUTER_EXPERIMENT.md)
-   and compare task behavior, policy compliance and cost on live models.
-2. Generalize named checks and patch receipts into plugin action/effect contracts
-   with typed preconditions/postconditions, idempotency and explicit rollback or
-   compensation semantics. The current host-file implementation is a foundation;
-   a generic plugin contract lifecycle is still missing.
-3. Extend `.sm` guards beyond named checks to general runtime-verified facts and
-   receipts that model-written context cannot forge.
-4. Gradually replace raw terminal orchestration with semantic capabilities.
-5. Evaluate a compact Praxis Decision IR after those semantics and evidence exist.
+[Plugin action contracts](PLUGIN_ACTION_CONTRACTS.md) now add optional action/effect
+contracts, independent pre/post checks, explicit compensation, task-owned action
+receipts and `[action_guards]`. The opt-in `verified-capabilities` workflow requires
+both a named build receipt and a semantic workspace-tests action receipt.
+Contracted read-only/verification tools preserve evidence; contracted writes
+invalidate cooperating tasks and advance the shared revision before effects.
+The physical canonical root and action definitions are pinned for each task.
+
+The user accepted the live three-task/four-arm Ollama pilot as functional routing
+evidence. It does not establish a quality benefit; broader evaluation and observer
+fixes remain separate. Next execution work is richer dynamic verified facts,
+additional adapters and remote reconciliation, broader migration from raw shell
+orchestration, then compact Praxis Decision IR. Generic compensation does not
+replace the durable native file-patch journal.
 
 Run `cargo test --locked --lib action_contract` for the offline contract tests.
 The handler regression `contract_agent_rejects_unverified_completion_then_recovers`

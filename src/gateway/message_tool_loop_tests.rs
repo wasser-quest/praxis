@@ -272,6 +272,43 @@ fn assert_paired_history(state: &GatewayState, user: &str, expected_calls: usize
 
 #[cfg(unix)]
 #[tokio::test]
+#[ignore = "Requires the real Microsoft POML CLI; model, handler and checks are offline"]
+async fn capability_agent_requires_receipt_then_recovers_with_real_plugin() {
+    let workflow = tempfile::Builder::new().prefix("capability-workflow-").suffix(".sm").tempfile_in("contexts").unwrap();
+    std::fs::write(workflow.path(), "@steps [working, done]\n[state working]\nsettings.activated_tools = [\"verify_workspace\", \"agent_complete\"]\n[state done]\nsettings.activated_tools = [\"agent_complete\"]\n[action_guards]\n_complete = [fixture/verify_workspace]\n").unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let script = dir.path().join("request.sh");
+    std::fs::write(&script,"printf '{\"requested\":true}'").unwrap();
+    let (mut state,user,requests) = fixture(dir.path(),vec![
+        Step::Reply(reply(None,vec![call("early-complete","agent_complete",serde_json::json!({}))])),
+        Step::Reply(reply(None,vec![call("actual-capability","verify_workspace",serde_json::json!({}))])),
+        Step::Reply(reply(Some("Verified completion. [[AGENT:COMPLETE]]"),vec![])),
+    ]);
+    let mut registry = crate::plugins::PluginRegistry::new();
+    registry.register(serde_json::from_value(serde_json::json!({
+        "name":"fixture","version":"1","description":"fixture","tools":[{
+            "name":"verify_workspace","description":"verify","parameters":{"type":"object","properties":{},"additionalProperties":false},
+            "handler":{"type":"script","path":script,"interpreter":"/bin/sh"},
+            "contract":{"effect":"verification","idempotency":"idempotent","timeout_secs":5,"postconditions":[{"program":"/bin/true"}]}
+        }]
+    })).unwrap());
+    state.plugins = Arc::new(registry);
+    state.db.merge_context(&user,serde_json::json!({"settings.sm_file":workflow.path().file_stem().unwrap().to_str().unwrap(),"settings.max_llm_turns":8,"settings.max_tool_calls":8,"settings.compaction_enabled":false})).unwrap();
+    let result = crate::gateway::agent_loop::run_agent_loop(&state,&user,"Verify before completing.",Default::default(),None).await.unwrap();
+    assert!(result.completed);
+    assert!(result.response.contains("Verified completion"));
+    assert_eq!(requests.lock().unwrap().len(),3);
+    assert!(requests.lock().unwrap()[0].tools.as_ref().unwrap().iter().any(|t|t.function.name=="verify_workspace"));
+    let history = state.db.get_messages(&user,100).unwrap();
+    assert!(history.iter().find(|m|m.tool_call_id.as_deref()==Some("early-complete")).unwrap().content.contains("requires current verified capabilities"));
+    let output:serde_json::Value = serde_json::from_str(&history.iter().find(|m|m.tool_call_id.as_deref()==Some("actual-capability")).unwrap().content).unwrap();
+    assert_eq!(output["receipt"]["verified"],true);
+    assert!(crate::gateway::task_control::cancellation(&user).is_none());
+    workflow.close().unwrap();
+}
+
+#[cfg(unix)]
+#[tokio::test]
 #[ignore = "Requires the real Microsoft POML CLI; checks and model are offline"]
 async fn contract_agent_rejects_unverified_completion_then_recovers() {
     std::fs::create_dir_all("contexts").unwrap();

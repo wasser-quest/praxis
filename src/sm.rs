@@ -71,6 +71,9 @@ pub struct StateMachine {
     /// Destination state (or `_complete`) -> required current check receipts.
     #[serde(default)]
     pub guards: HashMap<String, Vec<String>>,
+    /// Destination -> task-owned, verified plugin capability receipts.
+    #[serde(default)]
+    pub action_guards: HashMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -195,7 +198,7 @@ pub fn parse(content: &str) -> Result<StateMachine, SmError> {
                     current_state_name = None;
                     current_section = Some("tool_groups".to_string());
                 }
-                "checks" | "guards" => {
+                "checks" | "guards" | "action_guards" => {
                     current_state_name = None;
                     current_section = Some(parts[0].to_string());
                 }
@@ -278,6 +281,13 @@ pub fn parse(content: &str) -> Result<StateMachine, SmError> {
                     return Err(SmError::ParseError("Check names must be unique identifiers".into()));
                 }
             }
+            Some("action_guards") => {
+                let (key, value) = parse_assignment(trimmed, line_num)?;
+                let names: Vec<String> = parse_array(&value).into_iter().map(|s| s.trim_matches('"').to_string()).collect();
+                if !value.starts_with('[') || !value.ends_with(']') || sm.action_guards.insert(key, names).is_some() {
+                    return Err(SmError::ParseError("Action guards must be unique arrays of plugin/tool names".into()));
+                }
+            }
             Some("guards") => {
                 let (key, value) = parse_assignment(trimmed, line_num)?;
                 if !value.starts_with('[') || !value.ends_with(']') || sm.guards.insert(key, parse_array(&value).into_iter().map(|s| s.trim_matches('"').to_string()).collect()).is_some() {
@@ -300,6 +310,15 @@ pub fn parse(content: &str) -> Result<StateMachine, SmError> {
     for (target, required) in &sm.guards {
         if (target != "_complete" && (target == "_default" || !sm.states.contains_key(target))) || required.is_empty() || required.iter().any(|name| !sm.checks.contains_key(name)) {
             return Err(SmError::ParseError(format!("Invalid guard '{target}': expected a state or _complete and declared checks")));
+        }
+    }
+    for (target, names) in &sm.action_guards {
+        let mut seen = std::collections::HashSet::new();
+        if (target != "_complete" && (target == "_default" || !sm.states.contains_key(target))) || names.is_empty() || names.len() > 16 || names.iter().any(|name| {
+            let parts: Vec<_> = name.split('/').collect();
+            parts.len() != 2 || !parts.iter().all(|part| crate::plugins::contracts::identifier(part)) || !seen.insert(name)
+        }) {
+            return Err(SmError::ParseError(format!("Invalid action guard '{target}': expected unique plugin/tool identifiers")));
         }
     }
     Ok(sm)

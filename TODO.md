@@ -20,7 +20,9 @@
 
 ### Verified Execution — next sequence
 - [x] Named-check receipts, guarded transitions/completion and transactional host-file patches
-- [ ] Generic plugin action/effect contracts with preconditions, postconditions, idempotency and compensation
+- [x] Optional plugin action/effect contracts, independent pre/post verification, bounded execution and compensation
+- [x] Task-owned action receipts and `.sm` action receipt guards
+- [x] Opt-in semantic Rust workspace-tests capability (verified-capabilities example)
 - [ ] General runtime-verified facts/receipts in `.sm` transition guards
 - [ ] Semantic capabilities replacing raw terminal orchestration gradually
 - [ ] Compact Praxis Decision IR after execution semantics and evaluation evidence
