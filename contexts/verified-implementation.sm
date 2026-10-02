@@ -1,11 +1,17 @@
 @name verified-implementation
-@version 1.0
+@version 1.1
 @steps [working, done]
 
 [state working]
+settings.system_template = "verified-implementation"
+settings.use_decision_router = false
+settings.decision_profile = "off"
 settings.activated_tools = ["execute_decision", "inspect_file", "modify_source", "build_workspace", "run_workspace_tests", "agent_complete", "get_context", "read_tool_result"]
 
 [state done]
+settings.system_template = "verified-implementation"
+settings.use_decision_router = false
+settings.decision_profile = "off"
 settings.activated_tools = ["execute_decision", "agent_complete", "get_context", "read_tool_result"]
 
 [decision_ir]
