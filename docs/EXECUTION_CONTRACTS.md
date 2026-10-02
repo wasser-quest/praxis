@@ -152,7 +152,8 @@ sample; guards always evaluate current evidence again.
 [Plugin action contracts](PLUGIN_ACTION_CONTRACTS.md) now add optional action/effect
 contracts, independent pre/post checks, explicit compensation, task-owned action
 receipts and `[action_guards]`. The opt-in `verified-capabilities` workflow requires
-both a named build receipt and a semantic workspace-tests action receipt.
+native semantic build and workspace-tests action receipts; the named build
+check remains available to native patch transactions.
 Contracted read-only/verification tools preserve evidence; contracted writes
 invalidate cooperating tasks and advance the shared revision before effects.
 The physical canonical root and action definitions are pinned for each task.

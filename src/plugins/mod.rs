@@ -49,7 +49,14 @@ pub enum PluginHandler {
     Http { url: String, method: String },
     #[serde(rename = "script")]
     Script { path: String, interpreter: String },
+    /// Native verification has no helper script, URL, or model-selected command.
+    #[serde(rename = "verification")]
+    Verification(VerificationAdapter),
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct VerificationAdapter {}
 
 pub struct PluginRegistry {
     plugins: HashMap<String, Plugin>,
@@ -220,6 +227,9 @@ impl PluginRegistry {
                         "Contracted tools require task-owned execution"
                     );
                     return match &tool.handler {
+                        PluginHandler::Verification(_) => {
+                            anyhow::bail!("Native verification requires an action contract")
+                        }
                         PluginHandler::Builtin { name } => {
                             minimax_image::execute_builtin(name, args).await
                         }

@@ -7,10 +7,11 @@ plugins without contracts keep their existing behavior.
 
 ## First use
 
-From the Praxis repository root:
+After rebuilding Praxis from this revision, update the plugin from the repository root:
 
 ```bash
-cp -R examples/plugins/verified-rust plugins/verified-rust
+mkdir -p plugins/verified-rust
+cp examples/plugins/verified-rust/plugin.json plugins/verified-rust/plugin.json
 ```
 
 Use your configured `PLUGINS_DIR` if it differs from `plugins`. Restart Praxis
@@ -18,14 +19,20 @@ to load the plugin, then select `verified-capabilities` as the `.sm` workflow.
 Run Praxis with `ROOT_DIR` pointing to the Rust project being verified. Adapt
 the author-owned commands and resource scopes to that project.
 
-The model calls `run_workspace_tests({"scope":"workspace"})`. The script only
-acknowledges the request; Praxis independently executes
-`cargo test --locked --workspace` once as the postcondition. A zero exit status
-and fresh source snapshots produce the runtime receipt. The example workflow
-requires both the named `build` check and `verified_rust/run_workspace_tests`
-before entering `done` or completing. It permits scoped `apply_patch` edits and
-provides the first semantic alternative to raw terminal orchestration.
-The example is opt in, and does not install or run itself.
+The model calls `build_workspace({"scope":"workspace"})` and
+`run_workspace_tests({"scope":"workspace"})`. The native verification adapter
+runs the manifest's `cargo build --locked --workspace` or
+`cargo test --locked --workspace` check exactly once. A zero exit status and fresh
+source snapshots produce the corresponding runtime receipt. Both capabilities
+must be verified before entering `done` or completing; a successful build alone
+cannot authorize completion.
+
+The example permits scoped `apply_patch` edits, with its named `build` check
+retained for native patch commit/rollback. It offers semantic build/test actions
+instead of raw terminal or `run_check` orchestration. It is opt in and does not
+install or run itself. Upgrading from plugin v1.0 only requires replacing the
+manifest and restarting; the former request script is no longer used. Start a
+new task after changing the pinned workflow or capability definitions.
 
 ## Manifest
 
@@ -85,8 +92,8 @@ The initial input schema supports a closed flat object with string, boolean,
 integer and number properties, required fields, enums, string length bounds
 and numeric bounds. Unsupported nested schemas/keywords fail closed.
 Inputs are checked before effects; model-supplied contracts are rejected as
-undeclared fields. Script and HTTP GET/POST handlers are supported. Builtin
-handlers require a future semantic adapter. Contract names use ASCII
+undeclared fields. Script, HTTP GET/POST and native verification handlers are
+supported. Other builtin handlers still require a semantic adapter. Contract names use ASCII
 letters/digits/underscore/hyphen, with at most 128 bytes per identifier.
 
 Script execution uses the pinned host root, no stdin, and invocation-specific
@@ -96,6 +103,23 @@ Handler results are bounded to 1 MiB. Handler failures return static categories,
 without echoing provider bodies or script diagnostics into errors. Independent
 check output remains visible in receipts, capped at 64 KiB per stream; trusted
 verifiers should avoid printing credentials.
+
+## Native verification adapter
+
+Use `"handler":{"type":"verification"}` with `effect:"verification"` to run an
+operation entirely through its configured postcondition checks. The native
+adapter has no path, URL, interpreter or command parameters. Unknown handler
+fields, missing contracts, other effect classes and use as compensation are
+rejected. It requires no Python/helper script.
+
+The same checks, cancellation, timeouts, resource sampling, task ownership and
+single-use call IDs apply. The model chooses the semantic action and declared
+inputs; it cannot supply a shell command or override verifier arguments. The
+acknowledgement under `result` only records the request. The runtime receipt and
+condition output determine success. Failed reruns revoke prior action evidence.
+Verification programs may write generated artifacts/caches outside declared
+logical source scopes. The author remains responsible for choosing appropriate
+programs and capturing every relevant build input.
 
 ## Receipts and guards
 
@@ -159,9 +183,14 @@ finish remotely after cleanup; those remain `compensation_failed`, even if local
 cleanup checks pass. Remote reconciliation needs a future domain adapter.
 
 Next: richer verified facts, additional semantic adapters, gradual migration of
-raw terminal workflows, then the compact Praxis Decision IR. The initial
-workspace-tests example is one capability, not a completed migration.
+raw terminal workflows, then the compact Praxis Decision IR. The build/test example is a first migration; other workflows and capabilities
+still need their own adapters.
 
 Validation: `cargo test --locked --lib capability_`. Include ignored tests with a
 real `POML_CLI` to exercise full agent execution. Related named-check, patch,
 recovery, shared revision and Decision tests remain separate regressions.
+
+For a real, dependency-free Rust project smoke test, run
+`cargo test --locked --lib capability_native_bundled_build_and_tests_with_real_cargo -- --ignored`.
+It checks passing build/tests, a build that passes while a regression test fails,
+and recovery after fixing the source. A Rust toolchain must be on PATH.

@@ -1,12 +1,23 @@
 {
   "name": "verified_rust",
-  "description": "Verified Rust workspace test capability (opt in).",
-  "version": "1.0.0",
+  "description": "Native verified Rust workspace build and test capabilities (opt in).",
+  "version": "1.1.0",
   "tools": [{
+    "name": "build_workspace",
+    "description": "Build the Rust workspace and independently verify success. Use scope=workspace. Only a committed runtime receipt proves the configured build succeeded.",
+    "parameters": {"type":"object","properties":{"scope":{"type":"string","enum":["workspace"]}},"required":["scope"],"additionalProperties":false},
+    "handler": {"type":"verification"},
+    "contract": {
+      "effect": "verification",
+      "idempotency": "idempotent",
+      "timeout_secs": 300,
+      "postconditions": [{"program":"cargo","args":["build","--locked","--workspace"],"cwd":".","timeout_secs":295,"resources":["src","tests","Cargo.toml","Cargo.lock"]}]
+    }
+  }, {
     "name": "run_workspace_tests",
     "description": "Run and independently verify tests for the Rust workspace. Use scope=workspace. Only a committed runtime receipt proves the declared test check passed.",
     "parameters": {"type":"object","properties":{"scope":{"type":"string","enum":["workspace"]}},"required":["scope"],"additionalProperties":false},
-    "handler": {"type":"script","path":"request.py","interpreter":"python3"},
+    "handler": {"type":"verification"},
     "contract": {
       "effect": "verification",
       "idempotency": "idempotent",

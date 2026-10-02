@@ -92,6 +92,7 @@ pub(crate) fn identifier(value: &str) -> bool {
 }
 fn validate_handler(handler: &PluginHandler) -> anyhow::Result<()> {
     match handler {
+        PluginHandler::Verification(_) => {}
         PluginHandler::Script { path, interpreter } => anyhow::ensure!(
             !path.is_empty()
                 && !path.contains('\0')
@@ -132,8 +133,18 @@ fn validate_checks(checks: &[CheckContract], required: bool) -> anyhow::Result<(
 }
 pub(crate) fn validate_tool(plugin: &str, tool: &PluginTool) -> anyhow::Result<()> {
     let Some(contract) = &tool.contract else {
+        anyhow::ensure!(
+            !matches!(&tool.handler, PluginHandler::Verification(_)),
+            "Native verification requires an action contract"
+        );
         return Ok(());
     };
+    if matches!(&tool.handler, PluginHandler::Verification(_)) {
+        anyhow::ensure!(
+            contract.effect == EffectClass::Verification,
+            "Native verification requires effect=verification"
+        );
+    }
     anyhow::ensure!(
         identifier(plugin) && identifier(&tool.name),
         "Capability names must be identifiers"
@@ -146,6 +157,10 @@ pub(crate) fn validate_tool(plugin: &str, tool: &PluginTool) -> anyhow::Result<(
     validate_checks(&contract.preconditions, false)?;
     validate_checks(&contract.postconditions, true)?;
     if let Some(cleanup) = &contract.compensation {
+        anyhow::ensure!(
+            !matches!(&cleanup.handler, PluginHandler::Verification(_)),
+            "Native verification cannot perform compensation"
+        );
         anyhow::ensure!(
             contract.effect.mutates() && (1..=300).contains(&cleanup.timeout_secs),
             "Compensation requires a mutating effect and timeout 1..300"
@@ -505,6 +520,10 @@ async fn handler(
     root: &Path,
 ) -> Result<Value, Failure> {
     match handler {
+        // The action's configured postconditions are the operation. Execute them
+        // exactly once in the shared lifecycle; only their fresh receipts prove
+        // success. This acknowledgement carries no verification authority.
+        PluginHandler::Verification(_) => Ok(serde_json::json!({"requested":true})),
         PluginHandler::Http { url, method } => {
             let client = reqwest::Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
