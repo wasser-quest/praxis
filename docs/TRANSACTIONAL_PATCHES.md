@@ -44,7 +44,8 @@ guards that require additional ones.
 
 1. Revoke previous evidence. Validate every path, expected hash, data limit and
    check name; snapshot originals in memory and persist a private journal outside
-   the root. A preflight error changes no target files.
+   the root. Replace and synchronize the shared workspace revision before staging
+   any target. A preflight error changes no target files or shared revision.
 2. Recheck each original just before publication. Persist its intent, stage its
    replacement in the same directory, then publish each file with rename
    (or remove it for deletion); creations refuse to clobber an existing file.
@@ -108,10 +109,13 @@ archived receipt, and restoration conflicts are logged only as a count.
   with `praxis recover-patches`; passing receipts are never restored. Filesystem
   durability, conflicts and remaining crash boundaries are documented in
   [patch recovery](PATCH_RECOVERY.md).
-- Committed receipts use the per-task observed-tool revision and any author
-  declared resource hashes. Later guards recheck those hashes, detecting changes
-  by other tasks or external writers within the declared scope. These are
-  sampling boundaries, not a frozen filesystem; see [execution contracts](EXECUTION_CONTRACTS.md).
+- Committed receipts bind the per-task observed-tool revision, the shared durable
+  workspace revision, and any author-declared resource hashes. A later cooperating
+  patch or recovery invalidates prior receipts across processes, even after a
+  rollback and even without resource scopes. Normal commit cleanup preserves the
+  new receipts' revision. Guards also recheck resource hashes, detecting external
+  differences within declared scopes. These are sampling boundaries, not a frozen
+  filesystem; see [execution contracts](EXECUTION_CONTRACTS.md).
 
 Run `cargo test --locked --lib tools::patch_tests` for offline process/file tests.
 The ignored `patch_tools_rollback_then_commit_across_all_three_loops` regression

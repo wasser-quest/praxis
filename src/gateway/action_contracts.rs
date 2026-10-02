@@ -72,6 +72,7 @@ pub enum Outcome {
     Cancelled,
     Error,
     ResourcesChanged,
+    WorkspaceChanged,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -86,6 +87,35 @@ pub struct ExecutionReceipt {
     pub verified: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resources: Option<ResourceSnapshot>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_revision: Option<String>,
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct CheckEvidence {
+    pub resources: Option<ResourceSnapshot>,
+    pub workspace_revision: Option<String>,
+}
+impl CheckEvidence {
+    pub(crate) fn capture(contract: &CheckContract, root: &Path) -> anyhow::Result<Self> {
+        let workspace_revision = crate::tools::apply_patch::journal::workspace_revision(root)?;
+        let resources = if contract.resources.is_empty() {
+            None
+        } else {
+            Some(resource_snapshots::capture(root, &contract.resources)?)
+        };
+        Ok(Self {
+            resources,
+            workspace_revision,
+        })
+    }
+    fn workspace_current(&self, root: &Path) -> bool {
+        crate::tools::apply_patch::journal::workspace_revision(root)
+            .is_ok_and(|current| current == self.workspace_revision)
+    }
+    fn current(&self, contract: &CheckContract, root: &Path) -> bool {
+        resources_current(contract, root, &self.resources) && self.workspace_current(root)
+    }
 }
 
 #[derive(Default)]
@@ -132,12 +162,14 @@ impl VerificationState {
             !crate::tools::apply_patch::journal::pending_exists(root),
             "Execution guard requires interrupted-patch recovery first"
         );
+        let workspace_revision = crate::tools::apply_patch::journal::workspace_revision(root)?;
         let missing: Vec<_> = checks
             .iter()
             .filter(|name| {
                 !self.receipts.get(*name).is_some_and(|r| {
                     r.verified
                         && r.revision == self.revision
+                        && r.workspace_revision == workspace_revision
                         && definitions
                             .get(*name)
                             .is_some_and(|contract| resources_current(contract, root, &r.resources))
@@ -146,6 +178,14 @@ impl VerificationState {
             .cloned()
             .collect();
         anyhow::ensure!(missing.is_empty(), "Guard '{target}' requires current verified checks: {}. Call run_check for each missing check.", missing.join(", "));
+        // Resource sampling can take time. Recheck shared state after all scopes;
+        // this still does not freeze the workspace after the last sample.
+        anyhow::ensure!(
+            !crate::tools::apply_patch::journal::pending_exists(root)
+                && crate::tools::apply_patch::journal::workspace_revision(root)
+                    .is_ok_and(|current| current == workspace_revision),
+            "Workspace changed while checking execution guard; rerun checks"
+        );
         Ok(())
     }
     pub(crate) fn invalidate(&mut self) {
@@ -178,7 +218,7 @@ impl VerificationState {
         outcome: Outcome,
         code: Option<i32>,
         call: &str,
-        resources: Option<ResourceSnapshot>,
+        evidence: CheckEvidence,
     ) -> ExecutionReceipt {
         let receipt = ExecutionReceipt {
             id: uuid::Uuid::new_v4().to_string(),
@@ -197,10 +237,11 @@ impl VerificationState {
                     .and_then(|(_, checks, _, root)| {
                         checks
                             .get(name)
-                            .map(|contract| resources_current(contract, root, &resources))
+                            .map(|contract| evidence.current(contract, root))
                     })
                     .unwrap_or(false),
-            resources,
+            resources: evidence.resources,
+            workspace_revision: evidence.workspace_revision,
         };
         self.receipts.insert(name.into(), receipt.clone());
         receipt
@@ -299,7 +340,7 @@ pub fn before_tool(user: &str, tool: &str) -> anyhow::Result<()> {
 pub fn definition() -> crate::db::tools::Tool {
     crate::db::tools::Tool {
         name: "run_check".into(),
-        description: Some("Run a trusted named check from the active .sm [checks] section. Praxis owns command, cwd and timeout; pass only the check name. A verified receipt permits guarded state/completion transitions for the current task while declared resources remain unchanged and until another potentially mutating tool runs. Exit 0 proves only the configured check passed, not general correctness.".into()),
+        description: Some("Run a trusted named check from the active .sm [checks] section. Praxis owns command, cwd and timeout; pass only the check name. A verified receipt permits guarded state/completion transitions for the current task while declared resources and the shared workspace revision remain unchanged and until another potentially mutating tool runs. Exit 0 proves only the configured check passed, not general correctness.".into()),
         parameters: serde_json::json!({"type":"object","properties":{"name":{"type":"string","minLength":1,"maxLength":128}},"required":["name"],"additionalProperties":false}),
         is_enabled: true,
     }
@@ -354,15 +395,15 @@ pub(crate) fn publish_patch(
     user: &str,
     policy: &PatchPolicy,
     call: &str,
-    resources: &[Option<ResourceSnapshot>],
+    evidence: &[CheckEvidence],
     finalize: impl FnOnce() -> anyhow::Result<()>,
 ) -> anyhow::Result<Vec<ExecutionReceipt>> {
     let cancel =
         task_control::cancellation(user).ok_or_else(|| anyhow::anyhow!("Task cancelled"))?;
     anyhow::ensure!(!cancel.is_cancelled(), "Task cancelled");
     anyhow::ensure!(
-        patch_resources_current(policy, resources),
-        "Resource snapshots changed during patch"
+        patch_resources_current(policy, evidence) && patch_workspace_current(policy, evidence),
+        "Check evidence changed during patch"
     );
     task_control::with_verification(user, |ledger| {
         anyhow::ensure!(
@@ -372,7 +413,7 @@ pub(crate) fn publish_patch(
         let receipts: Vec<_> = policy
             .checks
             .iter()
-            .zip(resources)
+            .zip(evidence)
             .map(|((name, _), snapshot)| {
                 ledger.finish_check(
                     name,
@@ -392,9 +433,9 @@ pub(crate) fn publish_patch(
             ledger.invalidate();
             return Err(error);
         }
-        if cancel.is_cancelled() {
+        if cancel.is_cancelled() || !patch_workspace_current(policy, evidence) {
             ledger.invalidate();
-            anyhow::bail!("Task cancelled during receipt publication");
+            anyhow::bail!("Task cancelled or workspace changed during receipt publication");
         }
         Ok(receipts)
     })
@@ -413,22 +454,27 @@ pub(crate) fn resources_current(
             .is_ok_and(|current| &current == previous)
     })
 }
-pub(crate) fn patch_resources_current(
-    policy: &PatchPolicy,
-    resources: &[Option<ResourceSnapshot>],
-) -> bool {
-    policy.checks.len() == resources.len()
+pub(crate) fn patch_resources_current(policy: &PatchPolicy, evidence: &[CheckEvidence]) -> bool {
+    policy.checks.len() == evidence.len()
         && policy
             .checks
             .iter()
-            .zip(resources)
-            .all(|((_, contract), snapshot)| resources_current(contract, &policy.root, snapshot))
+            .zip(evidence)
+            .all(|((_, contract), snapshot)| {
+                resources_current(contract, &policy.root, &snapshot.resources)
+            })
+}
+pub(crate) fn patch_workspace_current(policy: &PatchPolicy, evidence: &[CheckEvidence]) -> bool {
+    policy.checks.len() == evidence.len()
+        && evidence
+            .iter()
+            .all(|snapshot| snapshot.workspace_current(&policy.root))
 }
 
 pub fn instructions(user: &str) -> String {
     task_control::with_verification(user, |ledger| {
         Ok(match &ledger.policy {
-            Some((_, checks, guards, _)) => format!("\n\n[EXECUTION CONTRACTS]\nAvailable run_check names: {:?}. Required checks by destination (_complete means completion): {:?}. Only runtime receipts authorize these transitions. Run checks after your last mutation. Declared resource changes, including external edits, invalidate evidence; rerun the affected checks. For controlled host edits use inspect_file to obtain expected_sha256, then apply_patch with edits and named checks. Only a committed patch publishes passing evidence; rolled_back or rollback_conflict means incomplete work. Missing evidence blocks completion; report incomplete work honestly.\n", checks.keys().collect::<Vec<_>>(), guards),
+            Some((_, checks, guards, _)) => format!("\n\n[EXECUTION CONTRACTS]\nAvailable run_check names: {:?}. Required checks by destination (_complete means completion): {:?}. Only runtime receipts authorize these transitions. Run checks after your last mutation. Declared resource changes, including external edits, invalidate evidence; rerun the affected checks. On Unix, any transactional patch or pending-journal recovery for this root invalidates prior receipts across Praxis processes, including checks without resource scopes; rerun all required checks. For controlled host edits use inspect_file to obtain expected_sha256, then apply_patch with edits and named checks. Only a committed patch publishes passing evidence; rolled_back or rollback_conflict means incomplete work. Missing evidence blocks completion; report incomplete work honestly.\n", checks.keys().collect::<Vec<_>>(), guards),
             None => String::new(),
         })
     }).unwrap_or_default()
@@ -470,18 +516,18 @@ pub async fn run(user: &str, call: &str, args: &serde_json::Value) -> anyhow::Re
         Ok((checks[name].clone(), root.clone(), revision))
     })?;
     let result = execute(&contract, &root, &cancel).await;
-    let (outcome, code, output, resources) = match result {
-        Ok((outcome, output, resources)) => (
+    let (outcome, code, output, evidence) = match result {
+        Ok((outcome, output, evidence)) => (
             outcome,
             Some(output.exit_code),
             serde_json::to_value(output)?,
-            resources,
+            evidence,
         ),
         Err(outcome) => (
             outcome,
             None,
             serde_json::json!({"error":"Check did not complete; no verified evidence produced"}),
-            None,
+            CheckEvidence::default(),
         ),
     };
     let outcome = if cancel.is_cancelled() {
@@ -490,7 +536,7 @@ pub async fn run(user: &str, call: &str, args: &serde_json::Value) -> anyhow::Re
         outcome
     };
     let receipt = task_control::with_verification(user, |ledger| {
-        Ok(ledger.finish_check(name, revision, outcome, code, call, resources))
+        Ok(ledger.finish_check(name, revision, outcome, code, call, evidence))
     })?;
     Ok(serde_json::json!({"receipt":receipt,"output":output}).to_string())
 }
@@ -503,7 +549,7 @@ pub(crate) async fn execute(
     (
         Outcome,
         crate::tools::execute_terminal::TerminalResult,
-        Option<ResourceSnapshot>,
+        CheckEvidence,
     ),
     Outcome,
 > {
@@ -518,11 +564,7 @@ pub(crate) async fn execute(
     if cancel.is_cancelled() {
         return Err(Outcome::Cancelled);
     }
-    let resources = if contract.resources.is_empty() {
-        None
-    } else {
-        Some(resource_snapshots::capture(&root, &contract.resources).map_err(|_| Outcome::Error)?)
-    };
+    let evidence = CheckEvidence::capture(contract, &root).map_err(|_| Outcome::Error)?;
     if cancel.is_cancelled() {
         return Err(Outcome::Cancelled);
     }
@@ -589,10 +631,12 @@ pub(crate) async fn execute(
     let (outcome, output) = result?;
     let outcome = if cancel.is_cancelled() {
         Outcome::Cancelled
-    } else if !resources_current(contract, &root, &resources) {
+    } else if !evidence.workspace_current(&root) {
+        Outcome::WorkspaceChanged
+    } else if !resources_current(contract, &root, &evidence.resources) {
         Outcome::ResourcesChanged
     } else {
         outcome
     };
-    Ok((outcome, output, resources))
+    Ok((outcome, output, evidence))
 }

@@ -27,65 +27,98 @@ fn contract_parser_rejects_unknown_checks_and_malformed_contracts() {
 
 #[test]
 fn contract_guards_require_current_runtime_evidence() {
+    let root = tempfile::tempdir().unwrap();
+    let _workspace = crate::tools::apply_patch::journal::ready(root.path()).unwrap();
     let workflow = policy();
     let mut ledger = VerificationState::default();
-    ledger
-        .bind("guarded", &workflow, std::path::Path::new("."))
-        .unwrap();
+    ledger.bind("guarded", &workflow, root.path()).unwrap();
     assert!(ledger.require("done").is_err());
     // Model/context data never enters the ledger.
     let forged = json!({"checks":{"tests":{"verified":true}}});
     assert_eq!(forged["checks"]["tests"]["verified"], true);
     assert!(ledger.require("_complete").is_err());
     let revision = ledger.start_check("tests").unwrap();
-    ledger.finish_check("tests", revision, Outcome::Passed, Some(0), "call-1", None);
+    ledger.finish_check(
+        "tests",
+        revision,
+        Outcome::Passed,
+        Some(0),
+        "call-1",
+        CheckEvidence::capture(&workflow.checks["tests"], root.path()).unwrap(),
+    );
     assert!(ledger.require("done").is_ok());
     ledger.invalidate();
     assert!(ledger.require("done").is_err());
     // A late success from an older revision cannot authorize completion.
-    ledger.finish_check("tests", revision, Outcome::Passed, Some(0), "call-2", None);
+    ledger.finish_check(
+        "tests",
+        revision,
+        Outcome::Passed,
+        Some(0),
+        "call-2",
+        CheckEvidence::capture(&workflow.checks["tests"], root.path()).unwrap(),
+    );
     assert!(ledger.require("_complete").is_err());
 }
 
 #[test]
 fn contract_failed_rerun_revokes_success_and_policy_is_pinned() {
+    let root = tempfile::tempdir().unwrap();
+    let _workspace = crate::tools::apply_patch::journal::ready(root.path()).unwrap();
     let workflow = policy();
     let mut ledger = VerificationState::default();
-    ledger
-        .bind("guarded", &workflow, std::path::Path::new("."))
-        .unwrap();
+    ledger.bind("guarded", &workflow, root.path()).unwrap();
     let rev = ledger.start_check("tests").unwrap();
-    ledger.finish_check("tests", rev, Outcome::Passed, Some(0), "pass", None);
+    ledger.finish_check(
+        "tests",
+        rev,
+        Outcome::Passed,
+        Some(0),
+        "pass",
+        CheckEvidence::capture(&workflow.checks["tests"], root.path()).unwrap(),
+    );
     ledger.start_check("tests").unwrap();
     assert!(ledger.require("done").is_err());
-    ledger.finish_check("tests", rev, Outcome::Failed, Some(1), "fail", None);
+    ledger.finish_check(
+        "tests",
+        rev,
+        Outcome::Failed,
+        Some(1),
+        "fail",
+        CheckEvidence::capture(&workflow.checks["tests"], root.path()).unwrap(),
+    );
     assert!(ledger.require("done").is_err());
-    assert!(ledger
-        .bind("other", &workflow, std::path::Path::new("."))
-        .is_err());
+    assert!(ledger.bind("other", &workflow, root.path()).is_err());
     let mut edited = workflow.clone();
     edited.guards.clear();
-    assert!(ledger
-        .bind("guarded", &edited, std::path::Path::new("."))
-        .is_err());
+    assert!(ledger.bind("guarded", &edited, root.path()).is_err());
 }
 
 #[test]
 fn contract_receipts_do_not_survive_new_task() {
+    let root = tempfile::tempdir().unwrap();
+    let _workspace = crate::tools::apply_patch::journal::ready(root.path()).unwrap();
     let workflow = policy();
     let user = "contract-task-replay";
     let task = super::task_control::begin(user).unwrap();
-    bind(user, "guarded", &workflow, std::path::Path::new(".")).unwrap();
+    bind(user, "guarded", &workflow, root.path()).unwrap();
     super::task_control::with_verification(user, |ledger| {
         let rev = ledger.start_check("tests")?;
-        ledger.finish_check("tests", rev, Outcome::Passed, Some(0), "old", None);
+        ledger.finish_check(
+            "tests",
+            rev,
+            Outcome::Passed,
+            Some(0),
+            "old",
+            CheckEvidence::capture(&workflow.checks["tests"], root.path()).unwrap(),
+        );
         Ok(())
     })
     .unwrap();
     assert!(require(user, "_complete").is_ok());
     drop(task);
     let _next = super::task_control::begin(user).unwrap();
-    bind(user, "guarded", &workflow, std::path::Path::new(".")).unwrap();
+    bind(user, "guarded", &workflow, root.path()).unwrap();
     assert!(require(user, "_complete").is_err());
 }
 
@@ -232,20 +265,19 @@ async fn contract_database_and_completion_tools_reject_before_persistence() {
     .await
     .is_err());
     assert!(!db.load_context(user).unwrap().settings.done);
+    let _workspace = crate::tools::apply_patch::journal::ready(std::path::Path::new(".")).unwrap();
     super::task_control::with_verification(user, |ledger| {
         for name in ["build", "tests"] {
             let rev = ledger.start_check(name)?;
-            let resources = super::resource_snapshots::capture(
-                std::path::Path::new("."),
-                &workflow.checks[name].resources,
-            )?;
+            let evidence =
+                CheckEvidence::capture(&workflow.checks[name], std::path::Path::new("."))?;
             ledger.finish_check(
                 name,
                 rev,
                 Outcome::Passed,
                 Some(0),
                 "runtime-check",
-                Some(resources),
+                evidence,
             );
         }
         Ok(())
