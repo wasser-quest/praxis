@@ -388,7 +388,7 @@ impl Workspace {
             .map_err(|error| error.error)?;
         sync_directory(&self.store)
     }
-    fn advance_revision(&self) -> anyhow::Result<()> {
+    pub(crate) fn advance_revision(&self) -> anyhow::Result<()> {
         read_revision(&self.root, &self.store)?;
         self.save_revision()
     }

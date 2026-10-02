@@ -218,17 +218,28 @@ processes those actual gateway artifacts. A complete CLI smoke test runs all
 four arms for one original corpus task against a local Ollama HTTP fixture.
 These validate the measurement machinery, **not live-model benefit**.
 
-The private solver/Decision endpoints could not be reached from this workspace.
-No new live corpus result has been produced. Finishing the experiment requires
-reachable existing endpoints, or running this frozen protocol on the VPS with
-access to the historical artifacts.
+During PR #9 validation, the private solver/Decision endpoints could not be
+reached from this workspace. The user subsequently ran the functional pilot
+below on their server. A full quality comparison still requires the frozen
+complete corpus and a reachable endpoint.
 
-## Next architectural steps
+## Accepted functional pilot and architectural next steps
 
-After the live comparison, extend the existing named-check receipts and
-transactional patches into generic plugin action/effect contracts: typed
-preconditions, postconditions, idempotency and explicit rollback/compensation.
-Then let `.sm` transitions consume general runtime-verified facts/receipts,
-introduce semantic capabilities in place of raw terminal orchestration, and
-only then consider a compact Praxis Decision IR. Existing execution guarantees
-and their limits are documented in [execution contracts](EXECUTION_CONTRACTS.md).
+The user ran three original tasks across all four arms on the Ollama endpoint
+and accepted the twelve-run output as functional evidence to proceed. Reported
+results: fixed 3/3, decision 3/3, continuous 2/3 and entry 1/3 rubric passes.
+Observed state/model switches show routing reaches execution and changes behavior.
+This small pilot is not a controlled demonstration of a quality improvement.
+Do not pool it into a full-corpus benefit claim.
+
+The pilot review also identified observer issues: scoring only final acknowledgments
+can miss earlier substantive answers; blocked write attempts need separate policy
+accounting; guard failures should not be mislabeled as interrupted provider streams.
+Fix/version those observers separately before a broader quality comparison.
+
+The next execution foundation is implemented in [plugin action contracts](PLUGIN_ACTION_CONTRACTS.md):
+optional effect contracts, independent pre/post checks, compensation, task-owned
+receipts, `.sm` action receipt guards and an opt-in Rust workspace-tests capability.
+Richer facts, external reconciliation, broader semantic migration and compact
+Praxis Decision IR remain future work. Existing execution guarantees and their
+limits are documented in [execution contracts](EXECUTION_CONTRACTS.md).

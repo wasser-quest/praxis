@@ -55,6 +55,7 @@ async fn media_plugin_registry_delivers_only_the_selected_plugins_declared_secre
                 name: name.into(),
                 description: "test".into(),
                 parameters: serde_json::json!({}),
+                contract: None,
                 handler: PluginHandler::Script {
                     path: script.to_string_lossy().into_owned(),
                     interpreter: "python3".into(),

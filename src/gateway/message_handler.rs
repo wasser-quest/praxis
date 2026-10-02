@@ -625,8 +625,10 @@ async fn execute_tool_call(
         Ok(args) => args,
         Err(error) => return format!("Error: {error}; tool not executed"),
     };
-    if let Err(error) = super::action_contracts::before_tool(user_id, &tc.function.name) {
-        return format!("Error: {error}; tool not executed");
+    if !plugins.manages_contract(&tc.function.name) {
+        if let Err(error) = super::action_contracts::before_tool(user_id, &tc.function.name) {
+            return format!("Error: {error}; tool not executed");
+        }
     }
     let ctx_data = db
         .load_context(user_id)
@@ -1018,7 +1020,9 @@ async fn execute_tool_call(
         "update_template" => crate::tools::update_template::run(db, &args).await
             .unwrap_or_else(|e| format!("Error: {}", e)),
         _ => match plugins
-            .execute_tool(
+            .execute_tool_for_task(
+                user_id,
+                &tc.id,
                 &tc.function.name,
                 &args,
                 ctx_data.as_ref(),
@@ -1413,3 +1417,5 @@ mod gateway_tests {
         assert!(true);
     }
 }
+
+include!("capability_dispatch_tests.rs");

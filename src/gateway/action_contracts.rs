@@ -7,7 +7,7 @@ use super::{
 use crate::{db::contexts::Context, sm::StateMachine};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -113,9 +113,19 @@ impl CheckEvidence {
         crate::tools::apply_patch::journal::workspace_revision(root)
             .is_ok_and(|current| current == self.workspace_revision)
     }
-    fn current(&self, contract: &CheckContract, root: &Path) -> bool {
+    pub(crate) fn current(&self, contract: &CheckContract, root: &Path) -> bool {
         resources_current(contract, root, &self.resources) && self.workspace_current(root)
     }
+}
+
+struct ActionEvidence {
+    receipt: crate::plugins::contracts::ActionReceipt,
+    checks: Vec<CheckContract>,
+    evidence: Vec<CheckEvidence>,
+}
+pub(crate) struct ActionTicket {
+    pub task_id: String,
+    pub revision: u64,
 }
 
 #[derive(Default)]
@@ -129,6 +139,10 @@ pub struct VerificationState {
     task_id: String,
     revision: u64,
     receipts: HashMap<String, ExecutionReceipt>,
+    action_guards: HashMap<String, Vec<String>>,
+    actions: HashMap<String, ActionEvidence>,
+    action_pins: HashMap<String, String>,
+    action_calls: HashSet<String>,
 }
 impl VerificationState {
     pub(crate) fn bind(
@@ -137,17 +151,22 @@ impl VerificationState {
         sm: &StateMachine,
         root: &Path,
     ) -> anyhow::Result<()> {
-        if let Some((name, checks, guards, _)) = &self.policy {
-            anyhow::ensure!(name == workflow && checks == &sm.checks && guards == &sm.guards,
-                "Action-contract policy is pinned for this task; workflow/check/guard changes require a new task");
-        } else if !sm.checks.is_empty() || !sm.guards.is_empty() {
+        if sm.checks.is_empty()
+            && sm.guards.is_empty()
+            && sm.action_guards.is_empty()
+            && self.policy.is_none()
+        {
+            return Ok(());
+        }
+        let root = root.canonicalize()?;
+        anyhow::ensure!(root.is_dir(), "Verification root must be a directory");
+        if let Some((name, checks, guards, pinned)) = &self.policy {
+            anyhow::ensure!(name == workflow && checks == &sm.checks && guards == &sm.guards && self.action_guards == sm.action_guards && pinned == &root,
+                "Action-contract policy and root are pinned for this task; changes require a new task");
+        } else {
             self.task_id = uuid::Uuid::new_v4().to_string();
-            self.policy = Some((
-                workflow.into(),
-                sm.checks.clone(),
-                sm.guards.clone(),
-                root.to_path_buf(),
-            ));
+            self.action_guards = sm.action_guards.clone();
+            self.policy = Some((workflow.into(), sm.checks.clone(), sm.guards.clone(), root));
         }
         Ok(())
     }
@@ -155,9 +174,20 @@ impl VerificationState {
         let Some((_, definitions, guards, root)) = &self.policy else {
             return Ok(());
         };
-        let Some(checks) = guards.get(target) else {
+        let checks = guards.get(target).map(Vec::as_slice).unwrap_or(&[]);
+        let actions = self
+            .action_guards
+            .get(target)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        if checks.is_empty() && actions.is_empty() {
             return Ok(());
-        };
+        }
+        let absent: Vec<_> = actions
+            .iter()
+            .filter(|key| !self.actions.contains_key(*key))
+            .collect();
+        anyhow::ensure!(absent.is_empty(), "Guard '{target}' requires current verified capabilities: {:?}. Execute each required capability.", absent);
         anyhow::ensure!(
             !crate::tools::apply_patch::journal::pending_exists(root),
             "Execution guard requires interrupted-patch recovery first"
@@ -178,6 +208,24 @@ impl VerificationState {
             .cloned()
             .collect();
         anyhow::ensure!(missing.is_empty(), "Guard '{target}' requires current verified checks: {}. Call run_check for each missing check.", missing.join(", "));
+        let missing_actions: Vec<_> = actions
+            .iter()
+            .filter(|key| {
+                !self.actions.get(*key).is_some_and(|action| {
+                    action.receipt.verified
+                        && action.receipt.task_id == self.task_id
+                        && action.receipt.revision == self.revision
+                        && action.receipt.workspace_revision == workspace_revision
+                        && action.checks.len() == action.evidence.len()
+                        && action
+                            .checks
+                            .iter()
+                            .zip(&action.evidence)
+                            .all(|(check, snapshot)| snapshot.current(check, root))
+                })
+            })
+            .collect();
+        anyhow::ensure!(missing_actions.is_empty(), "Guard '{target}' requires current verified capabilities: {:?}. Execute each required capability.", missing_actions);
         // Resource sampling can take time. Recheck shared state after all scopes;
         // this still does not freeze the workspace after the last sample.
         anyhow::ensure!(
@@ -191,6 +239,7 @@ impl VerificationState {
     pub(crate) fn invalidate(&mut self) {
         self.revision = self.revision.saturating_add(1);
         self.receipts.clear();
+        self.actions.clear();
     }
     pub(crate) fn invalidate_root(&mut self, root: &Path) {
         if self
@@ -248,6 +297,106 @@ impl VerificationState {
     }
 }
 
+pub(crate) fn action_root(user: &str) -> anyhow::Result<PathBuf> {
+    task_control::with_verification(user, |ledger| {
+        ledger
+            .policy
+            .as_ref()
+            .map(|(_, _, _, root)| root.clone())
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Capabilities require a pinned workflow with checks or action guards"
+                )
+            })
+    })
+}
+pub(crate) fn start_action(
+    user: &str,
+    call: &str,
+    key: &str,
+    fingerprint: &str,
+) -> anyhow::Result<ActionTicket> {
+    task_control::with_verification(user, |ledger| {
+        anyhow::ensure!(ledger.policy.is_some(), "Capability policy not bound");
+        anyhow::ensure!(
+            !call.is_empty()
+                && call.len() <= 256
+                && ledger.action_calls.len() < 4096
+                && !ledger.action_calls.contains(call),
+            "Duplicate or invalid capability call id; automatic replay is forbidden"
+        );
+        anyhow::ensure!(
+            ledger
+                .action_pins
+                .get(key)
+                .is_none_or(|pin| pin == fingerprint),
+            "Capability definition changed during this task"
+        );
+        ledger.action_pins.insert(key.into(), fingerprint.into());
+        ledger.action_calls.insert(call.into());
+        ledger.actions.remove(key);
+        Ok(ActionTicket {
+            task_id: ledger.task_id.clone(),
+            revision: ledger.revision,
+        })
+    })
+}
+pub(crate) fn revoke_action(user: &str, ticket: &ActionTicket, key: &str) {
+    let _ = task_control::with_verification(user, |ledger| {
+        if ledger.task_id == ticket.task_id {
+            ledger.actions.remove(key);
+        }
+        Ok(())
+    });
+}
+pub(crate) fn publish_action(
+    user: &str,
+    ticket: &ActionTicket,
+    receipt: &crate::plugins::contracts::ActionReceipt,
+    checks: &[CheckContract],
+    evidence: &[CheckEvidence],
+) -> anyhow::Result<()> {
+    let cancel =
+        task_control::cancellation(user).ok_or_else(|| anyhow::anyhow!("Task cancelled"))?;
+    anyhow::ensure!(!cancel.is_cancelled(), "Task cancelled");
+    task_control::with_verification(user, |ledger| {
+        anyhow::ensure!(
+            ledger.task_id == ticket.task_id
+                && ledger.revision == ticket.revision
+                && ledger.action_pins.get(&receipt.action) == Some(&receipt.contract_sha256)
+                && receipt.verified
+                && receipt.outcome == "committed",
+            "Capability ownership changed"
+        );
+        let (_, _, _, root) = ledger
+            .policy
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("No capability policy"))?;
+        anyhow::ensure!(
+            checks.len() == evidence.len()
+                && checks
+                    .iter()
+                    .zip(evidence)
+                    .all(|(check, snapshot)| snapshot.current(check, root))
+                && crate::tools::apply_patch::journal::workspace_revision(root)?
+                    == receipt.workspace_revision
+                && !cancel.is_cancelled(),
+            "Capability evidence is stale"
+        );
+        let mut authority = receipt.clone();
+        authority.conditions.clear(); // tool archive owns diagnostics; ledger stores authority only
+        ledger.actions.insert(
+            receipt.action.clone(),
+            ActionEvidence {
+                receipt: authority,
+                checks: checks.to_vec(),
+                evidence: evidence.to_vec(),
+            },
+        );
+        Ok(())
+    })
+}
+
 pub fn bind(user: &str, workflow: &str, sm: &StateMachine, root: &Path) -> anyhow::Result<()> {
     // Read-only previews have no owned task and cannot run verifiers.
     if task_control::cancellation(user).is_none() {
@@ -262,7 +411,7 @@ pub fn require(user: &str, target: &str) -> anyhow::Result<()> {
     task_control::with_verification(user, |ledger| ledger.require(target))
 }
 pub fn require_for_workflow(user: &str, sm: &StateMachine, target: &str) -> anyhow::Result<()> {
-    if sm.guards.contains_key(target) {
+    if sm.guards.contains_key(target) || sm.action_guards.contains_key(target) {
         anyhow::ensure!(
             task_control::cancellation(user).is_some(),
             "Guarded transitions require an active verification task"
@@ -474,7 +623,7 @@ pub(crate) fn patch_workspace_current(policy: &PatchPolicy, evidence: &[CheckEvi
 pub fn instructions(user: &str) -> String {
     task_control::with_verification(user, |ledger| {
         Ok(match &ledger.policy {
-            Some((_, checks, guards, _)) => format!("\n\n[EXECUTION CONTRACTS]\nAvailable run_check names: {:?}. Required checks by destination (_complete means completion): {:?}. Only runtime receipts authorize these transitions. Run checks after your last mutation. Declared resource changes, including external edits, invalidate evidence; rerun the affected checks. On Unix, any transactional patch or pending-journal recovery for this root invalidates prior receipts across Praxis processes, including checks without resource scopes; rerun all required checks. For controlled host edits use inspect_file to obtain expected_sha256, then apply_patch with edits and named checks. Only a committed patch publishes passing evidence; rolled_back or rollback_conflict means incomplete work. Missing evidence blocks completion; report incomplete work honestly.\n", checks.keys().collect::<Vec<_>>(), guards),
+            Some((_, checks, guards, _)) => format!("\n\n[EXECUTION CONTRACTS]\nAvailable run_check names: {:?}. Required checks by destination (_complete means completion): {:?}. Only runtime receipts authorize these transitions. Run checks after your last mutation. Declared resource changes, including external edits, invalidate evidence; rerun the affected checks. On Unix, any transactional patch or pending-journal recovery for this root invalidates prior receipts across Praxis processes, including checks without resource scopes; rerun all required checks. For controlled host edits use inspect_file to obtain expected_sha256, then apply_patch with edits and named checks. Only a committed patch publishes passing evidence; rolled_back or rollback_conflict means incomplete work. Missing evidence blocks completion; report incomplete work honestly.\n", checks.keys().collect::<Vec<_>>(), guards) + &format!("Required capabilities by destination: {:?}. Only committed, task-owned action receipts authorize these guards; handler claims and compensated failures cannot. Shared workspace changes invalidate action evidence.\n", ledger.action_guards),
             None => String::new(),
         })
     }).unwrap_or_default()

@@ -1,9 +1,12 @@
+#[cfg(all(test, unix))]
+mod contract_tests;
+pub mod contracts;
 pub mod minimax_image;
 
 #[cfg(test)]
-mod media_tests;
-#[cfg(test)]
 mod comfyui_tests;
+#[cfg(test)]
+mod media_tests;
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -33,9 +36,11 @@ pub struct PluginTool {
     pub description: String,
     pub parameters: serde_json::Value,
     pub handler: PluginHandler,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contract: Option<contracts::ActionContract>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type")]
 pub enum PluginHandler {
     #[serde(rename = "builtin")]
@@ -120,13 +125,81 @@ impl PluginRegistry {
     }
 
     /// Only credentials declared by the plugin owning this enabled tool.
-    pub fn secrets_for_tool(&self, tool_name: &str, secrets: &crate::db::secrets::Secrets) -> HashMap<String, String> {
-        self.plugins.values()
+    pub fn secrets_for_tool(
+        &self,
+        tool_name: &str,
+        secrets: &crate::db::secrets::Secrets,
+    ) -> HashMap<String, String> {
+        self.plugins
+            .values()
             .find(|plugin| plugin.enabled && plugin.tools.iter().any(|tool| tool.name == tool_name))
-            .map(|plugin| plugin.secrets.iter()
-                .filter_map(|key| secrets.plugin_secret(key).map(|value| (key.clone(), value.to_owned())))
-                .collect())
+            .map(|plugin| {
+                plugin
+                    .secrets
+                    .iter()
+                    .filter_map(|key| {
+                        secrets
+                            .plugin_secret(key)
+                            .map(|value| (key.clone(), value.to_owned()))
+                    })
+                    .collect()
+            })
             .unwrap_or_default()
+    }
+
+    pub fn manages_contract(&self, name: &str) -> bool {
+        static BUILTINS: std::sync::LazyLock<std::collections::HashSet<String>> =
+            std::sync::LazyLock::new(|| {
+                crate::db::tools::get_default_tools()
+                    .into_iter()
+                    .map(|t| t.name)
+                    .collect()
+            });
+        if name.starts_with("vm_") || BUILTINS.contains(name) {
+            return false;
+        }
+        let owners: Vec<_> = self
+            .enabled_tools()
+            .into_iter()
+            .filter(|tool| tool.name == name)
+            .collect();
+        owners.len() == 1 && owners[0].contract.is_some()
+    }
+
+    pub async fn execute_tool_for_task(
+        &self,
+        user: &str,
+        call: &str,
+        name: &str,
+        args: &serde_json::Value,
+        context: Option<&serde_json::Value>,
+        secrets: Option<&HashMap<String, String>>,
+    ) -> anyhow::Result<String> {
+        let owners: Vec<_> = self
+            .plugins
+            .values()
+            .filter(|p| p.enabled)
+            .flat_map(|p| {
+                p.tools
+                    .iter()
+                    .filter(move |t| t.name == name)
+                    .map(move |t| (p, t))
+            })
+            .collect();
+        anyhow::ensure!(
+            owners.len() == 1,
+            "Plugin tool must have exactly one enabled owner"
+        );
+        let (plugin, tool) = owners[0];
+        if tool.contract.is_some() {
+            anyhow::ensure!(
+                self.manages_contract(name),
+                "Capability cannot shadow a built-in tool"
+            );
+            contracts::execute(plugin, tool, user, call, args, context, secrets).await
+        } else {
+            self.execute_tool(name, args, context, secrets).await
+        }
     }
 
     pub async fn execute_tool(
@@ -142,6 +215,10 @@ impl PluginRegistry {
             }
             for tool in &plugin.tools {
                 if tool.name == tool_name {
+                    anyhow::ensure!(
+                        tool.contract.is_none(),
+                        "Contracted tools require task-owned execution"
+                    );
                     return match &tool.handler {
                         PluginHandler::Builtin { name } => {
                             minimax_image::execute_builtin(name, args).await
@@ -150,8 +227,14 @@ impl PluginRegistry {
                             execute_http_tool(url, method, args).await
                         }
                         PluginHandler::Script { path, interpreter } => {
-                            let scoped: HashMap<String, String> = plugin.secrets.iter()
-                                .filter_map(|key| secrets.and_then(|values| values.get(key)).map(|value| (key.clone(), value.clone())))
+                            let scoped: HashMap<String, String> = plugin
+                                .secrets
+                                .iter()
+                                .filter_map(|key| {
+                                    secrets
+                                        .and_then(|values| values.get(key))
+                                        .map(|value| (key.clone(), value.clone()))
+                                })
                                 .collect();
                             execute_script(path, interpreter, args, context, Some(&scoped)).await
                         }
@@ -209,8 +292,14 @@ async fn execute_script(
 
     // Always replace these envelopes, even when empty: never inherit another
     // plugin invocation's PLUGIN_CONTEXT / PLUGIN_SECRETS from the process env.
-    cmd.env("PLUGIN_CONTEXT", serde_json::to_string(context.unwrap_or(&serde_json::json!({})))?);
-    cmd.env("PLUGIN_SECRETS", serde_json::to_string(&secrets.cloned().unwrap_or_default())?);
+    cmd.env(
+        "PLUGIN_CONTEXT",
+        serde_json::to_string(context.unwrap_or(&serde_json::json!({})))?,
+    );
+    cmd.env(
+        "PLUGIN_SECRETS",
+        serde_json::to_string(&secrets.cloned().unwrap_or_default())?,
+    );
 
     let output = cmd
         .output()
@@ -314,23 +403,26 @@ fn load_plugin_from_manifest(manifest_path: &Path, plugin_dir: &Path) -> anyhow:
     let tools = manifest
         .tools
         .into_iter()
-        .map(|t| {
-            if let PluginHandler::Script { path, interpreter } = t.handler {
-                let abs_path = plugin_dir.join(&path);
-                PluginTool {
-                    name: t.name,
-                    description: t.description,
-                    parameters: t.parameters,
-                    handler: PluginHandler::Script {
-                        path: abs_path.to_string_lossy().to_string(),
-                        interpreter,
-                    },
-                }
+        .map(|mut tool| {
+            contracts::validate_tool(&manifest.name, &tool)?;
+            let folder = if tool.contract.is_some() {
+                plugin_dir.canonicalize()?
             } else {
-                t
+                plugin_dir.to_path_buf()
+            };
+            let resolve = |handler: &mut PluginHandler| {
+                if let PluginHandler::Script { path, .. } = handler {
+                    *path = folder.join(&*path).to_string_lossy().into_owned();
+                }
+            };
+            resolve(&mut tool.handler);
+            if let Some(compensation) = tool.contract.as_mut().and_then(|c| c.compensation.as_mut())
+            {
+                resolve(&mut compensation.handler);
             }
+            Ok(tool)
         })
-        .collect();
+        .collect::<anyhow::Result<Vec<_>>>()?;
 
     Ok(Plugin {
         name: manifest.name,
@@ -397,6 +489,7 @@ mod plugin_tests {
                 name: "tool1".to_string(),
                 description: "A tool".to_string(),
                 parameters: serde_json::json!({}),
+                contract: None,
                 handler: PluginHandler::Builtin {
                     name: "test".to_string(),
                 },
@@ -419,6 +512,7 @@ mod plugin_tests {
                 name: "tool1".to_string(),
                 description: "A tool".to_string(),
                 parameters: serde_json::json!({}),
+                contract: None,
                 handler: PluginHandler::Builtin {
                     name: "test".to_string(),
                 },

@@ -33,6 +33,7 @@ pub fn create_plugin() -> Plugin {
                     },
                     "required": ["prompt"]
                 }),
+                contract: None,
                 handler: PluginHandler::Builtin {
                     name: "image_generate".to_string(),
                 },
@@ -56,6 +57,7 @@ pub fn create_plugin() -> Plugin {
                     },
                     "required": ["image_url"]
                 }),
+                contract: None,
                 handler: PluginHandler::Builtin {
                     name: "image_analyze".to_string(),
                 },
