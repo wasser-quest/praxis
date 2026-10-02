@@ -37,17 +37,52 @@ timeout/cancellation, no passing receipt is produced; on Unix the verifier's
 process group is killed as well as the child. On other platforms descendant
 cleanup is not guaranteed.
 
-The returned receipt includes task/call/check IDs, a workspace revision, outcome,
-exit status and `verified`. A receipt is verified only when the configured process
-exits with status zero, without cancellation, in the current revision, and any
-declared resources remain unchanged. It proves **that check passed**, not that the implementation meets every requirement.
+The returned receipt includes task/call/check IDs, outcome, exit status and
+`verified`, plus these freshness fields:
+
+| Field | Binding |
+| --- | --- |
+| `revision` | The owned task's observed-tool revision. |
+| `workspace_revision` | On Unix, a shared durable UUID for the canonical workspace. Omitted on other platforms. |
+| `resources` | Optional snapshots of the author's declared file/directory scopes. |
+
+A receipt is verified only when the configured process exits with status zero,
+without cancellation, both revisions remain current, and declared resources
+remain unchanged. It proves **that check passed**, not that the implementation
+meets every requirement.
 The normal tool-output archive retains the returned receipt and captured output.
 
 Interrupted file patches [recover before the next scoped operation](PATCH_RECOVERY.md).
 On Unix, checks and scoped file operations share a private journal/lock directory
 beside the root, so its parent must be writable. Outstanding journals block
-guarded transitions/completion, and recovery revokes
-live receipts for tasks using that root. Recovery does not restore past evidence.
+guarded transitions/completion, and recovery invalidates evidence for that root
+across Praxis processes. Recovery does not restore past evidence.
+
+## Shared workspace revisions
+
+On Unix, each canonical workspace has a private durable revision record beside
+its journal. A transactional patch replaces its UUID after preflight and journal
+creation, before staging or publishing any target. Recovery replaces it before
+compensation or cleanup of any pending journal, including committed journals.
+All prior receipts for the root become stale, even without `resources`, even
+when a failed patch restores the original bytes, and even when the writer or
+recoverer runs in another Praxis process. Rerun every required check.
+
+Checks sample the shared revision before execution, after execution, before
+receipt publication, and at guard evaluation. A detected change during a check
+returns `workspace_changed` and cannot verify a zero exit status. Normal commit
+cleanup keeps the revision used by the new passing receipts. Clean recovery,
+inspection and checking do not replace it; other roots have independent records.
+Rejected edit preflight does not change the shared revision, though the requesting
+task's existing evidence is still revoked.
+
+Existing journal stores are upgraded under their OS lock. A missing revision
+blocks guards until a scoped operation initializes a fresh UUID; old receipts
+cannot match that new identity. Corrupt or unsafe records block scoped operations
+and guards and require operator inspection. Restoring or manipulating runtime
+records is outside this freshness guarantee. On non-Unix hosts, named checks
+retain per-task revision and optional resource-snapshot behavior; durable patches
+remain unavailable.
 
 ## Declared resources
 
@@ -73,9 +108,10 @@ Each check permits up to 16 unique normalized paths, 4096 inventory entries,
 16 MiB of file bytes, and 64 directory levels below a scope root. Absolute paths,
 `..`, aliases such as `./src`, backslashes, symlinks, special files and non-UTF-8
 names are rejected. Missing paths are supported so later creation invalidates
-evidence. Omitted or empty `resources` preserves revision-only behavior and omits
-the resource object from receipts. The bundled example scopes Rust source and
-manifests; extend it for any additional build inputs in your project.
+evidence. Omitted or empty `resources` omits the resource object; the task
+revision and, on Unix, shared workspace revision still apply. The bundled
+example scopes Rust source and manifests; extend it for any additional build
+inputs in your project.
 
 ## Authority and freshness
 
@@ -101,8 +137,9 @@ This is a runtime protocol, not a sandbox or formal proof. Trusted check program
 plugins, workflow files and the runtime remain in the trusted computing base.
 Raw shell/file tools can affect resources outside this protocol; external writers
 and already-running background jobs can change files without advancing the
-ledger. Declared scopes detect differences at the sampling boundaries, but do
-not freeze files. Transient writes restored between samples and writes after the
+task ledger or shared revision. Only cooperating transactional patch/recovery
+operations advance the shared revision. Declared scopes detect differences at the
+sampling boundaries, but do not freeze files. Transient writes restored between samples and writes after the
 last sample can escape detection; metadata stability checks cannot provide an
 atomic multi-file snapshot. Resources outside declared scopes are not covered.
 Use controlled foreground capabilities and an isolated workspace for guarded
@@ -123,3 +160,6 @@ also exercises a scripted model with the real POML renderer (requires POML_CLI).
 Resource regressions: `cargo test --locked --lib resource_`. The ignored
 `resource_contract_agent_rejects_external_mutation_then_rechecks` test uses the
 real POML renderer and an offline external-writer fixture.
+
+Shared-process regressions: `cargo test --locked --lib workspace_revision_`.
+The ignored `workspace_revision_worker` is invoked by the parent regressions.

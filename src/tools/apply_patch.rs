@@ -3,8 +3,10 @@
 pub(crate) mod journal;
 #[cfg(all(test, unix))]
 mod recovery_tests;
+#[cfg(all(test, unix))]
+mod revision_tests;
 use crate::gateway::{
-    action_contracts::{self, ExecutionReceipt, Outcome, PatchPolicy},
+    action_contracts::{self, CheckEvidence, ExecutionReceipt, Outcome, PatchPolicy},
     task_control,
 };
 use serde::{Deserialize, Serialize};
@@ -404,14 +406,14 @@ pub async fn run(user: &str, call: &str, args: &serde_json::Value) -> anyhow::Re
     if apply.is_ok() {
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(300);
         for (name, contract) in &transaction.policy.checks {
-            let (outcome, code, output, resources) = match tokio::time::timeout_at(
+            let (outcome, code, output, evidence) = match tokio::time::timeout_at(
                 deadline,
                 action_contracts::execute(contract, &transaction.root, &cancel),
             )
             .await
             .unwrap_or(Err(Outcome::TimedOut))
             {
-                Ok((outcome, mut output, resources)) => {
+                Ok((outcome, mut output, evidence)) => {
                     // A batch result remains bounded even for verbose checks.
                     for (text, truncated) in [
                         (&mut output.stdout, &mut output.stdout_truncated),
@@ -430,14 +432,14 @@ pub async fn run(user: &str, call: &str, args: &serde_json::Value) -> anyhow::Re
                         outcome,
                         Some(output.exit_code),
                         serde_json::to_value(output)?,
-                        resources,
+                        evidence,
                     )
                 }
                 Err(outcome) => (
                     outcome,
                     None,
                     serde_json::json!({"error":"Check did not complete"}),
-                    None,
+                    CheckEvidence::default(),
                 ),
             };
             let outcome = if cancel.is_cancelled() {
@@ -445,7 +447,7 @@ pub async fn run(user: &str, call: &str, args: &serde_json::Value) -> anyhow::Re
             } else {
                 outcome
             };
-            checks.push((name.clone(), outcome, code, output, resources));
+            checks.push((name.clone(), outcome, code, output, evidence));
             if outcome != Outcome::Passed || code != Some(0) {
                 reason = serde_json::to_value(outcome)?
                     .as_str()
@@ -465,18 +467,23 @@ pub async fn run(user: &str, call: &str, args: &serde_json::Value) -> anyhow::Re
             reason = "cancelled".into();
         }
     }
-    let resources: Vec<_> = checks
+    let evidence: Vec<_> = checks
         .iter()
         .map(|(_, _, _, _, snapshot)| snapshot.clone())
         .collect();
     if reason == "checks_passed"
-        && !action_contracts::patch_resources_current(&transaction.policy, &resources)
+        && !action_contracts::patch_workspace_current(&transaction.policy, &evidence)
+    {
+        reason = "workspace_changed".into();
+    }
+    if reason == "checks_passed"
+        && !action_contracts::patch_resources_current(&transaction.policy, &evidence)
     {
         reason = "resources_changed".into();
     }
     let mut journal_failed = false;
     let receipts = if reason == "checks_passed" {
-        match action_contracts::publish_patch(user, &transaction.policy, call, &resources, || {
+        match action_contracts::publish_patch(user, &transaction.policy, call, &evidence, || {
             let result = transaction.journal.commit();
             journal_failed = result.is_err();
             result
@@ -487,10 +494,11 @@ pub async fn run(user: &str, call: &str, args: &serde_json::Value) -> anyhow::Re
                     "cancelled"
                 } else if journal_failed {
                     "journal_commit_failed"
-                } else if !action_contracts::patch_resources_current(
-                    &transaction.policy,
-                    &resources,
-                ) {
+                } else if !action_contracts::patch_workspace_current(&transaction.policy, &evidence)
+                {
+                    "workspace_changed"
+                } else if !action_contracts::patch_resources_current(&transaction.policy, &evidence)
+                {
                     "resources_changed"
                 } else {
                     "task_or_revision_changed"
@@ -515,7 +523,7 @@ pub async fn run(user: &str, call: &str, args: &serde_json::Value) -> anyhow::Re
     let check_results: Vec<_> = checks
         .into_iter()
         .enumerate()
-        .map(|(index, (name, outcome, code, output, resources))| {
+        .map(|(index, (name, outcome, code, output, evidence))| {
             let receipt = receipts
                 .as_ref()
                 .and_then(|all| all.get(index))
@@ -529,7 +537,8 @@ pub async fn run(user: &str, call: &str, args: &serde_json::Value) -> anyhow::Re
                     outcome,
                     exit_code: code,
                     verified: false,
-                    resources,
+                    resources: evidence.resources,
+                    workspace_revision: evidence.workspace_revision,
                 });
             serde_json::json!({"receipt":receipt,"output":output})
         })

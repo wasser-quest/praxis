@@ -378,13 +378,19 @@ async fn journal_cancellation_during_commit_never_publishes_evidence() {
     let sm = crate::sm::parse("[state working]\n[checks]\ntests = {\"program\":\"/bin/true\"}\n[guards]\n_complete = [tests]").unwrap();
     action_contracts::bind(user, "journal", &sm, &root).unwrap();
     let policy = action_contracts::patch_policy(user, &["tests".into()], true).unwrap();
-    assert!(
-        action_contracts::publish_patch(user, &policy, "cancelled-commit", &[None], || {
+    let _workspace = journal::ready(&root).unwrap();
+    let evidence = CheckEvidence::capture(&sm.checks["tests"], &root).unwrap();
+    assert!(action_contracts::publish_patch(
+        user,
+        &policy,
+        "cancelled-commit",
+        &[evidence],
+        || {
             task_control::cancel(user);
             Ok(())
-        })
-        .is_err()
-    );
+        }
+    )
+    .is_err());
     assert!(action_contracts::require(user, "_complete").is_err());
 }
 

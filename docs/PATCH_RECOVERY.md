@@ -4,9 +4,10 @@
 On Unix hosts, the next `inspect_file`, `apply_patch`, or `run_check` for that root
 recovers an interrupted transaction before proceeding. Guarded transitions and
 completion refuse outstanding journals, including workflows without resource
-scopes. Recovery revokes live evidence in the recovering process for tasks pinned
-to the same root;
-it never reconstructs task ownership or passing check receipts.
+scopes. A shared durable workspace revision invalidates prior evidence across
+Praxis processes before recovery changes files or clears a pending journal.
+Recovery also revokes live evidence in the recovering process for tasks pinned
+to the root; it never reconstructs task ownership or passing check receipts.
 
 For immediate recovery without starting services, unlocking secrets, loading
 configuration, or contacting a provider, run:
@@ -26,15 +27,16 @@ printed. Outcomes are `clean`, `recovered`, `committed_preserved`, or `conflict`
    or recover that root while its lock is held.
 2. Validate the complete edit batch in memory. Save versioned originals, modes,
    expected replacement hashes, and an initially empty publication prefix.
-   Synchronize the journal file and its directory before creating stages.
+   Synchronize the journal file and its directory, then atomically replace and
+   synchronize the shared workspace revision before creating any stage.
 3. Before each file's publication, durably advance its intent in the journal.
    Stage replacement bytes under a name derived from the transaction UUID,
    synchronize the data, rename/remove the target, and synchronize its directory.
 4. Run all trusted postcondition checks and freshness checks. Persist the commit
    decision while the evidence ledger remains locked, before any passing receipt
    can authorize a guard. Then remove the journal and synchronize its directory.
-5. On failure, durably select compensation before restoring targets. Restore in
-   reverse intent order only when current contents/existence and permissions
+5. On failure, durably select compensation and replace/synchronize the shared
+   revision before restoring targets. Restore in reverse intent order only when current contents/existence and permissions
    match the proposed result. Targets already matching the original are accepted
    as unmodified or already restored. Preserve other states as conflicts.
 
@@ -47,7 +49,16 @@ targets and only cleans up runtime records; a later external edit is not reverte
 
 Journals live beside the workspace in
 `.praxis-patch-journal-<SHA256-of-canonical-root>/pending.json`. The permanent
-`lock` file remains after cleanup and must not be replaced while Praxis is active.
+`lock` and `revision.json` files remain after cleanup. Do not replace the lock
+while Praxis is active. The revision is a versioned canonical-root/UUID record,
+capped at 16 KiB and atomically rewritten through `revision.new` with file and
+directory synchronization. It contains no originals or check output. An old store
+without a revision is initialized under its lock with a new UUID; missing revision
+state fails closed at guards, and malformed or unsafe records require operator
+inspection. Normal commit cleanup keeps the new receipts' revision; recovery of
+any pending record replaces it, including repeated conflict attempts. Clean
+recovery leaves it unchanged.
+
 Keeping records outside the root prevents journals from changing resource hashes,
 including `resources:["."]`. The root's parent must be writable; on Unix, named
 checks and inspections also need this directory because they share its lock. The filesystem
@@ -81,8 +92,10 @@ hardware, network filesystems, or operating-system crash behavior. Durability
 depends on the filesystem honoring file and directory synchronization.
 
 Publication remains atomic per file, not per batch. Raw tools, plugins, external
-writers, and surviving check processes do not honor this advisory lock. A runtime
-crash can leave a check process alive; its side effects remain outside file
+writers, and surviving check processes do not honor this advisory lock or advance
+the shared revision. The revision detects cooperating Praxis patch/recovery
+operations, not arbitrary filesystem changes or tampering with runtime records.
+A runtime crash can leave a check process alive; its side effects remain outside file
 compensation. Compare-before-restore detects visible differences, but does not
 prevent path races or transient writes restored between samples. An external
 write matching the proposed bytes and mode cannot be distinguished from this

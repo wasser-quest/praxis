@@ -4,6 +4,61 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use std::fs::{File, OpenOptions};
 
 const MAX_RECORD_BYTES: u64 = 8 * 1024 * 1024;
+const MAX_REVISION_BYTES: u64 = 16 * 1024;
+
+/// A random identity prevents reuse after a missing record is reinitialized.
+/// It is a freshness token, not a counter, receipt, or content hash.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Revision {
+    version: u32,
+    root: PathBuf,
+    id: String,
+}
+
+fn read_revision(root: &Path, store: &Path) -> anyhow::Result<String> {
+    private(&fs::symlink_metadata(store)?, true)?;
+    let path = store.join("revision.json");
+    private(&fs::symlink_metadata(&path)?, false)?;
+    let mut options = private_options();
+    options.write(false);
+    let file = options.open(path)?;
+    let meta = file.metadata()?;
+    private(&meta, false)?;
+    anyhow::ensure!(
+        meta.len() <= MAX_REVISION_BYTES,
+        "Oversized workspace revision"
+    );
+    let mut bytes = Vec::new();
+    file.take(MAX_REVISION_BYTES + 1).read_to_end(&mut bytes)?;
+    anyhow::ensure!(
+        bytes.len() <= MAX_REVISION_BYTES as usize,
+        "Oversized workspace revision"
+    );
+    let revision: Revision = serde_json::from_slice(&bytes).map_err(|_| {
+        anyhow::anyhow!("Malformed workspace revision; operator inspection required")
+    })?;
+    anyhow::ensure!(
+        revision.version == 1 && revision.root == root,
+        "Invalid workspace revision version/root"
+    );
+    anyhow::ensure!(
+        uuid::Uuid::parse_str(&revision.id).is_ok_and(|id| id.to_string() == revision.id),
+        "Invalid workspace revision identity"
+    );
+    Ok(revision.id)
+}
+
+/// Read without taking the OS lock: callers may already hold it, or the task
+/// ledger. Only the lock owner initializes/advances revisions. Missing/corrupt
+/// state fails closed here; migration happens in Workspace::open.
+pub(crate) fn workspace_revision(root: &Path) -> anyhow::Result<Option<String>> {
+    if !cfg!(unix) {
+        return Ok(None);
+    }
+    let root = root.canonicalize()?;
+    Ok(Some(read_revision(&root, &store_path(&root)?)?))
+}
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -290,14 +345,52 @@ impl Workspace {
         }
         // A death during an atomic record rewrite leaves only this private temp.
         remove_private(&store.join("pending.new"))?;
-        Ok(Self {
+        remove_private(&store.join("revision.new"))?;
+        let workspace = Self {
             root,
             store,
             _lock: lock,
-        })
+        };
+        match fs::symlink_metadata(workspace.store.join("revision.json")) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                // Upgrade pre-revision stores; never reuse a default identity.
+                workspace.save_revision()?;
+            }
+            Err(error) => return Err(error.into()),
+            Ok(_) => {
+                read_revision(&workspace.root, &workspace.store)?;
+            }
+        }
+        Ok(workspace)
     }
     pub fn pending_path(&self) -> PathBuf {
         self.store.join("pending.json")
+    }
+    fn save_revision(&self) -> anyhow::Result<()> {
+        let revision = Revision {
+            version: 1,
+            root: self.root.clone(),
+            id: uuid::Uuid::new_v4().to_string(),
+        };
+        let bytes = serde_json::to_vec(&revision)?;
+        anyhow::ensure!(
+            bytes.len() <= MAX_REVISION_BYTES as usize,
+            "Oversized workspace revision"
+        );
+        let path = self.store.join("revision.new");
+        remove_private(&path)?;
+        let file = private_options().create_new(true).open(&path)?;
+        let mut temp =
+            tempfile::NamedTempFile::from_parts(file, tempfile::TempPath::try_from_path(path)?);
+        temp.write_all(&bytes)?;
+        temp.as_file().sync_all()?;
+        temp.persist(self.store.join("revision.json"))
+            .map_err(|error| error.error)?;
+        sync_directory(&self.store)
+    }
+    fn advance_revision(&self) -> anyhow::Result<()> {
+        read_revision(&self.root, &self.store)?;
+        self.save_revision()
     }
     fn save(&self, record: &Record) -> anyhow::Result<()> {
         let bytes = serde_json::to_vec(record)?;
@@ -387,6 +480,9 @@ impl Workspace {
                 conflicts: Vec::new(),
             });
         };
+        // Persist freshness before any compensation/cleanup can become visible
+        // to other Praxis processes. Repeated conflict recovery is conservative.
+        self.advance_revision()?;
         crate::gateway::task_control::invalidate_workspace(&self.root)?;
         let mut conflicts = Vec::new();
         if !record.committed {
@@ -550,6 +646,9 @@ impl Active {
         };
         record.validate(&workspace.root)?;
         workspace.save(&record)?;
+        // The journal exists first, so a death during this revision rewrite is
+        // recoverable. No target or adjacent stage has been touched yet.
+        workspace.advance_revision()?;
         Ok(Self { workspace, record })
     }
     pub fn id(&self) -> &str {
