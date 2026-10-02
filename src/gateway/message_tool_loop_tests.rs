@@ -309,6 +309,55 @@ async fn capability_agent_requires_receipt_then_recovers_with_real_plugin() {
 
 #[cfg(unix)]
 #[tokio::test]
+#[ignore = "Requires real POML; native check processes and model are offline"]
+async fn capability_native_build_and_tests_recover_in_chat_and_agent() {
+    let workflow = tempfile::Builder::new().prefix("native-capability-").suffix(".sm").tempfile_in("contexts").unwrap();
+    std::fs::write(workflow.path(), "@steps [working, done]\n[state working]\nsettings.activated_tools = [\"build_project\", \"run_tests\", \"agent_complete\"]\n[state done]\nsettings.activated_tools = [\"agent_complete\"]\n[action_guards]\n_complete = [native/build_project, native/run_tests]\n").unwrap();
+    for flow in ["message","agent"] {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut state,user,requests) = fixture(dir.path(),vec![
+            Step::Reply(reply(None,vec![call("early-complete","agent_complete",serde_json::json!({}))])),
+            Step::Reply(reply(None,vec![call("build","build_project",serde_json::json!({"scope":"workspace"}))])),
+            Step::Reply(reply(None,vec![call("build-only-complete","agent_complete",serde_json::json!({}))])),
+            Step::Reply(reply(None,vec![call("tests","run_tests",serde_json::json!({"scope":"workspace"}))])),
+            Step::Reply(reply(Some("Verified native completion. [[AGENT:COMPLETE]]"),vec![])),
+        ]);
+        let tools:Vec<_> = ["build_project","run_tests"].into_iter().map(|name| serde_json::json!({
+            "name":name,"description":name,"parameters":{"type":"object","properties":{"scope":{"type":"string","enum":["workspace"]}},"required":["scope"],"additionalProperties":false},
+            "handler":{"type":"verification"},
+            "contract":{"effect":"verification","idempotency":"idempotent","timeout_secs":5,"postconditions":[{"program":"/bin/true"}]}
+        })).collect();
+        let mut registry = crate::plugins::PluginRegistry::new();
+        registry.register(serde_json::from_value(serde_json::json!({"name":"native","description":"native","version":"1","tools":tools})).unwrap());
+        state.plugins = Arc::new(registry);
+        state.db.merge_context(&user,serde_json::json!({"settings.sm_file":workflow.path().file_stem().unwrap().to_str().unwrap(),"settings.max_llm_turns":if flow=="message" {1} else {8},"settings.max_tool_calls":8,"settings.compaction_enabled":false})).unwrap();
+        let response = if flow=="message" {
+            handle_message(&state,&user,"Build and test before completing.",Some("web")).await.unwrap()
+        } else {
+            let result = crate::gateway::agent_loop::run_agent_loop(&state,&user,"Build and test before completing.",Default::default(),None).await.unwrap();
+            assert!(result.completed); result.response
+        };
+        assert!(response.contains("Verified native completion"),"{flow}: {response}");
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(),5,"{flow}");
+        let names:Vec<_> = requests[0].tools.as_ref().unwrap().iter().map(|t|t.function.name.as_str()).collect();
+        assert!(names.contains(&"build_project") && names.contains(&"run_tests"));
+        assert!(!names.contains(&"execute_terminal") && !names.contains(&"run_check"));
+        let history = state.db.get_messages(&user,100).unwrap();
+        for id in ["early-complete","build-only-complete"] {
+            assert!(history.iter().find(|m|m.tool_call_id.as_deref()==Some(id)).unwrap().content.contains("requires current verified capabilities"),"{flow}: {id}");
+        }
+        for id in ["build","tests"] {
+            let output:serde_json::Value = serde_json::from_str(&history.iter().find(|m|m.tool_call_id.as_deref()==Some(id)).unwrap().content).unwrap();
+            assert_eq!(output["receipt"]["verified"],true);
+        }
+        assert!(crate::gateway::task_control::cancellation(&user).is_none());
+    }
+    workflow.close().unwrap();
+}
+
+#[cfg(unix)]
+#[tokio::test]
 #[ignore = "Requires the real Microsoft POML CLI; checks and model are offline"]
 async fn contract_agent_rejects_unverified_completion_then_recovers() {
     std::fs::create_dir_all("contexts").unwrap();

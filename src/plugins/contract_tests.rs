@@ -366,15 +366,255 @@ fn capability_relative_install_paths_are_absolute_for_workspace_cwd() {
 fn capability_bundled_semantic_example_has_checks_and_receipt_guards() {
     let registry = load_all_plugins(Path::new("examples/plugins"));
     let plugin = registry.get("verified_rust").unwrap();
-    contracts::validate_tool(&plugin.name, &plugin.tools[0]).unwrap();
+    assert_eq!(plugin.tools.len(), 2);
+    for tool in &plugin.tools {
+        contracts::validate_tool(&plugin.name, tool).unwrap();
+        assert_eq!(
+            serde_json::to_value(&tool.handler).unwrap(),
+            json!({"type":"verification"})
+        );
+    }
     let sm =
         crate::sm::parse(&std::fs::read_to_string("contexts/verified-capabilities.sm").unwrap())
             .unwrap();
-    assert_eq!(sm.guards["_complete"], vec!["build"]);
+    assert!(sm.checks.contains_key("build")); // native transactional edits retain their verifier
+    assert!(sm.guards.is_empty());
     assert_eq!(
         sm.action_guards["_complete"],
-        vec!["verified_rust/run_workspace_tests"]
+        vec![
+            "verified_rust/build_workspace",
+            "verified_rust/run_workspace_tests"
+        ]
     );
+    let tools = &sm.states["working"].variables["settings.activated_tools"];
+    let tools: Vec<String> = serde_json::from_str(tools).unwrap();
+    assert!(
+        tools.contains(&"build_workspace".into()) && tools.contains(&"run_workspace_tests".into())
+    );
+    assert!(!tools.contains(&"run_check".into()) && !tools.contains(&"execute_terminal".into()));
+}
+
+fn native_fixture() -> (tempfile::TempDir, PluginRegistry) {
+    let (dir, mut registry) = fixture("exit 99");
+    registry.plugins.get_mut("sample").unwrap().tools[0].handler =
+        serde_json::from_value(json!({"type":"verification"})).unwrap();
+    contract(&mut registry).effect = contracts::EffectClass::Verification;
+    (dir, registry)
+}
+
+#[tokio::test]
+async fn capability_native_verification_executes_checks_once_without_script() {
+    let (dir, mut registry) = native_fixture();
+    // Leave the original failing script in place: the adapter cannot depend on it.
+    contract(&mut registry).postconditions = vec![check(
+        "/bin/sh",
+        &["-c", "printf ran >> executions; printf build-passed"],
+    )];
+    let user = "capability-native-pass";
+    let _task = bind(user, dir.path());
+    let result = invoke(&registry, user, "first").await;
+    assert_eq!(result["receipt"]["outcome"], "committed");
+    assert_eq!(result["receipt"]["verified"], true);
+    assert_eq!(
+        result["receipt"]["conditions"][0]["output"]["stdout"],
+        "build-passed"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("executions")).unwrap(),
+        "ran"
+    );
+    action_contracts::require(user, "done").unwrap();
+    assert!(registry
+        .execute_tool_for_task(user, "first", "act", &json!({}), None, None)
+        .await
+        .is_err());
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("executions")).unwrap(),
+        "ran"
+    );
+}
+
+#[tokio::test]
+async fn capability_native_failed_check_cannot_keep_previous_success() {
+    let (dir, mut registry) = native_fixture();
+    contract(&mut registry).postconditions = vec![check(
+        "/bin/sh",
+        &[
+            "-c",
+            "if test -e executions; then printf tests-failed >&2; exit 1; fi; touch executions",
+        ],
+    )];
+    let user = "capability-native-rerun";
+    let _task = bind(user, dir.path());
+    assert_eq!(
+        invoke(&registry, user, "first").await["receipt"]["verified"],
+        true
+    );
+    action_contracts::require(user, "done").unwrap();
+    let failed = invoke(&registry, user, "second").await;
+    assert_eq!(failed["receipt"]["outcome"], "failed");
+    assert_eq!(failed["receipt"]["verified"], false);
+    assert_eq!(
+        failed["receipt"]["conditions"][0]["output"]["stderr"],
+        "tests-failed"
+    );
+    assert!(action_contracts::require(user, "done").is_err());
+}
+
+#[test]
+fn capability_native_adapter_requires_verification_contract_and_strict_handler() {
+    assert!(serde_json::from_value::<PluginHandler>(
+        json!({"type":"verification","program":"model-command"})
+    )
+    .is_err());
+    let (_dir, mut registry) = native_fixture();
+    let mut tool = registry.plugins["sample"].tools[0].clone();
+    tool.contract = None;
+    assert!(contracts::validate_tool("sample", &tool).is_err());
+    for effect in [
+        contracts::EffectClass::ReadOnly,
+        contracts::EffectClass::WorkspaceWrite,
+        contracts::EffectClass::ExternalWrite,
+    ] {
+        contract(&mut registry).effect = effect;
+        assert!(contracts::validate_tool("sample", &registry.plugins["sample"].tools[0]).is_err());
+    }
+    // A read/verification adapter cannot stand in for restoring a mutation.
+    registry.plugins.get_mut("sample").unwrap().tools[0].handler = PluginHandler::Script {
+        path: _dir.path().join("run.sh").to_string_lossy().into_owned(),
+        interpreter: "/bin/sh".into(),
+    };
+    contract(&mut registry).compensation = Some(contracts::Compensation {
+        handler: serde_json::from_value(json!({"type":"verification"})).unwrap(),
+        postconditions: vec![check("/bin/true", &[])],
+        timeout_secs: 5,
+    });
+    assert!(
+        contracts::validate_tool("sample", &registry.plugins["sample"].tools[0])
+            .unwrap_err()
+            .to_string()
+            .contains("cannot perform compensation")
+    );
+}
+
+#[tokio::test]
+async fn capability_native_model_cannot_override_verifier_or_forge_receipt() {
+    let (dir, mut registry) = native_fixture();
+    contract(&mut registry).postconditions = vec![check("/bin/sh", &["-c", "touch executed"])];
+    let user = "capability-native-input";
+    let _task = bind(user, dir.path());
+    for args in [
+        json!({"program":"/bin/true"}),
+        json!({"receipt":{"verified":true}}),
+        json!({"contract":{"postconditions":[]}}),
+    ] {
+        assert!(registry
+            .execute_tool_for_task(user, "first", "act", &args, None, None)
+            .await
+            .is_err());
+    }
+    assert!(!dir.path().join("executed").exists());
+    assert!(action_contracts::require(user, "done").is_err());
+    assert!(registry
+        .execute_tool("act", &json!({}), None, None)
+        .await
+        .is_err());
+}
+
+#[tokio::test]
+async fn capability_native_timeout_and_cancel_never_produce_proof() {
+    for cancelled in [false, true] {
+        let (dir, mut registry) = native_fixture();
+        contract(&mut registry).timeout_secs = 1;
+        contract(&mut registry).postconditions =
+            vec![check("/bin/sh", &["-c", "touch started; sleep 20"])];
+        let user = if cancelled {
+            "capability-native-cancel"
+        } else {
+            "capability-native-timeout"
+        };
+        let _task = bind(user, dir.path());
+        let token = task_control::cancellation(user).unwrap();
+        let run = invoke(&registry, user, "first");
+        let cancel = async {
+            if cancelled {
+                for _ in 0..100 {
+                    if dir.path().join("started").exists() {
+                        token.cancel();
+                        return;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+                panic!("verifier did not start");
+            }
+        };
+        let (receipt, _) = tokio::join!(run, cancel);
+        assert_eq!(receipt["receipt"]["verified"], false);
+        assert_eq!(
+            receipt["receipt"]["failure"],
+            if cancelled { "cancelled" } else { "timed_out" }
+        );
+        assert!(action_contracts::require(user, "done").is_err());
+    }
+}
+
+#[tokio::test]
+#[ignore = "Requires a Rust toolchain on PATH; compiles and tests a temporary, dependency-free project"]
+async fn capability_native_bundled_build_and_tests_with_real_cargo() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir(root.path().join("src")).unwrap();
+    std::fs::write(root.path().join("Cargo.toml"), "[package]\nname = \"praxis-capability-fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\n[workspace]\n").unwrap();
+    std::fs::write(
+        root.path().join("Cargo.lock"),
+        "version = 4\n[[package]]\nname = \"praxis-capability-fixture\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    let source = root.path().join("src/lib.rs");
+    let good = "#[test] fn regression() { assert_eq!(2 + 2, 4); }\n";
+    std::fs::write(&source, good).unwrap();
+    let registry = load_all_plugins(Path::new("examples/plugins"));
+    let sm = crate::sm::load_file("verified-capabilities").unwrap();
+    let user = "capability-native-real-cargo";
+    let _task = task_control::begin(user).unwrap();
+    action_contracts::bind(user, "verified-capabilities", &sm, root.path()).unwrap();
+    let run = |call: &'static str, tool: &'static str| async {
+        serde_json::from_str::<Value>(
+            &registry
+                .execute_tool_for_task(user, call, tool, &json!({"scope":"workspace"}), None, None)
+                .await
+                .unwrap(),
+        )
+        .unwrap()
+    };
+    for (id, tool) in [
+        ("initial-build", "build_workspace"),
+        ("initial-tests", "run_workspace_tests"),
+    ] {
+        assert_eq!(run(id, tool).await["receipt"]["verified"], true);
+    }
+    action_contracts::require(user, "_complete").unwrap();
+    std::fs::write(
+        &source,
+        "#[test] fn regression() { assert_eq!(2 + 2, 5); }\n",
+    )
+    .unwrap();
+    assert!(action_contracts::require(user, "_complete").is_err());
+    assert_eq!(
+        run("failing-build", "build_workspace").await["receipt"]["verified"],
+        true
+    );
+    let failed = run("failing-tests", "run_workspace_tests").await;
+    assert_eq!(failed["receipt"]["verified"], false);
+    assert_eq!(failed["receipt"]["conditions"][0]["exit_code"], 101);
+    assert!(action_contracts::require(user, "_complete").is_err());
+    std::fs::write(&source, good).unwrap();
+    for (id, tool) in [
+        ("fixed-build", "build_workspace"),
+        ("fixed-tests", "run_workspace_tests"),
+    ] {
+        assert_eq!(run(id, tool).await["receipt"]["verified"], true);
+    }
+    action_contracts::require(user, "_complete").unwrap();
 }
 
 #[tokio::test]
