@@ -3,6 +3,50 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
 
+#[cfg(test)]
+mod state_graph_tests {
+    use super::*;
+
+    #[test]
+    fn state_graph_ir_replaces_global_and_explicit_empty_disables_it() {
+        let sm = parse("@routing graph\n@start route\n[state route]\n[state edit]\n[state stop]\n[decision_ir]\nR = inspect_file\n[decision_ir edit]\nM = native/modify\nN = agent_next\n[decision_ir stop]\n[node edit]\ntitle = \"Implementation\"\ndescription = \"Apply a verified change\"\n[transitions]\nroute -> edit\nedit -> stop").unwrap();
+        assert_eq!(
+            sm.ir_for("route").get("R").map(String::as_str),
+            Some("inspect_file")
+        );
+        assert!(!sm.ir_for("edit").contains_key("R"));
+        assert_eq!(sm.ir_for("edit")["N"], "agent_next");
+        assert!(sm.ir_for("stop").is_empty());
+        assert_eq!(sm.nodes["edit"].title, "Implementation");
+        assert!(!sm.states["edit"].variables.contains_key("title"));
+    }
+
+    #[test]
+    fn state_graph_rejects_unknown_nodes_and_duplicate_local_opcodes() {
+        for text in [
+            "[state a]\n[decision_ir missing]\nR = inspect_file",
+            "[state a]\n[decision_ir a]\nR = inspect_file\nR = inspect_file",
+            "@routing graph\n[state a]\n[transitions]\na -> missing",
+            "@routing graph\n@start missing\n[state a]",
+            "[state a]\n[node missing]\ntitle = \"Missing\"",
+        ] {
+            assert!(parse(text).is_err(), "{text}");
+        }
+    }
+
+    #[test]
+    fn state_graph_entry_uses_start_and_does_not_run_auto_routes() {
+        let sm = parse(
+            "@routing graph\n@start route\n[state route]\n[state edit]\n[auto]\ntrue -> use edit",
+        )
+        .unwrap();
+        let mut ctx = serde_json::json!({"active_state":"routing", "settings":{}});
+        apply_to_context(&sm, &mut ctx);
+        assert_eq!(ctx["active_state"], "route");
+        assert!(advance_workflow(&sm, &ctx).is_none());
+    }
+}
+
 static REGEX_CACHE: LazyLock<Mutex<HashMap<String, Regex>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
@@ -77,9 +121,50 @@ pub struct StateMachine {
     /// Trusted Decision IR opcode -> native tool or plugin/tool capability.
     #[serde(default)]
     pub decision_ir: HashMap<String, String>,
+    #[serde(default)]
+    pub state_ir: HashMap<String, HashMap<String, String>>,
+    #[serde(default)]
+    pub routing: String,
+    #[serde(default)]
+    pub start: Option<String>,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub nodes: HashMap<String, GraphMetadata>,
+    #[serde(default)]
+    pub edges: HashMap<String, GraphMetadata>,
     /// Operator-authored project requirements checked before model calls.
     #[serde(default)]
     pub workspace: crate::workspace::Requirements,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct GraphMetadata {
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub description: String,
+}
+
+impl StateMachine {
+    pub fn is_graph(&self) -> bool {
+        self.routing == "graph"
+    }
+    pub fn ir_for(&self, state: &str) -> &HashMap<String, String> {
+        self.state_ir.get(state).unwrap_or(&self.decision_ir)
+    }
+    pub fn entry_state(&self) -> Option<&str> {
+        self.start
+            .as_deref()
+            .or_else(|| self.steps.first().map(String::as_str))
+            .or_else(|| {
+                self.states
+                    .keys()
+                    .filter(|name| name.as_str() != "_default")
+                    .min()
+                    .map(String::as_str)
+            })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -205,7 +290,19 @@ pub fn parse(content: &str) -> Result<StateMachine, SmError> {
                     current_state_name = None;
                     current_section = Some("tool_groups".to_string());
                 }
-                "checks" | "guards" | "action_guards" | "decision_ir" | "workspace" => {
+                "decision_ir" => {
+                    current_state_name = parts.get(1).map(|name| name.trim().to_string());
+                    if let Some(name) = &current_state_name { sm.state_ir.entry(name.clone()).or_default(); }
+                    current_section = Some("decision_ir".into());
+                }
+                "node" | "edge" => {
+                    let name = parts.get(1).filter(|s| !s.trim().is_empty()).ok_or_else(|| SmError::ParseError("Graph metadata needs a node or edge ID".into()))?.trim().to_string();
+                    if parts[0] == "node" { sm.nodes.entry(name.clone()).or_default(); }
+                    else { sm.edges.entry(name.clone()).or_default(); }
+                    current_state_name = Some(name);
+                    current_section = Some(parts[0].into());
+                }
+                "checks" | "guards" | "action_guards" | "workspace" => {
                     current_state_name = None;
                     current_section = Some(parts[0].to_string());
                 }
@@ -225,6 +322,12 @@ pub fn parse(content: &str) -> Result<StateMachine, SmError> {
             match key.as_str() {
                 "name" => sm.name = value,
                 "version" => sm.version = value,
+                "routing" => {
+                    if !matches!(value.as_str(), "graph" | "linear") { return Err(SmError::ParseError("@routing must be graph or linear".into())); }
+                    sm.routing = value;
+                }
+                "start" => sm.start = Some(value),
+                "description" => sm.description = value,
                 "steps" => {
                     sm.steps = parse_array(&value);
                 }
@@ -234,6 +337,18 @@ pub fn parse(content: &str) -> Result<StateMachine, SmError> {
         }
 
         match current_section.as_deref() {
+            Some("node" | "edge") => {
+                let (key, _) = parse_assignment(trimmed, line_num)?;
+                let raw = trimmed.split_once('=').map(|(_, value)| value.trim()).unwrap_or("");
+                let value = serde_json::from_str::<String>(raw).map_err(|_| SmError::ParseError("Graph metadata values must be JSON strings".into()))?;
+                let table = if current_section.as_deref() == Some("node") { &mut sm.nodes } else { &mut sm.edges };
+                let metadata = table.get_mut(current_state_name.as_deref().unwrap_or("")).ok_or_else(|| SmError::ParseError("Missing graph metadata section".into()))?;
+                match key.as_str() {
+                    "title" => metadata.title = value,
+                    "description" => metadata.description = value,
+                    _ => return Err(SmError::ParseError("Graph metadata accepts title and description".into())),
+                }
+            }
             Some("state") => {
                 if let Some(ref state_name) = current_state_name {
                     let (key, value) = parse_assignment(trimmed, line_num)?;
@@ -311,10 +426,11 @@ pub fn parse(content: &str) -> Result<StateMachine, SmError> {
             Some("decision_ir") => {
                 let (key, value) = parse_assignment(trimmed, line_num)?;
                 let target = value.trim_matches('"').to_string();
+                let mapping = match &current_state_name { Some(name) => sm.state_ir.entry(name.clone()).or_default(), None => &mut sm.decision_ir };
                 if !crate::gateway::decision_ir::valid_mapping(&key, &target)
-                    || sm.decision_ir.len() >= 26
-                    || sm.decision_ir.insert(key, target).is_some() {
-                    return Err(SmError::ParseError("Decision IR requires unique A..Z opcodes mapped to inspect_file, agent_complete or plugin/tool capabilities".into()));
+                    || mapping.len() >= 26
+                    || mapping.insert(key, target).is_some() {
+                    return Err(SmError::ParseError("Decision IR requires unique A..Z opcodes mapped to inspect_file, agent_next, agent_back, agent_complete or plugin/tool capabilities".into()));
                 }
             }
             Some("guards") => {
@@ -336,6 +452,19 @@ pub fn parse(content: &str) -> Result<StateMachine, SmError> {
         }
     }
 
+    for name in sm.state_ir.keys().chain(sm.nodes.keys()).chain(sm.start.iter()) {
+        if name == "_default" || !sm.states.contains_key(name) { return Err(SmError::ParseError(format!("Undefined graph/IR state: {name}"))); }
+    }
+    let mut outgoing = HashMap::<&str, usize>::new();
+    let mut edge_ids = std::collections::HashSet::new();
+    for edge in &sm.transitions {
+        let index = outgoing.entry(&edge.from).or_default();
+        edge_ids.insert(format!("{}:{}", edge.from, index));
+        *index += 1;
+        if sm.is_graph() && (edge.from == "_default" || edge.to == "_default" || !sm.states.contains_key(&edge.from) || !sm.states.contains_key(&edge.to)) { return Err(SmError::ParseError("Graph transitions must connect declared states".into())); }
+    }
+    if sm.edges.keys().any(|id| !edge_ids.contains(id)) { return Err(SmError::ParseError("Edge metadata must name an outgoing edge as state:index".into())); }
+    if sm.is_graph() && (sm.entry_state().is_none() || sm.states.len() > 256 || sm.transitions.len() > 1024 || sm.states.keys().any(|name| name.is_empty() || name.len() > 64 || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')) || sm.steps.iter().any(|name| name == "_default" || !sm.states.contains_key(name))) { return Err(SmError::ParseError("Graph requires a declared entry state, at most 256 identifier-named states and 1024 edges".into())); }
     sm.workspace.validate().map_err(|e| SmError::ParseError(e.to_string()))?;
     for (target, required) in &sm.guards {
         if (target != "_complete" && (target == "_default" || !sm.states.contains_key(target))) || required.is_empty() || required.iter().any(|name| !sm.checks.contains_key(name)) {
@@ -576,11 +705,14 @@ pub fn apply_to_context(
     // Resolve tool groups and add to context settings
     apply_tool_groups(sm, context);
     
-    let active_state = context
+    let mut active_state = context
         .get("active_state")
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
+    if sm.is_graph() && (active_state == "_default" || !sm.states.contains_key(&active_state)) {
+        active_state = sm.entry_state().unwrap_or("").to_string();
+    }
 
     // Apply default state variables first
     if let Some(default_state) = sm.states.get("_default") {
@@ -612,7 +744,7 @@ pub fn apply_to_context(
             s.get("use_decision_router").and_then(|v| v.as_bool()).unwrap_or(true)
                 && s.get("decision_profile").and_then(|v| v.as_str()).is_some_and(|p| !p.is_empty() && p != "off")
         });
-    let resolved_state = if decision_owns_state {
+    let resolved_state = if sm.is_graph() { active_state.clone() } else if decision_owns_state {
         resolve_auto_state(&StateMachine { auto_rules: Vec::new(), ..sm.clone() }, obj, &active_state)
     } else {
         resolve_auto_state(sm, obj, &active_state)
@@ -932,6 +1064,7 @@ pub fn advance_state(sm: &StateMachine, context: &serde_json::Value) -> Option<S
 /// Explicit transitions take precedence; @steps provides a queue only where
 /// the current state has no outgoing conditional transition to respect.
 pub fn advance_workflow(sm: &StateMachine, context: &serde_json::Value) -> Option<String> {
+    if sm.is_graph() { return None; }
     if let Some(next) = advance_state(sm, context) { return Some(next); }
     let current = context.get("active_state").and_then(|v| v.as_str()).unwrap_or("");
     if sm.transitions.iter().any(|t| t.from == current) { return None; }
@@ -948,6 +1081,10 @@ pub fn transition_to(
     if crate::gateway::action_contracts::require_for_workflow(user, sm, target_state).is_err() {
         return false;
     }
+    apply_state(sm, context, target_state)
+}
+
+pub(crate) fn apply_state(sm: &StateMachine, context: &mut serde_json::Value, target_state: &str) -> bool {
     if let Some(state) = sm.states.get(target_state) {
         // Persistent skill selection belongs to the user, not automated state
         // transitions (including agent_next and tag-driven transitions).

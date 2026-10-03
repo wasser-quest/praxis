@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 pub const CORE: &[&str] = &[
     "search_tools", "search_skills", "use_skill", "get_context", "set_context",
     "read_file", "write_file", "edit_file", "execute_terminal", "read_tool_result",
-    "agent_complete", "agent_feedback", "agent_next",
+    "agent_complete", "agent_feedback", "agent_next", "agent_back",
 ];
 
 pub fn catalog(db: &Database, plugins: &PluginRegistry) -> anyhow::Result<Vec<ToolDefinition>> {

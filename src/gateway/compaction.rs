@@ -17,13 +17,16 @@ pub async fn before_request(state: &GatewayState, user: &str) -> anyhow::Result<
     let Some(last_user) = messages.iter().rposition(|m|m.role == "user").filter(|i|*i>0) else { return Ok(()) };
     if !super::task_control::claim_compaction(user) { return Ok(()); }
     let prefix = &messages[..last_user];
+    compaction_event(state, &ctx, "running", tokens)?;
     crate::dashboard::stream::send(user,"feedback","Compacting older complete turns; keeping the current request and tool chain.");
     match summarize(state,user,prefix,&ctx.settings.compaction_summary,ctx.settings.compaction_template.as_deref()).await {
         Ok(summary) => {
             state.db.commit_compaction(user,&ctx.session_id,&ctx.settings.compaction_summary,&summary,prefix)?;
+            compaction_event(state, &ctx, "completed", tokens)?;
             crate::dashboard::stream::send(user,"feedback","Compaction saved: goal, key insights and handoff. Current turn and saved tool outputs preserved.");
         }
         Err(error) => {
+            compaction_event(state, &ctx, "failed", tokens)?;
             tracing::warn!(user_id=user,error=%error,"Compaction failed; history unchanged");
             crate::dashboard::stream::send(user,"feedback","Auto-compaction failed; no history was deleted. Safe request budgeting remains active.");
         }
@@ -31,9 +34,17 @@ pub async fn before_request(state: &GatewayState, user: &str) -> anyhow::Result<
     Ok(())
 }
 
+fn compaction_event(state: &GatewayState, ctx: &crate::db::contexts::Context, status: &str, before: usize) -> anyhow::Result<()> {
+    let limits = super::telemetry::limits(&state.db, ctx)?;
+    let payload = serde_json::json!({"status":status,"tokens_before_estimate":before,"limits":limits});
+    state.db.record_execution_event(ctx, "compaction", &payload)?;
+    crate::dashboard::stream::send(&ctx.user_id, "compaction", &payload.to_string());
+    Ok(())
+}
+
 pub async fn summarize(state:&GatewayState,user:&str,messages:&[Message],previous:&str,template:Option<&str>) -> anyhow::Result<String> {
     let ctx=state.db.load_context(user)?;
-    let path=super::templates::resolve_template(std::path::Path::new("templates"),template.unwrap_or("compaction"))?;
+    let path=super::templates::resolve_template(&std::path::Path::new(&state.config.root_dir).join("templates"),template.unwrap_or("compaction"))?;
     let mut transcript=String::new();
     for m in messages {
         let content = if m.role=="tool" && m.content.chars().count()>2000 {

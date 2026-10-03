@@ -203,6 +203,9 @@ pub fn routes(db: crate::db::Database) -> Router {
         .route("/contexts/:user_id", axum::routing::delete(delete_context))
         .route("/contexts/:user_id/fork", axum::routing::post(fork_context_route))
         .route("/messages/:user_id", axum::routing::get(get_messages))
+        .route("/graphs/:user_id", axum::routing::get(super::graphs::graph))
+        .route("/execution/:user_id", axum::routing::get(super::graphs::execution))
+        .route("/usage/:user_id", axum::routing::get(super::graphs::usage))
         .route("/messages/:user_id", axum::routing::delete(clear_messages))
         .route("/messages/:user_id/clear-chat", axum::routing::post(clear_chat_view))
         .route("/messages/:user_id/compact", axum::routing::post(compact_messages))
@@ -664,6 +667,10 @@ async fn get_messages(
                         "content": m.content,
                         "tool_call_id": m.tool_call_id,
                         "tool_name": m.tool_name,
+                        "prompt_tokens": m.prompt_tokens,
+                        "completion_tokens": m.completion_tokens,
+                        "total_tokens": m.total_tokens,
+                        "generation_ms": m.generation_ms,
                     });
                     if let Some(meta) = m.discord_meta.as_ref() {
                         val["discord_meta"] = meta.clone();

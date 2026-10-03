@@ -285,15 +285,13 @@ impl LLMRouter {
                             Err(error) => format!("Error: {error}"),
                         }
                     }
-                    "agent_next" => {
-                        agent_signal = AgentSignalFromTool::Next;
-                        crate::tools::agent_control::run(
-                            db,
-                            user_id,
-                            crate::tools::agent_control::AgentControlSignal::Next,
-                        )
-                        .await
-                        .unwrap_or_else(|e| format!("Error: {}", e))
+                    "agent_next" | "agent_back" => {
+                        let root = crate::gateway::state_ref().map(|state| std::path::PathBuf::from(&state.config.root_dir))
+                            .or_else(|| std::env::var_os("ROOT_DIR").map(std::path::PathBuf::from)).unwrap_or_else(|| std::path::PathBuf::from("."));
+                        match crate::tools::agent_control::navigate(db, &root, user_id, tool_call.function.name == "agent_back", &args).await {
+                            Ok(result) => { agent_signal = AgentSignalFromTool::Next; result }
+                            Err(error) => format!("Error: {error}"),
+                        }
                     }
                     "agent_set_path" => {
                         let path = args

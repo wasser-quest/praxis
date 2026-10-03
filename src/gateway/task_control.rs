@@ -64,6 +64,9 @@ pub fn claim_decision_entry(user: &str) -> bool {
 pub fn claim_compaction(user: &str) -> bool {
     TASKS.get(user).is_some_and(|task| !task.compaction_claimed.swap(true,std::sync::atomic::Ordering::Relaxed))
 }
+pub fn compaction_claimed(user: &str) -> bool {
+    TASKS.get(user).is_some_and(|task| task.compaction_claimed.load(std::sync::atomic::Ordering::Relaxed))
+}
 pub fn note_template_omitted(user: &str) {
     if let Some(task) = TASKS.get(user) { task.template_omitted.store(true, std::sync::atomic::Ordering::Relaxed); }
 }

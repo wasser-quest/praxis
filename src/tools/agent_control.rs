@@ -17,6 +17,21 @@ pub async fn run(
     user_id: &str,
     signal: AgentControlSignal,
 ) -> Result<String, String> {
+    run_in(db, std::path::Path::new("."), user_id, signal).await
+}
+
+pub async fn navigate(db: &Database, root: &std::path::Path, user_id: &str, back: bool, args: &serde_json::Value) -> Result<String, String> {
+    let ctx = db.load_context(user_id).map_err(|e| e.to_string())?;
+    let sm = crate::sm::load_file_in(&root.join("contexts"), crate::gateway::prompt::workflow_name(&ctx)).map_err(|e| e.to_string())?;
+    if sm.is_graph() || back || args.get("edge").is_some() {
+        crate::gateway::workflow_graph::navigate(db, root, user_id, back, args).await.map_err(|e| e.to_string())
+    } else {
+        if !args.as_object().is_some_and(|obj| obj.is_empty()) { return Err("Linear agent_next accepts no arguments; use @routing graph for indexed choices".into()); }
+        run_in(db, root, user_id, AgentControlSignal::Next).await
+    }
+}
+
+pub async fn run_in(db: &Database, root: &std::path::Path, user_id: &str, signal: AgentControlSignal) -> Result<String, String> {
     let mut ctx = db
         .load_context(user_id)
         .map_err(|e| format!("Failed to load context: {}", e))?;
@@ -26,6 +41,9 @@ pub async fn run(
 
     match signal {
         AgentControlSignal::Next => {
+            let path = crate::gateway::prompt::workflow_name(&ctx).to_string();
+            let sm = crate::sm::load_file_in(&root.join("contexts"), &path).map_err(|e| format!("Failed to load SM workflow: {e}"))?;
+            if sm.is_graph() { return crate::gateway::workflow_graph::navigate(db, root, user_id, false, &serde_json::json!({})).await.map_err(|e| e.to_string()); }
             // Advance to next template in queue
             if let Some(current) = ctx
                 .settings
@@ -40,8 +58,6 @@ pub async fn run(
             }
             ctx.settings.llm_turn += 1;
 
-            let path = crate::gateway::prompt::workflow_name(&ctx).to_string();
-            let sm = crate::sm::load_file(&path).map_err(|e| format!("Failed to load SM workflow: {e}"))?;
             let mut value = serde_json::to_value(&ctx).map_err(|e| e.to_string())?;
             if let Some(next) = crate::sm::advance_workflow(&sm, &value) {
                 if !crate::sm::transition_to(&sm, &mut value, &next) {

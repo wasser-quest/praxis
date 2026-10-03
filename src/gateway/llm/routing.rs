@@ -103,12 +103,22 @@ impl LLMRouter {
         user: Option<&str>,
         cancel: &CancellationToken,
     ) -> anyhow::Result<ChatResponse> {
-        let result = self.route(request, provider, user, cancel).await;
+        let result = self.route(request, provider, user, cancel, None).await;
         if let Err(error) = &result {
             if let Some(user) = user {
                 crate::dashboard::stream::send(user, "stream_abort", "{}");
             }
             resilience::progress(user, &error.to_string());
+        }
+        result
+    }
+
+    pub async fn streaming_chat_traced(&self, request: ChatRequest, provider: Option<&str>, user: &str, trace: &crate::gateway::telemetry::CallTrace) -> anyhow::Result<ChatResponse> {
+        let cancel = crate::gateway::task_control::cancellation(user).unwrap_or_default();
+        let result = self.route(request, provider, Some(user), &cancel, Some(trace)).await;
+        if let Err(error) = &result {
+            crate::dashboard::stream::send(user, "stream_abort", "{}");
+            resilience::progress(Some(user), &error.to_string());
         }
         result
     }
@@ -119,6 +129,7 @@ impl LLMRouter {
         provider: Option<&str>,
         user: Option<&str>,
         cancel: &CancellationToken,
+        trace: Option<&crate::gateway::telemetry::CallTrace>,
     ) -> anyhow::Result<ChatResponse> {
         self.policy.validate()?;
         let started = Instant::now();
@@ -216,8 +227,11 @@ impl LLMRouter {
                 let attempt_deadline = deadline
                     .min(attempt_start + Duration::from_millis(self.policy.request_timeout_ms));
                 let mut stream = StreamAttempt::new(user);
+                let trace_id = trace.map(|t| t.attempt(&req, name, attempts as u64)).transpose()?;
+                let generation = crate::gateway::telemetry::Generation::new();
                 if let Some(user) = user { crate::dashboard::stream::send(user, "stream_start", "{}"); }
                 let on_delta = |delta: StreamDelta| {
+                    generation.delta(user, trace_id, &delta);
                     if let Some(user) = user {
                         match &delta {
                             StreamDelta::TemplateOmitted => crate::gateway::task_control::note_template_omitted(user),
@@ -250,8 +264,12 @@ impl LLMRouter {
                     req.clone(), continuation.as_ref(),
                     if user.is_some() { Some(&on_delta) } else { None },
                 );
+                let mut reported_response = None;
                 let result = match interruptible(attempt_deadline, cancel, call).await {
                     Ok(Ok(attempt)) => {
+                        // Keep usage/finish metadata even when validation rejects
+                        // a cutoff response. Failed output is never executed.
+                        reported_response = Some(attempt.response.clone());
                         let response = &attempt.response;
                         tracing::debug!(provider = %label(name), attempt = attempts,
                             content_bytes = response.content.as_ref().map_or(0, String::len),
@@ -292,6 +310,9 @@ impl LLMRouter {
                         Err(error)
                     }
                 };
+                if let (Some(trace), Some(id)) = (trace, trace_id) {
+                    trace.finish(id, if result.is_ok() {"completed"} else {"failed"}, reported_response.as_ref(), attempt_start.elapsed().as_millis() as u64, generation.first_token_ms())?;
+                }
                 match result {
                     Ok(ChatAttempt { mut response, continuation: next }) => {
                         if let Some(usage) = &response.usage {
