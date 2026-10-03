@@ -16,13 +16,18 @@ cp examples/plugins/verified-rust/plugin.json plugins/verified-rust/plugin.json
 
 Use your configured `PLUGINS_DIR` if it differs from `plugins`. Restart Praxis
 to load the plugin, then select `verified-capabilities` as the `.sm` workflow.
-Run Praxis with `ROOT_DIR` pointing to the Rust project being verified. Adapt
+Keep `ROOT_DIR` at the installation assets and set `WORKSPACE_DIR` to the Rust
+project being verified (absolute, or relative to `ROOT_DIR`). Without it, verified
+actions retain the `ROOT_DIR` default. Restart and begin a new task after a root
+change. Adapt
 the author-owned commands and resource scopes to that project.
 
 The model calls `build_workspace({"scope":"workspace"})` and
 `run_workspace_tests({"scope":"workspace"})`. The native verification adapter
-runs the manifest's `cargo build --locked --workspace` or
-`cargo test --locked --workspace` check exactly once. A zero exit status and fresh
+runs the manifest's `cargo build --manifest-path Cargo.toml --locked --workspace` or
+`cargo test --manifest-path Cargo.toml --locked --workspace` check exactly once.
+Plugin v1.2.1 requires a manifest at the selected root instead of letting Cargo
+search parent directories. A zero exit status and fresh
 source snapshots produce the corresponding runtime receipt. Both capabilities
 must be verified before entering `done` or completing; a successful build alone
 cannot authorize completion.

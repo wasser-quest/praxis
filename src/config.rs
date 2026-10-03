@@ -55,6 +55,8 @@ pub struct Config {
     pub data_dir: String,
     /// Installation root directory (where templates/, contexts/ are located)
     pub root_dir: String,
+    /// Optional operator-selected root for verified host actions, separate from assets.
+    pub workspace_dir: Option<String>,
     pub rust_log: String,
     pub vm_enabled: bool,
     pub vm_cpu_cores: u32,
@@ -66,6 +68,25 @@ pub struct Config {
 }
 
 impl Config {
+    /// Resolve verified host actions relative to installation assets, without
+    /// changing the process cwd or accepting a model-selected project root.
+    pub fn workspace_root(&self) -> anyhow::Result<std::path::PathBuf> {
+        let install = std::path::Path::new(&self.root_dir);
+        let selected = match self.workspace_dir.as_deref() {
+            None => install.to_path_buf(),
+            Some(value) => {
+                anyhow::ensure!(!value.trim().is_empty(), "WORKSPACE_DIR must name an existing project directory");
+                let path = std::path::Path::new(value);
+                if path.is_absolute() { path.to_path_buf() } else { install.join(path) }
+            }
+        };
+        let root = selected.canonicalize().map_err(|error| anyhow::anyhow!(
+            "Cannot resolve verified workspace '{}': {error}. Set WORKSPACE_DIR to the prepared project directory; ROOT_DIR selects Praxis assets.", selected.display()
+        ))?;
+        anyhow::ensure!(root.is_dir(), "WORKSPACE_DIR must be a directory: {}", root.display());
+        Ok(root)
+    }
+
     pub fn from_env() -> Self {
         Self {
             poml_cli: env::var("POML_CLI").unwrap_or_else(|_| "./poml/js/cli.cjs".to_string()),
@@ -127,6 +148,7 @@ impl Config {
             dashboard_admin_password: env::var("DASHBOARD_ADMIN_PASSWORD").unwrap_or_default(),
             data_dir: env::var("DATA_DIR").unwrap_or_else(|_| "./data".to_string()),
             root_dir: env::var("ROOT_DIR").unwrap_or_else(|_| ".".to_string()),
+            workspace_dir: env::var("WORKSPACE_DIR").ok(),
             rust_log: env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string()),
             vm_enabled: env::var("VM_ENABLED")
                 .map(|v| v == "true" || v == "1")
@@ -274,5 +296,44 @@ mod install_root_tests {
         assert_eq!(resolve_install_root(Some(elsewhere.path().into()), Some(install.path().into()), Some(install.path().into())), Some(elsewhere.path().canonicalize().unwrap()));
         // Nothing sensible: do not move.
         assert_eq!(resolve_install_root(None, Some(elsewhere.path().into()), Some(elsewhere.path().into())), None);
+    }
+}
+
+#[cfg(test)]
+mod workspace_root_tests {
+    use super::Config;
+
+    #[test]
+    fn workspace_root_resolves_operator_selection_separately_from_assets() {
+        let install = tempfile::tempdir().unwrap();
+        let external = tempfile::tempdir().unwrap();
+        std::fs::create_dir(install.path().join("project")).unwrap();
+        let mut config = Config {
+            root_dir: install.path().to_string_lossy().into_owned(),
+            workspace_dir: None,
+            ..Config::from_env()
+        };
+        assert_eq!(config.workspace_root().unwrap(), install.path().canonicalize().unwrap());
+        config.workspace_dir = Some("project".into());
+        assert_eq!(config.workspace_root().unwrap(), install.path().join("project").canonicalize().unwrap());
+        config.workspace_dir = Some(external.path().to_string_lossy().into_owned());
+        assert_eq!(config.workspace_root().unwrap(), external.path().canonicalize().unwrap());
+        assert_eq!(config.root_dir, install.path().to_string_lossy());
+    }
+
+    #[test]
+    fn workspace_root_rejects_missing_blank_and_file_roots() {
+        let install = tempfile::tempdir().unwrap();
+        std::fs::write(install.path().join("file"), "bytes").unwrap();
+        for value in ["", "  ", "missing", "file"] {
+            let config = Config {
+                root_dir: install.path().to_string_lossy().into_owned(),
+                workspace_dir: Some(value.into()),
+                ..Config::from_env()
+            };
+            let error = config.workspace_root().unwrap_err().to_string();
+            assert!(error.contains("WORKSPACE_DIR"), "{error}");
+        }
+        assert!(!install.path().join("missing").exists());
     }
 }

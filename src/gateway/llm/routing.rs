@@ -369,22 +369,24 @@ impl LLMRouter {
                         }
                         let retryable = error.kind.retryable() || expanded_output.is_some();
                         terminal = error.clone();
-                        if transient_failure || expanded_output.is_some() {
+                        if transient_failure {
                             let delay = self
                                 .policy
                                 .backoff(attempts)
                                 .max(error.retry_after.unwrap_or_default());
                             // Even the LAST 429 updates shared cooldown so a new
                             // user task cannot immediately hammer this account.
-                            gate.defer(delay);
+                            let cause = if original_kind == ErrorKind::RateLimited {
+                                resilience::CooldownCause::RateLimit
+                            } else {
+                                resilience::CooldownCause::TransientFailure
+                            };
+                            gate.defer(delay, cause);
                             if retryable && attempts < allowance {
-                                let output_notice = expanded_output
-                                    .map(|tokens| format!(" with {tokens} output tokens"))
-                                    .unwrap_or_default();
                                 resilience::progress(
                                     user,
                                     &format!(
-                                        "LLM {}: retry {}/{}{output_notice} in at least {:.1}s ({error}).",
+                                        "LLM {}: retry {}/{} in at least {:.1}s ({error}).",
                                         label(name),
                                         attempts + 1,
                                         max_attempts,
@@ -392,6 +394,12 @@ impl LLMRouter {
                                     ),
                                 );
                             }
+                        }
+                        if let Some(tokens) = expanded_output {
+                            resilience::progress(user, &format!(
+                                "LLM {}: retry {}/{} with {tokens} output tokens after output-token cutoff.",
+                                label(name), attempts + 1, max_attempts,
+                            ));
                         }
                         drop(stream);
                         drop(permit); // no active permit held during retry sleep

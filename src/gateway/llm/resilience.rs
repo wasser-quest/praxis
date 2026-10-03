@@ -205,8 +205,23 @@ struct TokenCharge {
 struct Schedule {
     next_request: Instant,
     cooldown: Option<Instant>, // None means Retry-After exceeded representable time.
+    cooldown_cause: CooldownCause,
     charges: VecDeque<TokenCharge>,
     sequence: u64,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum CooldownCause {
+    RateLimit,
+    TransientFailure,
+}
+impl CooldownCause {
+    fn description(self) -> &'static str {
+        match self {
+            Self::RateLimit => "provider rate limit",
+            Self::TransientFailure => "provider retry backoff",
+        }
+    }
 }
 pub(crate) struct ProviderGate {
     admission: Arc<Semaphore>,
@@ -231,6 +246,7 @@ impl ProviderGate {
             schedule: Mutex::new(Schedule {
                 next_request: Instant::now(),
                 cooldown: Some(Instant::now()),
+                cooldown_cause: CooldownCause::TransientFailure,
                 charges: VecDeque::new(),
                 sequence: 0,
             }),
@@ -243,12 +259,19 @@ impl ProviderGate {
             .try_acquire_owned()
             .map_err(|_| ProviderError::new(ErrorKind::QueueFull))
     }
-    pub fn defer(&self, delay: Duration) {
+    pub fn defer(&self, delay: Duration, cause: CooldownCause) {
         let mut state = self.schedule.lock().unwrap_or_else(|e| e.into_inner());
-        state.cooldown = match (state.cooldown, Instant::now().checked_add(delay)) {
-            (Some(old), Some(new)) => Some(old.max(new)),
-            _ => None,
-        };
+        match (state.cooldown, Instant::now().checked_add(delay)) {
+            (Some(old), Some(new)) if new > old => {
+                state.cooldown = Some(new);
+                state.cooldown_cause = cause;
+            }
+            (Some(_), None) => {
+                state.cooldown = None;
+                state.cooldown_cause = cause;
+            }
+            _ => {}
+        }
     }
     pub async fn acquire(
         &self,
@@ -273,6 +296,7 @@ impl ProviderGate {
         loop {
             let now = Instant::now();
             let wait;
+            let reason;
             {
                 let mut state = self.schedule.lock().unwrap_or_else(|e| e.into_inner());
                 while state
@@ -282,10 +306,12 @@ impl ProviderGate {
                 {
                     state.charges.pop_front();
                 }
-                let mut ready = state
-                    .cooldown
-                    .ok_or_else(|| ProviderError::new(ErrorKind::Deadline))?
-                    .max(state.next_request);
+                let mut ready = state.cooldown.ok_or_else(|| ProviderError::new(ErrorKind::Deadline))?;
+                let mut cause = state.cooldown_cause.description();
+                if state.next_request > ready {
+                    ready = state.next_request;
+                    cause = "configured request pacing";
+                }
                 if self.policy.tokens_per_minute > 0 {
                     let mut used = state
                         .charges
@@ -295,7 +321,11 @@ impl ProviderGate {
                         if used.saturating_add(tokens) <= self.policy.tokens_per_minute {
                             break;
                         }
-                        ready = ready.max(charge.at + Duration::from_secs(60));
+                        let token_ready = charge.at + Duration::from_secs(60);
+                        if token_ready > ready {
+                            ready = token_ready;
+                            cause = "configured token-per-minute budget";
+                        }
                         used = used.saturating_sub(charge.tokens);
                     }
                 }
@@ -321,12 +351,13 @@ impl ProviderGate {
                     });
                 }
                 wait = ready;
+                reason = cause;
             }
             progress(
                 user,
                 &format!(
-                    "LLM waiting {:.1}s for provider rate limit/cooldown.",
-                    wait.duration_since(now).as_secs_f64()
+                    "LLM waiting {:.1}s for {reason}.",
+                    wait.duration_since(now).as_secs_f64(),
                 ),
             );
             tokio::time::sleep_until(wait).await;

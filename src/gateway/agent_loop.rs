@@ -196,7 +196,8 @@ async fn run_agent_loop_inner(
     if ctx.settings.sm_file.is_none() && ctx.sm_file.is_none() {
         ctx.sm_file = config.sm_file.clone();
     }
-    crate::gateway::prompt::route_context(std::path::Path::new(&state.config.root_dir), &mut ctx, &user_message, &state.plugins, None)?;
+    let workspace = state.config.workspace_root()?;
+    crate::gateway::prompt::route_context_with_workspace(std::path::Path::new(&state.config.root_dir), &workspace, &mut ctx, &user_message, &state.plugins, None)?;
     state.db.save_context(&ctx)?;
     // Store the RAW user input; render_user runs per request (raw-storing policy).
     state.db.add_message(
@@ -682,6 +683,7 @@ role: "system".to_string(),
                             "call_id": tc.id,
                             "duration_ms": tool_duration.num_milliseconds(),
                             "result": result_for_stream,
+                            "success": crate::gateway::tool_results::display_success(&result),
                         })
                         .to_string(),
                     );

@@ -1153,7 +1153,8 @@ function startChatStream() {
             const tool = inner.tool || '?';
             const dur = inner.duration_ms != null ? ` (${inner.duration_ms} ms)` : '';
             const result = inner.result || '';
-            const div = addChatMessage('tool', `✅ ${escapeHtml(tool)}${escapeHtml(dur)}`, String(result));
+            const failed = inner.success === false || (inner.success == null && /^Error(?::|\s)/.test(String(result).trimStart()));
+            const div = addChatMessage('tool', `${failed ? '❌' : '✅'} ${escapeHtml(tool)}${escapeHtml(dur)}`, String(result));
             chatSetToolResult(div, String(result), true);
             if (inner.call_id != null) div.dataset.toolResultCallId = String(inner.call_id);
         } catch (err) { console.error('[SSE tool_result error]', err); }

@@ -39,7 +39,7 @@ Ein Modell kann ausschließlich `tool_calls` zurückgeben, ohne Text. Das ist ei
 
 Der Chat-Pfad (`settings.max_llm_turns` null/≤1) führt auch mehrere aufeinanderfolgende Tool-Runden aus, etwa `use_skill` → `read_file` → Dateioperation → Textantwort. Tool-Definitionen und Kontext werden für jede Fortsetzung aktualisiert, die Ergebnisse dauerhaft gespeichert. `settings.max_tool_calls` begrenzt dabei die gesamten angeforderten Calls pro Nachricht (Standard 5, ≤0 deaktiviert Ausführung); ungültige Calls verbrauchen ebenfalls Budget. Die Obergrenze wird am Nachrichtenbeginn festgehalten und kann nicht durch ein Tool für die laufende Nachricht erhöht werden. Nach Budgetverbrauch ist höchstens eine textuelle Abschlussanfrage ohne Tools erlaubt. Fordert das Modell dennoch weitere Tools an, erhalten diese gespeicherte Ablehnungen und der Nutzer einen Limitfehler statt einer leeren Erfolgsmeldung.
 
-Für längere Aufgaben bleibt der explizite Multi-Turn-Modus verfügbar: dort begrenzt `max_llm_turns` die LLM-Runden und `max_tool_calls` die Ausführungen je Runde. Tool-Historie der **laufenden** Aufgabe bleibt auch bei deaktivierter älterer Tool-Historie erhalten. Ein Turn-Limit ohne Endantwort wird gemeldet; frühere Antworten anderer Aufgaben werden nicht als Ergebnis ausgegeben. Kein automatisches Erhöhen der gespeicherten Limits oder Wiederanlaufen einer abgebrochenen Aufgabe. Leere/Whitespace-Texte starten keine automatische TTS-Aufgabe.
+Für längere Aufgaben bleibt der explizite Multi-Turn-Modus verfügbar: dort begrenzt `max_llm_turns` die LLM-Runden und `max_tool_calls` die insgesamt angeforderten Toolcalls der Aufgabe. Beide Grenzen werden auf höchstens 128 begrenzt; Werte wie 999999 erhöhen weder diese Grenzen noch die Ausgabetokens. Tool-Historie der **laufenden** Aufgabe bleibt auch bei deaktivierter älterer Tool-Historie erhalten. Ein Turn-Limit ohne Endantwort wird gemeldet; frühere Antworten anderer Aufgaben werden nicht als Ergebnis ausgegeben. Kein automatisches Erhöhen der gespeicherten Limits oder Wiederanlaufen einer abgebrochenen Aufgabe. Leere/Whitespace-Texte starten keine automatische TTS-Aufgabe.
 
 ### Neue Aufgabe nach `agent_complete`
 
@@ -70,6 +70,20 @@ einer fest eingebauten 4096. Niedrigstufige Requests mit explizitem `max_tokens`
 und kurze Compaction-Zusammenfassungen behalten ihre eigene Grenze.
 
 Die größere Anfrage durchläuft erneut dasselbe RPM-/TPM-Gate und das globale Zeit-/Versuchslimit. Bereits ausgeführte Tools werden nicht wiederholt; auch vor dem Abbruch empfangene Tools aus der **unvollständigen Antwort** werden verworfen. Nach sichtbaren Textdeltas bleibt die bestehende Partial-Stream-Regel aktiv: kein automatischer Retry. Thinking wird weder ausgegeben noch als vermeintliche Endantwort/TTS verwendet; `think=false` wird nicht erzwungen. Logs enthalten nur Byte-/Tokenzähler und einen erlaubten Abschlussgrund, nicht den Thinking-Inhalt.
+
+Ein Ausgabetoken-Abbruch setzt keinen Provider-Cooldown mehr: Mehr Wartezeit
+vergrößert die Ausgabegrenze nicht. Der nächste zulässige Versuch erhält die
+größere Grenze ohne zusätzlichen Fehler-Backoff, respektiert aber weiterhin
+vorhandene Cooldowns, RPM/TPM, Deadline und Stop. Fortschrittsmeldungen nennen
+den tatsächlichen Wartegrund: `provider rate limit` bei echtem 429,
+`provider retry backoff` bei temporären Fehlern, `configured request pacing`
+oder `configured token-per-minute budget` bei lokalen Limits.
+
+Im untersuchten IR-Snake-Verlauf kam `retry 2/5 with 32768 output tokens` nach
+`Ollama exhausted num_predict`. Die darauf folgende pauschale Meldung
+`provider rate limit/cooldown` war irreführend; dieser Ausschnitt enthält keinen
+Nachweis für HTTP 429. R/M benötigen zusätzlich eine korrekt ausgewählte
+Projektwurzel, siehe [Decision IR](DECISION_IR.md#missing-files-or-a-build-of-the-wrong-project).
 
 ### Fortschritt und Abbrechen
 
@@ -106,8 +120,8 @@ ganze Konfiguration ersetzen. Danach Praxis neu starten:
 
 ```env
 LLM_HISTORY_IMAGE_MESSAGES=0
-LLM_MAX_OUTPUT_TOKENS=16384
-LLM_RETRY_MAX_OUTPUT_TOKENS=32768
+LLM_MAX_OUTPUT_TOKENS=32768
+LLM_RETRY_MAX_OUTPUT_TOKENS=65536
 LLM_REQUEST_TIMEOUT_MS=600000
 LLM_TOTAL_TIMEOUT_MS=1800000
 LLM_MAX_ATTEMPTS=5
@@ -119,6 +133,13 @@ Jede weitere Tool-Runde erhält ein neues Aufrufbudget. Die Versuchsanzahl ist e
 Obergrenze, keine Zusage, dass fünf volle 10-Minuten-Versuche in 30 Minuten passen.
 `settings.max_llm_turns` und `settings.max_tool_calls` bleiben die getrennten,
 benutzerkontrollierten Aufgabengrenzen; sie werden nicht automatisch hochgesetzt.
+
+Das Opt-in-Profil startet mit 32768 Ausgabetokens und erlaubt eine Erweiterung
+auf 65536 für Thinking und vollständige Quelltext-Toolargumente. Die globalen
+Defaults bleiben 4096/16384. Größere Grenzen ersetzen keine Provider-Quota und
+garantieren nicht, dass jede Modellantwort hineinpasst. Bei tatsächlichem 429
+bleiben `Retry-After` und gemeinsamer Cooldown aktiv; am Providerlimit endet die
+Aufgabe mit dem konkreten Fehler.
 
 `LLM_HISTORY_IMAGE_MESSAGES=0` verhindert, dass alte Bilder aus früheren Aufgaben
 in jeder weiteren Modellrunde erneut übertragen werden. Keine Datei und kein

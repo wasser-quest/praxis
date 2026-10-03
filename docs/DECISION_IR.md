@@ -20,10 +20,27 @@ cp examples/plugins/verified-rust/plugin.json plugins/verified-rust/plugin.json
 
 Use the configured `PLUGINS_DIR` if different. Restart Praxis and select
 `verified-implementation` as `settings.sm_file` for a **new task**. Install the
-workflow in the active runtime's `contexts` directory. The pinned `ROOT_DIR` is
-the project root; author checks run there. Ensure `cargo` and `rustfmt` are on
+workflow in the active runtime's `ROOT_DIR/contexts` directory. `ROOT_DIR` selects
+installation assets; `WORKSPACE_DIR` selects the project for verified file and
+build/test actions. Unset `WORKSPACE_DIR` preserves the old `ROOT_DIR` default.
+Relative values resolve from `ROOT_DIR`; absolute values may select a separate
+existing project. Ensure `cargo` and `rustfmt` are on
 Praxis's PATH. Adapt the plugin's edition, commands and resource scopes for the
 project. This example assumes Rust edition 2021.
+
+For a prepared child project, merge these values into the installation's
+existing `.env`, then restart Praxis and begin a new task:
+
+```env
+ROOT_DIR=/path/to/praxis-installation
+WORKSPACE_DIR=ir-snake
+```
+
+Keep workflows, templates and plugins at their existing installation locations;
+they do not need to be copied into the project. The workspace must already exist.
+The runtime pins its canonical physical root for the task and prints it in
+`[VERIFIED WORKSPACE]` instructions and R's `workspace_root` result. Neither
+`settings.path` nor a model-selected path can change that root.
 
 ### Select the workflow and its prompt together
 
@@ -64,7 +81,7 @@ applying the new state's settings. Editing only the `default` context does not
 update an already-forked chat. `working` exists in several workflows and is not
 proof that IR is active.
 
-For an existing separate test project such as `ir-snake`, update **both** its
+For an existing installation, update **both** its
 `ROOT_DIR/contexts/verified-implementation.sm` and
 `ROOT_DIR/templates/verified-implementation.poml`, as well as the installed plugin
 manifest. The template is self-contained; it has no shared-template includes.
@@ -86,7 +103,7 @@ error covers both global enable flags and the current state's tool selection.
 An absent schema alone does not prove that a tool is globally disabled.
 
 Check the active runtime's startup log for `Loaded plugin` with
-`name=verified_rust`, `version=1.2.0` and `tools=3`. If the plugin is missing or
+`name=verified_rust`, `version=1.2.1` and `tools=3`. If the plugin is missing or
 failed to load, update its manifest in the actual `PLUGINS_DIR` and restart
 Praxis. Copying it into a different project's directory does not install it in
 the running process.
@@ -137,6 +154,26 @@ evidence, so run those after the last edit. Verification capabilities preserve
 the source receipt. For verification tasks requiring no edit, continue using
 `verified-capabilities`.
 
+## Missing files or a build of the wrong project
+
+R returns `exists=false`, null content/hash and the actual `workspace_root` even
+when parent directories are missing. Report that root and the requested path;
+do not repeatedly retry the same missing file or guess a nested edit path.
+The operator must correct `WORKSPACE_DIR`, restart and start a new task.
+
+The v1.2.1 Rust plugin explicitly passes `--manifest-path Cargo.toml` to check,
+build and test. The selected root must contain its own manifest. Cargo cannot
+search a parent directory and falsely verify the Praxis repository instead.
+Changing only M's path to `ir-snake/src/main.rs` leaves B/T's working directory
+and receipt resource scopes at the wrong root. A receipt verifies its configured
+check and resource scopes; it cannot infer the user's intended project.
+
+For full-source replacements with thinking, see the opt-in output budgets in
+[LLM resilience](LLM_RESILIENCE.md#opt-in-profil-für-lange-thinking-tool-aufgaben).
+An Ollama output-token cutoff is distinct from HTTP 429. Very large
+`max_llm_turns` or `max_tool_calls` values do not increase output tokens; the
+agent clamps those task limits to 128.
+
 ## Native source edits
 
 `"handler":{"type":"source_edit"}` accepts exactly required string fields
@@ -158,7 +195,7 @@ path as one argv operand. Programs, cwd and embedded text are never expanded.
 Use it in programs expecting a file operand; trusted authors must not use it as
 interpreted shell/program text. The bundled contract runs
 `rustfmt --check --edition 2021 <source_path>`, then
-`cargo check --locked --workspace`. Formatting is checked, not rewritten.
+`cargo check --manifest-path Cargo.toml --locked --workspace`. Formatting is checked, not rewritten.
 Separate build/test capabilities produce their own receipts.
 
 Only fresh passing postconditions plus durable commit publish action authority.
@@ -222,6 +259,7 @@ Set `POML_CLI` to the installed Microsoft JavaScript CLI, or pass its path throu
 cargo test --locked --lib source_capability
 cargo test --locked --lib decision_ir
 cargo test --locked --lib source_capability_bundled_rust -- --ignored
+cargo test --locked --lib ir_workspace_ -- --include-ignored --test-threads=1
 ```
 
 The real Cargo test rolls back a formatted but type-invalid edit, then verifies
@@ -235,3 +273,8 @@ cargo test --locked --lib decision_ir -- --include-ignored --test-threads=1
 These use an offline scripted model and real local processes. They cover chat
 and agent loops, permissions, receipts, rollback, call IDs, normal/IR equivalence
 and tool budgets without paid inference.
+
+The `ir_workspace_` regressions use a separate installation/project and real
+Cargo/rustfmt to exercise R/M/B/T/C through both dispatchers. They also place a
+valid parent project above a child without Cargo.toml: all bundled Rust plugin
+and named-check verifiers must fail without publishing verified evidence.

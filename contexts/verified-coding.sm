@@ -1,4 +1,4 @@
-# Opt-in example: run Praxis from the project root being verified.
+# Opt-in example: set WORKSPACE_DIR to the project, keeping assets at ROOT_DIR.
 # Commands are workflow-author configuration, never model-supplied arguments.
 @name "Verified coding"
 @steps [working, done]
@@ -12,8 +12,8 @@ settings.max_tool_calls = 20
 settings.activated_tools = ["read_file", "inspect_file", "run_check", "set_context", "get_context", "agent_complete"]
 
 [checks]
-build = {"program":"cargo","args":["check","--locked"],"cwd":".","timeout_secs":300,"resources":["src","Cargo.toml","Cargo.lock"]}
-tests = {"program":"cargo","args":["test","--locked","--lib"],"cwd":".","timeout_secs":300,"resources":["src","Cargo.toml","Cargo.lock"]}
+build = {"program":"cargo","args":["check","--manifest-path","Cargo.toml","--locked"],"cwd":".","timeout_secs":300,"resources":["src","Cargo.toml","Cargo.lock"]}
+tests = {"program":"cargo","args":["test","--manifest-path","Cargo.toml","--locked","--lib"],"cwd":".","timeout_secs":300,"resources":["src","Cargo.toml","Cargo.lock"]}
 
 [guards]
 done = [build, tests]

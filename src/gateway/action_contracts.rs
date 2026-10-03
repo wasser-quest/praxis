@@ -56,7 +56,7 @@ impl CheckContract {
                     c,
                     std::path::Component::ParentDir | std::path::Component::Prefix(_)
                 )),
-            "Check cwd must be relative to the installation root without .."
+            "Check cwd must be relative to the verified workspace root without .."
         );
         resource_snapshots::validate(&self.resources)?;
         Ok(())
@@ -657,7 +657,10 @@ pub(crate) fn patch_workspace_current(policy: &PatchPolicy, evidence: &[CheckEvi
 }
 
 pub fn instructions(user: &str) -> String {
-    task_control::with_verification(user, |ledger| {
+    let workspace = action_root(user).map(|root| format!(
+        "\n[VERIFIED WORKSPACE]\nPinned workspace root: {}. Relative action paths and verification working directories resolve here. ROOT_DIR selects installation assets; WORKSPACE_DIR selects this project. Neither a path found in context nor a guessed subdirectory changes this pinned root.\n", root.display()
+    )).unwrap_or_default();
+    workspace + &task_control::with_verification(user, |ledger| {
         Ok(match &ledger.policy {
             Some((_, checks, guards, _)) => format!("\n\n[EXECUTION CONTRACTS]\nAvailable run_check names: {:?}. Required checks by destination (_complete means completion): {:?}. Only runtime receipts authorize these transitions. Run checks after your last mutation. Declared resource changes, including external edits, invalidate evidence; rerun the affected checks. On Unix, any transactional patch or pending-journal recovery for this root invalidates prior receipts across Praxis processes, including checks without resource scopes; rerun all required checks. For controlled host edits use inspect_file to obtain expected_sha256, then apply_patch with edits and named checks. Only a committed patch publishes passing evidence; rolled_back or rollback_conflict means incomplete work. Missing evidence blocks completion; report incomplete work honestly.\n", checks.keys().collect::<Vec<_>>(), guards) + &format!("Required capabilities by destination: {:?}. Only committed, task-owned action receipts authorize these guards; handler claims and compensated failures cannot. Shared workspace changes invalidate action evidence.\n", ledger.action_guards),
             None => String::new(),

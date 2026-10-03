@@ -356,10 +356,14 @@ pub async fn inspect(user: &str, args: &serde_json::Value) -> anyhow::Result<Str
     let policy = action_contracts::patch_policy(user, &[], false)?;
     let root = policy.root.canonicalize()?;
     let _workspace = journal::ready(&root)?;
-    let snapshot = snapshot(&scoped_path(&root, &request.path)?)?;
+    let snapshot = match scoped_path(&root, &request.path) {
+        Ok(path) => snapshot(&path),
+        Err(error) if error.downcast_ref::<std::io::Error>().is_some_and(|e| e.kind() == std::io::ErrorKind::NotFound) => Ok(None),
+        Err(error) => Err(error),
+    }.map_err(|error| anyhow::anyhow!("Cannot inspect '{}' within workspace '{}': {error}", request.path, root.display()))?;
     let sha256 = snapshot.as_ref().map(|s| hash(&s.bytes));
     let content = snapshot.map(|s| String::from_utf8(s.bytes)).transpose()?;
-    Ok(serde_json::json!({"path":request.path,"exists":content.is_some(),"sha256":sha256,"content":content}).to_string())
+    Ok(serde_json::json!({"path":request.path,"workspace_root":root.to_string_lossy(),"exists":content.is_some(),"sha256":sha256,"content":content}).to_string())
 }
 
 pub async fn run(user: &str, call: &str, args: &serde_json::Value) -> anyhow::Result<String> {
@@ -590,7 +594,7 @@ pub fn definition() -> crate::db::tools::Tool {
 }
 pub fn inspect_definition() -> crate::db::tools::Tool {
     crate::db::tools::Tool { name:"inspect_file".into(), is_enabled:true,
-        description:Some("Read a bounded UTF-8 host file under the pinned workflow root and return content, existence and SHA-256 for apply_patch. Missing files return null content/hash. Requires an active workflow with checks; normalized relative paths, existing parents, no symlinks/hardlinks.".into()),
+        description:Some("Read a bounded UTF-8 host file under the pinned workspace root and return workspace_root, content, existence and SHA-256 for verified edits. Missing files or parents return exists=false and null content/hash, without creating directories. Requires an active verified workflow; normalized relative paths, no symlinks/hardlinks.".into()),
         parameters:serde_json::json!({"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false}) }
 }
 

@@ -10,7 +10,7 @@ settings.activated_tools = ["agent_complete", "get_context", "read_tool_result"]
 
 [checks]
 # apply_patch uses this named verifier to commit/rollback a source transaction.
-build = {"program":"cargo","args":["check","--locked","--workspace"],"cwd":".","timeout_secs":300,"resources":["src","tests","Cargo.toml","Cargo.lock"]}
+build = {"program":"cargo","args":["check","--manifest-path","Cargo.toml","--locked","--workspace"],"cwd":".","timeout_secs":300,"resources":["src","tests","Cargo.toml","Cargo.lock"]}
 
 [action_guards]
 done = [verified_rust/build_workspace, verified_rust/run_workspace_tests]

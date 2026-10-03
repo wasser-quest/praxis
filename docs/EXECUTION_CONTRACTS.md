@@ -2,15 +2,18 @@
 
 Praxis can now require **runtime-produced evidence** before entering a workflow
 state or completing a task. This is opt-in; existing workflows have no guards.
-Select `verified-coding` as the workflow to try the bundled example when running
-Praxis from its Rust project root. Adapt commands and `cwd` for your workspace.
+Select `verified-coding` as the workflow to try the bundled example. Set
+`WORKSPACE_DIR` to the Rust project (absolute, or relative to `ROOT_DIR`), while
+keeping installation assets at `ROOT_DIR`. Unset `WORKSPACE_DIR` defaults to
+`ROOT_DIR`. Restart and begin a new task after a root change. Adapt commands and
+`cwd` for your workspace.
 For scoped file edits with expected hashes and automatic compensation, see
 [transactional patches](TRANSACTIONAL_PATCHES.md).
 
 ```text
 [checks]
-build = {"program":"cargo","args":["check","--locked"],"cwd":".","timeout_secs":300,"resources":["src","Cargo.toml","Cargo.lock"]}
-tests = {"program":"cargo","args":["test","--locked","--lib"],"cwd":".","timeout_secs":300,"resources":["src","Cargo.toml","Cargo.lock"]}
+build = {"program":"cargo","args":["check","--manifest-path","Cargo.toml","--locked"],"cwd":".","timeout_secs":300,"resources":["src","Cargo.toml","Cargo.lock"]}
+tests = {"program":"cargo","args":["test","--manifest-path","Cargo.toml","--locked","--lib"],"cwd":".","timeout_secs":300,"resources":["src","Cargo.toml","Cargo.lock"]}
 
 [guards]
 done = [build, tests]
@@ -30,7 +33,7 @@ Check programs are trusted workflow-author configuration and run on the **host**
 even when raw terminal tools are redirected to a VM. Do not use host checks as
 evidence about a different VM filesystem.
 
-`cwd` is relative to `ROOT_DIR`, defaults to `.`, and must resolve to a directory
+`cwd` is relative to the pinned workspace root, defaults to `.`, and must resolve to a directory
 inside that root (including symlink checks). Timeouts are 1–300 seconds. Standard
 output and error are drained with the existing bounded terminal capture. On
 timeout/cancellation, no passing receipt is produced; on Unix the verifier's
@@ -86,7 +89,7 @@ remain unavailable.
 
 ## Declared resources
 
-Optional `resources` lists files or directories relative to the pinned `ROOT_DIR`,
+Optional `resources` lists files or directories relative to the pinned workspace root,
 independently of the check's `cwd`. The runtime samples them before and after the
 check, before receipt publication, and whenever a guard needs that evidence.
 An external edit or another task's write therefore blocks a guard without needing
