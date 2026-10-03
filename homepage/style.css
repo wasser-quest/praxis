@@ -86,7 +86,7 @@ h3 { font-size: 19px; font-weight: 600; letter-spacing: -.3px; line-height: 1.3;
 .code-sheet pre { padding: 24px 22px 27px; font-size: 13px; line-height: 1.85; }
 .code-muted { color: #a8bcae; }.code-key { color: #dfb16a; }
 .instruction { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 24px; padding: 17px 22px; background: #243d34; border-top: 1px solid #42544c; }
-.instruction span { font-family: var(--mono); font-size: 9px; text-transform: uppercase; color: #b3c3b8; }
+.instruction span { font-family: var(--mono); font-size: 9px; color: #b3c3b8; }
 .instruction code { color: #e8ede3; font-size: 11px; }
 .horizontal { display: flex; justify-content: space-between; gap: 40px; align-items: flex-end; }
 .horizontal > p:last-child { max-width: 345px; margin-bottom: 4px; }
