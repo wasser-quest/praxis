@@ -11,6 +11,8 @@ pub mod decision_client;
 pub mod decision_routing;
 pub mod workflow_actions;
 #[cfg(test)]
+mod workspace_tests;
+#[cfg(test)]
 mod decision_tests;
 #[cfg(test)]
 mod workflow_action_tests;
@@ -79,6 +81,7 @@ pub fn state_ref() -> Option<&'static GatewayState> {
 }
 
 pub async fn start(db: crate::db::Database, config: crate::config::Config) -> anyhow::Result<()> {
+    let _workspace = config.workspace_root()?;
     let secrets = crate::db::secrets::get_secrets();
     let event_tx = crate::event_channel::init();
 

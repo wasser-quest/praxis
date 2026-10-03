@@ -52,7 +52,8 @@ pub(crate) async fn route_in(root:&Path,state:&GatewayState,ctx:Context,input:&s
         // Revalidate file policy as well as DB state after the asynchronous call.
         anyhow::ensure!(decision_profiles::load(&root.join("decisions"),name)?==profile,"Decision profile changed during classification");
         let mut next=ctx.clone();next.active_state=Some(target.clone());next.settings.active_state=Some(target.clone());
-        prompt::route_context(root,&mut next,input,&state.plugins,channel)?;
+        let workspace = state.config.workspace_root()?;
+        prompt::route_context_with_workspace(root,&workspace,&mut next,input,&state.plugins,channel)?;
         anyhow::ensure!(!cancel.is_cancelled(),"Task cancelled");
         if state.db.compare_and_save_context(&ctx,&next)? {Ok((next,"applied",probability))}
         else {Ok((state.db.load_context(&ctx.user_id)?,"stale_context",probability))}

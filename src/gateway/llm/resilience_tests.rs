@@ -604,7 +604,7 @@ fn resilience_output_limit_configuration_and_arithmetic_are_bounded() {
 #[tokio::test(start_paused = true)]
 async fn resilience_output_limit_recovery_obeys_deadline_and_cancellation() {
     for cancelled in [false, true] {
-        let (p, calls) = Scripted::boxed("primary", vec![Step::Fail(ProviderError::new(ErrorKind::OutputLimit))]);
+        let (p, calls) = Scripted::boxed("primary", vec![Step::Fail(ProviderError::new(ErrorKind::OutputLimit)), Step::Slow(Duration::from_secs(1))]);
         let r = router(p, ResilienceConfig { total_timeout_ms: 200, ..policy() });
         let cancel = CancellationToken::new();
         if cancelled {
@@ -618,7 +618,7 @@ async fn resilience_output_limit_recovery_obeys_deadline_and_cancellation() {
         let error = r.chat_controlled(request(), None, None, &cancel).await.unwrap_err().to_string();
         assert!(error.contains(if cancelled { "cancelled" } else { "time budget exhausted" }), "{error}");
         assert!(start.elapsed() <= Duration::from_millis(200));
-        assert_eq!(calls.lock().unwrap().len(), 1);
+        assert_eq!(calls.lock().unwrap().len(), 2);
     }
 }
 
@@ -634,6 +634,57 @@ async fn resilience_output_limit_without_a_growable_bound_never_retries_or_falls
         assert!(error.contains("output token limit"), "{error}");
         assert_eq!(calls.lock().unwrap().len(), 1);
         assert!(fallback_calls.lock().unwrap().is_empty());
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn resilience_output_expansion_does_not_create_a_provider_cooldown() {
+    let (p, calls) = Scripted::boxed("primary", vec![Step::Fail(ProviderError::new(ErrorKind::OutputLimit)), Step::Reply]);
+    let r = router(p, ResilienceConfig {initial_backoff_ms:20_000,max_backoff_ms:20_000,total_timeout_ms:5000,..policy()});
+    let user = "output-expansion-no-rate-limit";
+    let mut events = crate::dashboard::stream::get_or_create(user).subscribe();
+    let start = Instant::now();
+    let mut req = request();
+    req.max_tokens = Some(4096);
+    let response = r.chat_controlled(req, None, Some(user), &CancellationToken::new()).await.unwrap();
+    assert_eq!(response.content.as_deref(), Some("done"));
+    assert_eq!(start.elapsed(), Duration::ZERO);
+    let calls = calls.lock().unwrap();
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[1].1.max_tokens, Some(8192));
+    while let Ok(event) = events.try_recv() {
+        assert!(!event.data.contains("LLM waiting"), "{}", event.data);
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn resilience_wait_messages_distinguish_local_pacing_from_provider_failures() {
+    for (index, cause) in ["configured request pacing", "configured token-per-minute budget", "provider rate limit", "provider retry backoff"].into_iter().enumerate() {
+        let user = format!("wait-cause-{index}");
+        let mut events = crate::dashboard::stream::get_or_create(&user).subscribe();
+        let mut config = policy();
+        let steps = match index {
+            0 => { config.requests_per_minute = 6; vec![Step::Reply, Step::Reply] }
+            1 => { config.tokens_per_minute = super::resilience::estimated_tokens(&request()); vec![Step::Reply, Step::Reply] }
+            _ => {
+                let mut error = ProviderError::new(if index == 2 { ErrorKind::RateLimited } else { ErrorKind::Unavailable });
+                error.retry_after = Some(Duration::from_secs(12));
+                vec![Step::Fail(error), Step::Reply]
+            }
+        };
+        let (provider, calls) = Scripted::boxed("primary", steps);
+        let router = router(provider, config);
+        router.chat_controlled(request(), None, Some(&user), &CancellationToken::new()).await.unwrap();
+        if index < 2 {
+            router.chat_controlled(request(), None, Some(&user), &CancellationToken::new()).await.unwrap();
+        }
+        assert_eq!(calls.lock().unwrap().len(), 2);
+        let mut waits = vec![];
+        while let Ok(event) = events.try_recv() {
+            if event.data.contains("LLM waiting") { waits.push(event.data); }
+        }
+        assert!(!waits.is_empty(), "missing wait event for {cause}");
+        assert!(waits.iter().all(|event| event.contains(cause)), "{waits:?}");
     }
 }
 

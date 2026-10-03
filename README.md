@@ -135,6 +135,11 @@ The smoke test uses only the supplied access token, with refresh disabled; it ne
 
 Praxis resolves `templates/`, `contexts/`, `plugins/`, `skills/` from its installation root: `ROOT_DIR` if set, else the working directory when it contains `templates/`, else the executable's directory.
 
+For verified host actions, set `WORKSPACE_DIR` to the prepared project (absolute,
+or relative to `ROOT_DIR`). Installation assets remain at `ROOT_DIR`; leaving
+`WORKSPACE_DIR` unset preserves the old root. Restart and start a new task after
+changing it. See [Decision IR setup](docs/DECISION_IR.md).
+
 ## Configuration (.env)
 
 ```env

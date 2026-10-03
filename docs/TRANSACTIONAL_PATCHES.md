@@ -3,13 +3,14 @@
 `inspect_file` and `apply_patch` extend execution contracts with bounded file
 edits and compensation. They require an active task with a pinned workflow that
 defines checks. Interrupted transactions use a [durable journal](PATCH_RECOVERY.md).
-This version requires a Unix host and a writable parent for the workspace. Both use the pinned `ROOT_DIR` and operate on the **host**, even
+This version requires a Unix host and a writable parent for the workspace. Both
+use the pinned `WORKSPACE_DIR` (defaulting to `ROOT_DIR`) and operate on the **host**, even
 when terminal tools use a VM. The bundled `verified-coding` workflow allows these
 tools instead of raw writes and shell commands in its coding group. Other
 workflows can activate or discover them explicitly.
 
 First call `inspect_file({"path":"src/example.rs"})`. It returns the full UTF-8
-content, existence, and a lowercase SHA-256 hash. A nonexistent file returns
+content, workspace_root, existence, and a lowercase SHA-256 hash. A nonexistent file or parent directory returns
 `exists:false`, `sha256:null`, and `content:null`. Copy the returned hash into an
 edit; do not invent it or derive it from a shortened tool-output view.
 

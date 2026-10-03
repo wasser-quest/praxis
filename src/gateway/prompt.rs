@@ -64,10 +64,21 @@ pub fn route_context(
     plugins: &PluginRegistry,
     channel_id: Option<&str>,
 ) -> anyhow::Result<()> {
+    route_context_with_workspace(root, root, ctx, input, plugins, channel_id)
+}
+
+pub fn route_context_with_workspace(
+    root: &Path,
+    workspace: &Path,
+    ctx: &mut Context,
+    input: &str,
+    plugins: &PluginRegistry,
+    channel_id: Option<&str>,
+) -> anyhow::Result<()> {
     let candidate = super::workflow_actions::plan(root,ctx,input,plugins,channel_id)?;
     let workflow = crate::sm::load_file_in(&root.join("contexts"), workflow_name(&candidate))
         .map_err(|e| anyhow::anyhow!("Workflow routing failed: {e}"))?;
-    super::action_contracts::bind(&ctx.user_id, workflow_name(&candidate), &workflow, root)?;
+    super::action_contracts::bind(&ctx.user_id, workflow_name(&candidate), &workflow, workspace)?;
     super::action_contracts::validate_context(ctx, &candidate)?;
     *ctx = candidate;
     Ok(())
@@ -157,7 +168,8 @@ pub fn prepare_runtime(
     if let Some(turn) = turn {
         ctx.turn = turn;
     }
-    route_context(std::path::Path::new(&state.config.root_dir), &mut ctx, input, &state.plugins, channel_id)?;
+    let workspace = state.config.workspace_root()?;
+    route_context_with_workspace(std::path::Path::new(&state.config.root_dir), &workspace, &mut ctx, input, &state.plugins, channel_id)?;
     super::task_control::set_show_thinking(user_id, ctx.settings.show_thinking);
     state.db.save_context(&ctx)?;
     Ok(ctx)

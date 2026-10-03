@@ -12,7 +12,7 @@ fn verified_plugins(dir: &std::path::Path) -> PluginRegistry {
     )
     .unwrap();
     let plugins = crate::plugins::load_all_plugins(dir);
-    assert_eq!(plugins.get("verified_rust").unwrap().version, "1.2.0");
+    assert_eq!(plugins.get("verified_rust").unwrap().version, "1.2.1");
     plugins
 }
 

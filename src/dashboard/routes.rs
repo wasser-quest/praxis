@@ -861,7 +861,9 @@ async fn update_template(
         let input = crate::gateway::prompt::preview_input(&state.db, &ctx, update.user_prompt.as_deref())?;
         let plugins_dir = std::env::var("PLUGINS_DIR").unwrap_or_else(|_| "./plugins".into());
         let plugins = crate::plugins::load_all_plugins(std::path::Path::new(&plugins_dir));
-        crate::gateway::prompt::route_context(std::path::Path::new("."), &mut ctx, &input, &plugins, None)?;
+        let config = crate::gateway::state_ref().map(|gateway| gateway.config.clone()).unwrap_or_else(crate::config::Config::from_env);
+        let workspace = config.workspace_root()?;
+        crate::gateway::prompt::route_context_with_workspace(std::path::Path::new("."), &workspace, &mut ctx, &input, &plugins, None)?;
         let context = crate::gateway::prompt::build_context(&state.db, &ctx, &input, &plugins, 0, std::path::Path::new(".")).await?;
         crate::tools::update_template::save_validated(std::path::Path::new("templates"), &name, &update.content, &context).await
     }.await;

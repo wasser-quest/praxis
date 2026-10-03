@@ -1,7 +1,7 @@
 {
   "name": "verified_rust",
   "description": "Native transactional Rust source edits and verified build/test capabilities (opt in).",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "tools": [{
     "name": "build_workspace",
     "description": "Build the Rust workspace and independently verify success. Use scope=workspace. Only a committed runtime receipt proves the configured build succeeded.",
@@ -11,7 +11,7 @@
       "effect": "verification",
       "idempotency": "idempotent",
       "timeout_secs": 300,
-      "postconditions": [{"program":"cargo","args":["build","--locked","--workspace"],"cwd":".","timeout_secs":295,"resources":["src","tests","Cargo.toml","Cargo.lock"]}]
+      "postconditions": [{"program":"cargo","args":["build","--manifest-path","Cargo.toml","--locked","--workspace"],"cwd":".","timeout_secs":295,"resources":["src","tests","Cargo.toml","Cargo.lock"]}]
     }
   }, {
     "name": "run_workspace_tests",
@@ -22,7 +22,7 @@
       "effect": "verification",
       "idempotency": "idempotent",
       "timeout_secs": 300,
-      "postconditions": [{"program":"cargo","args":["test","--locked","--workspace"],"cwd":".","timeout_secs":295,"resources":["src","tests","Cargo.toml","Cargo.lock"]}]
+      "postconditions": [{"program":"cargo","args":["test","--manifest-path","Cargo.toml","--locked","--workspace"],"cwd":".","timeout_secs":295,"resources":["src","tests","Cargo.toml","Cargo.lock"]}]
     }
   }, {
     "name": "modify_source",
@@ -35,7 +35,7 @@
       "timeout_secs": 300,
       "postconditions": [
         {"program":"rustfmt","args":["--check","--edition","2021","{source_path}"],"cwd":".","timeout_secs":60,"resources":["src","tests","Cargo.toml","Cargo.lock"]},
-        {"program":"cargo","args":["check","--locked","--workspace"],"cwd":".","timeout_secs":235,"resources":["src","tests","Cargo.toml","Cargo.lock"]}
+        {"program":"cargo","args":["check","--manifest-path","Cargo.toml","--locked","--workspace"],"cwd":".","timeout_secs":235,"resources":["src","tests","Cargo.toml","Cargo.lock"]}
       ]
     }
   }]

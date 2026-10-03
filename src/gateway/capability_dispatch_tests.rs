@@ -137,6 +137,34 @@ mod capability_dispatch_tests {
     }
 
     #[tokio::test]
+    #[ignore = "Requires real Cargo and rustfmt; exercises the shipped IR workflow in a separate project"]
+    async fn ir_workspace_dispatch_reads_edits_verifies_and_completes_the_selected_project() {
+        let (install, state, user, workspace) = crate::gateway::workspace_tests::fixture();
+        let _task = task_control::begin(&user).unwrap();
+        crate::gateway::prompt::prepare_runtime(&state, &user, "Implement the prepared project.", None, None).unwrap();
+        let read = ir_call("read", r#"1 R {"path":"src/main.rs"}"#);
+        let result = execute_tool_call(&state.db, &user, &read, &state.plugins).await;
+        let read: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(read["workspace_root"], workspace.canonicalize().unwrap().to_str().unwrap());
+        let content = "fn main() {}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn regression() {\n        assert_eq!(2 + 2, 4);\n    }\n}\n";
+        let edit = ir_call("edit", &format!("1 M {}", json!({"path":"src/main.rs","expected_sha256":read["sha256"],"content":content})));
+        for (call, action) in [(edit, "modify_source"), (ir_call("build", r#"1 B {"scope":"workspace"}"#), "build_workspace"), (ir_call("test", r#"1 T {"scope":"workspace"}"#), "run_workspace_tests")] {
+            assert!(action_contracts::require(&user, "_complete").is_err());
+            let result = execute_tool_call(&state.db, &user, &call, &state.plugins).await;
+            let receipt: serde_json::Value = serde_json::from_str(&result).unwrap();
+            assert_eq!(receipt["receipt"]["verified"], true, "{result}");
+            assert_eq!(receipt["receipt"]["outcome"], "committed", "{result}");
+            assert_eq!(receipt["receipt"]["action"], format!("verified_rust/{action}"));
+        }
+        action_contracts::require(&user, "_complete").unwrap();
+        let complete = execute_tool_call(&state.db, &user, &ir_call("complete", "1 C"), &state.plugins).await;
+        assert!(!complete.starts_with("Error"), "{complete}");
+        assert!(state.db.load_context(&user).unwrap().settings.done);
+        assert_eq!(std::fs::read_to_string(workspace.join("src/main.rs")).unwrap(), content);
+        assert!(!install.path().join("src").exists());
+    }
+
+    #[tokio::test]
     async fn decision_ir_and_normal_calls_share_rollback_receipts_and_completion_guards() {
         for ir in [false, true] {
             let (_dir, root, db, registry, user, _task) = ir_fixture();
