@@ -44,7 +44,7 @@ The runtime pins its canonical physical root for the task and prints it in
 
 ### Project preflight
 
-The bundled workflow version **1.2** declares:
+The bundled workflow version **1.3** declares:
 
 ```ini
 [workspace]
@@ -152,7 +152,8 @@ Then inspect the **current chat's** saved context: both `sm_file` fields must
 select `verified-implementation`, both state fields must be `working`, and
 `settings.activated_tools` must contain the eight names in the setup example.
 Use bare tool names in that list; `verified_rust/...` is the qualified identity
-for opcode mappings and receipts. In `done`, M/B/T are intentionally unavailable.
+for opcode mappings and receipts. In `done`, M/B/T are intentionally unavailable;
+its local `[decision_ir done]` table replaces the global table with C only.
 Changing an allow-list cannot install a missing plugin or override a globally
 disabled tool. After correcting setup, start a new task. Inspecting with
 `execute_decision({"ir":"1 R {\"path\":\"src/main.rs\"}"})` can confirm R, but does

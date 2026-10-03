@@ -24,6 +24,8 @@ Run agents on your own machine, with your chosen models and explicit workflows. 
 - **Verified execution**: Opt-in action contracts, pre/postcondition checks, transactional source edits and task-owned receipts
 - **Decision IR**: Compact instructions mapped to trusted capabilities, with an opcode table per state; [verified Rust setup](docs/DECISION_IR.md)
 - **Workflow graphs**: Indexed `agent_next`, task-owned `agent_back`, verified transitions and a dashboard graph explorer; [branching example and setup](docs/WORKFLOW_GRAPHS.md)
+- **Verified coding roles**: Opt-in `standard-verified` keeps normal role routing with semantic Rust actions and completion evidence after source-edit attempts; [setup](docs/VERIFIED_CODING_ROLES.md), [reproducible Snake test](docs/SNAKE_IR_TEST.md)
+- **Learning graph**: Interactive language lessons wait for real user input before feedback and reuse scoped tutor memory; [language-learning flow](docs/LANGUAGE_LEARNING_FLOW.md)
 - **Execution timeline**: Actual system prompts, prompt/context changes, receipts, token budgets and generation metrics in the dashboard
 - **Voice**: STT (Vosk/Whisper/ElevenLabs) + TTS (SAPI/ElevenLabs/Qwen)
 - **RAG**: Vector store with embedding search
@@ -484,6 +486,10 @@ Workflow routing does **not** mutate global credentials. Configure voice setting
 The dashboard can list/edit/create `.sm` files and still read legacy `.cl`. See [Semantic templates and workflows](docs/POML_WORKFLOWS.md) for customization, semantic-role examples, the complete synthetic test fixture and deployment details.
 
 ## Plugins
+
+The [plugin-first migration plan](docs/PLUGIN_FIRST_PLAN.md) proposes feature
+packages and an eventual minimal runtime. Current plugins install tools;
+workflow/template packaging and plugin-only startup are planned work.
 
 Install plugins by placing a directory with `plugin.json` in `plugins/`:
 

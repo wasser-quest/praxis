@@ -31,6 +31,17 @@ pub async fn navigate(db: &Database, root: &std::path::Path, user_id: &str, back
     }
 }
 
+/// Runtime entry point: validate live capability setup before committing a graph move.
+pub async fn navigate_with_plugins(db: &Database, root: &std::path::Path, plugins: &crate::plugins::PluginRegistry, user_id: &str, back: bool, args: &serde_json::Value) -> Result<String, String> {
+    let ctx = db.load_context(user_id).map_err(|e| format!("Error: {e}"))?;
+    let sm = crate::sm::load_file_in(&root.join("contexts"), crate::gateway::prompt::workflow_name(&ctx)).map_err(|e| format!("Error: {e}"))?;
+    if sm.is_graph() {
+        crate::gateway::workflow_graph::navigate_checked(db, root, user_id, back, args, Some(plugins)).await.map_err(|e| crate::gateway::workflow_preflight::tool_error(&e))
+    } else {
+        navigate(db, root, user_id, back, args).await.map_err(|e| format!("Error: {e}"))
+    }
+}
+
 pub async fn run_in(db: &Database, root: &std::path::Path, user_id: &str, signal: AgentControlSignal) -> Result<String, String> {
     let mut ctx = db
         .load_context(user_id)

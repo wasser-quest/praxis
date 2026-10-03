@@ -124,12 +124,15 @@ pub fn view(sm: &StateMachine, ctx: &Context) -> Value {
         let metadata = sm.nodes.get(name);
         json!({"id": name, "title": metadata.filter(|m| !m.title.is_empty()).map(|m| m.title.as_str()).unwrap_or(name),
             "description": metadata.map(|m| m.description.as_str()).unwrap_or(""), "variables": state.variables,
-            "decision_ir": sm.ir_for(name), "guards": sm.guards.get(name), "action_guards": sm.action_guards.get(name)})
+            "decision_ir": sm.ir_for(name), "guards": sm.guards.get(name), "action_guards": sm.action_guards.get(name),
+            "action_guard_triggers": sm.action_guard_triggers.get(name), "user_reply_guards": sm.user_reply_guards.get(name)})
     }).collect();
     nodes.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
     json!({"name": sm.name, "description": sm.description, "routing": if sm.is_graph() {"graph"} else {"linear"},
         "start": sm.entry_state(), "active_state": ctx.active_state, "history": history(&ctx.user_id),
-        "nodes": nodes, "edges": edges(sm, &context, &ctx.user_id), "workflow": super::prompt::workflow_name(ctx)})
+        "nodes": nodes, "edges": edges(sm, &context, &ctx.user_id), "workflow": super::prompt::workflow_name(ctx),
+        "reply_facts": super::action_contracts::reply_facts(&ctx.user_id), "completion_guards": sm.action_guards.get("_complete"),
+        "completion_triggers": sm.action_guard_triggers.get("_complete")})
 }
 
 fn choose<'a>(edges: &'a [Edge], state: &str, index: Option<usize>) -> anyhow::Result<&'a Edge> {
@@ -176,6 +179,17 @@ pub async fn navigate(
     user: &str,
     back: bool,
     args: &Value,
+) -> anyhow::Result<String> {
+    navigate_checked(db, root, user, back, args, None).await
+}
+
+pub(crate) async fn navigate_checked(
+    db: &Database,
+    root: &Path,
+    user: &str,
+    back: bool,
+    args: &Value,
+    plugins: Option<&crate::plugins::PluginRegistry>,
 ) -> anyhow::Result<String> {
     let before = db.load_context(user)?;
     let sm = crate::sm::load_file_in(
@@ -237,6 +251,10 @@ pub async fn navigate(
         "Thinking visibility and persistent skill are user-only"
     );
     after.settings.active_state = after.active_state.clone();
+    if let Some(plugins) = plugins {
+        super::workflow_preflight::validate(db, plugins, super::prompt::workflow_name(&after), &sm, &after)?;
+        super::templates::resolve_template(&root.join("templates"), after.settings.system_template.as_deref().unwrap_or("standard"))?;
+    }
     after.settings.llm_turn += 1;
     let mut next_history = history(user);
     if back {
@@ -246,6 +264,20 @@ pub async fn navigate(
     }
     let mut graph = view(&sm, &after);
     graph["history"] = json!(next_history);
+    // The receipt describes the resulting graph. Every successful navigation
+    // consumes the current input event, so reply-guard edges cannot remain
+    // eligible based on the ledger's pre-commit facts.
+    graph["reply_facts"]["state_changed_since_input"] = json!(true);
+    if let Some(edges) = graph["edges"].as_array_mut() {
+        for edge in edges {
+            if let Some(states) = edge["to"].as_str().and_then(|to| sm.user_reply_guards.get(to)) {
+                if edge["eligible"] == true {
+                    edge["blocked_reason"] = json!(format!("A new user message while at {states:?} is required after this transition"));
+                }
+                edge["eligible"] = json!(false);
+            }
+        }
+    }
     let receipt = json!({"kind":"state_transition", "verified":true, "workflow":super::prompt::workflow_name(&after), "from_state":source, "to_state":target, "edge":edge_id, "back":back, "graph":graph});
     super::action_contracts::commit_navigation(db, &before, &after, &sm, back, &receipt)?;
     crate::dashboard::stream::send(user, "state_transition", &receipt.to_string());

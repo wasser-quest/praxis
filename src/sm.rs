@@ -118,6 +118,14 @@ pub struct StateMachine {
     /// Destination -> task-owned, verified plugin capability receipts.
     #[serde(default)]
     pub action_guards: HashMap<String, Vec<String>>,
+    /// Optional activation triggers. Attempts live in the runtime ledger;
+    /// omitting a target here keeps its capability guard unconditional.
+    #[serde(default)]
+    pub action_guard_triggers: HashMap<String, Vec<String>>,
+    /// Destination -> states in which fresh inbound user input is required.
+    /// Facts are recorded by the gateway, never supplied by model context.
+    #[serde(default)]
+    pub user_reply_guards: HashMap<String, Vec<String>>,
     /// Trusted Decision IR opcode -> native tool or plugin/tool capability.
     #[serde(default)]
     pub decision_ir: HashMap<String, String>,
@@ -302,7 +310,7 @@ pub fn parse(content: &str) -> Result<StateMachine, SmError> {
                     current_state_name = Some(name);
                     current_section = Some(parts[0].into());
                 }
-                "checks" | "guards" | "action_guards" | "workspace" => {
+                "checks" | "guards" | "action_guards" | "action_guard_triggers" | "user_reply_guards" | "workspace" => {
                     current_state_name = None;
                     current_section = Some(parts[0].to_string());
                 }
@@ -423,6 +431,20 @@ pub fn parse(content: &str) -> Result<StateMachine, SmError> {
                     return Err(SmError::ParseError("Action guards must be unique arrays of plugin/tool names".into()));
                 }
             }
+            Some("action_guard_triggers") => {
+                let (key, value) = parse_assignment(trimmed, line_num)?;
+                let names: Vec<String> = parse_array(&value).into_iter().map(|s| s.trim_matches('"').to_string()).collect();
+                if !value.starts_with('[') || !value.ends_with(']') || sm.action_guard_triggers.insert(key, names).is_some() {
+                    return Err(SmError::ParseError("Action guard triggers must be unique arrays of required plugin/tool names".into()));
+                }
+            }
+            Some("user_reply_guards") => {
+                let (key, value) = parse_assignment(trimmed, line_num)?;
+                let names: Vec<String> = parse_array(&value).into_iter().map(|s| s.trim_matches('"').to_string()).collect();
+                if !value.starts_with('[') || !value.ends_with(']') || sm.user_reply_guards.insert(key, names).is_some() {
+                    return Err(SmError::ParseError("User reply guards must be unique arrays of graph source states".into()));
+                }
+            }
             Some("decision_ir") => {
                 let (key, value) = parse_assignment(trimmed, line_num)?;
                 let target = value.trim_matches('"').to_string();
@@ -478,6 +500,18 @@ pub fn parse(content: &str) -> Result<StateMachine, SmError> {
             parts.len() != 2 || !parts.iter().all(|part| crate::plugins::contracts::identifier(part)) || !seen.insert(name)
         }) {
             return Err(SmError::ParseError(format!("Invalid action guard '{target}': expected unique plugin/tool identifiers")));
+        }
+    }
+    for (target, names) in &sm.action_guard_triggers {
+        let mut seen = std::collections::HashSet::new();
+        if names.is_empty() || names.len() > 16 || names.iter().any(|name| !seen.insert(name) || !sm.action_guards.get(target).is_some_and(|required| required.contains(name))) {
+            return Err(SmError::ParseError(format!("Invalid action guard trigger '{target}': use unique members of its declared action guard")));
+        }
+    }
+    for (target, names) in &sm.user_reply_guards {
+        let mut seen = std::collections::HashSet::new();
+        if !sm.is_graph() || target == "_default" || !sm.states.contains_key(target) || names.is_empty() || names.len() > 16 || names.iter().any(|name| name == "_default" || !sm.states.contains_key(name) || !seen.insert(name)) {
+            return Err(SmError::ParseError(format!("Invalid user reply guard '{target}': use unique declared states in a graph workflow")));
         }
     }
     Ok(sm)

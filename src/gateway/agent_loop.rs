@@ -181,10 +181,6 @@ async fn run_agent_loop_inner(
     crate::dashboard::stream::send(user_id, "agent_start", "{}");
 
     let mut ctx = state.db.load_context(user_id)?;
-    // Immutable per-task ceilings: tool-written settings and injected input
-    // cannot refill a running task. Changes apply to the next task.
-    let turn_limit = ctx.settings.max_llm_turns.unwrap_or(config.max_turns).clamp(1, 128);
-    let tool_limit = ctx.settings.max_tool_calls.unwrap_or(config.max_tool_calls).clamp(0, 128) as usize;
     let mut tool_calls_used = 0usize;
     // Accumulate token usage and generation timing across all LLM turns.
     let mut cumulative_prompt_tokens: u32 = 0;
@@ -197,13 +193,24 @@ async fn run_agent_loop_inner(
         ctx.sm_file = config.sm_file.clone();
     }
     let workspace = state.config.workspace_root()?;
-    crate::gateway::prompt::route_context_with_workspace(std::path::Path::new(&state.config.root_dir), &workspace, &mut ctx, &user_message, &state.plugins, None)?;
+    let root = std::path::Path::new(&state.config.root_dir);
+    let candidate = super::workflow_actions::plan(root, &ctx, &user_message, &state.plugins, None)?;
+    let workflow = crate::sm::load_file_in(&root.join("contexts"), super::prompt::workflow_name(&candidate)).map_err(|e| anyhow::anyhow!("{e}"))?;
+    super::workflow_preflight::validate(&state.db, &state.plugins, super::prompt::workflow_name(&candidate), &workflow, &candidate)?;
+    super::action_contracts::bind(user_id, super::prompt::workflow_name(&candidate), &workflow, &workspace)?;
+    super::action_contracts::validate_context(&ctx, &candidate)?;
+    ctx = candidate;
+    // Snapshot after initial trusted routing, so direct agent entry uses the
+    // selected state's budget. Later role changes/tools cannot refill it.
+    let turn_limit = ctx.settings.max_llm_turns.unwrap_or(config.max_turns).clamp(1, 128);
+    let tool_limit = ctx.settings.max_tool_calls.unwrap_or(config.max_tool_calls).clamp(0, 128) as usize;
     state.db.save_context(&ctx)?;
     // Store the RAW user input; render_user runs per request (raw-storing policy).
-    state.db.add_message(
+    let input_message_id = state.db.add_message(
         user_id,
         &crate::db::messages::Message::user(user_message.clone()),
     )?;
+    super::action_contracts::record_user_message(user_id, input_message_id)?;
 
     loop {
         // Check for stop signal
@@ -1058,7 +1065,7 @@ async fn execute_tool_call_in(
     let tc = if tc.function.name == "execute_decision" {
         resolved = match super::decision_ir::resolve(db, user_id, tc, plugins) {
             Ok(call) => call,
-            Err(error) => return format!("Error: {error}; decision not executed"),
+            Err(error) => return super::workflow_preflight::tool_error(&error),
         };
         &resolved
     } else { tc };
@@ -1304,15 +1311,16 @@ async fn execute_tool_call_in(
                 Err(e) => format!("Error: {}", e),
             }
         }
-        "agent_next" | "agent_back" => crate::tools::agent_control::navigate(
+        "agent_next" | "agent_back" => crate::tools::agent_control::navigate_with_plugins(
             db,
             root,
+            plugins,
             user_id,
             tc.function.name == "agent_back",
             &args,
         )
         .await
-        .unwrap_or_else(|e| format!("Error: {}", e)),
+        .unwrap_or_else(|e| e),
         "agent_complete" => crate::tools::agent_control::run(
             db,
             user_id,

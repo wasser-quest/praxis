@@ -11,6 +11,8 @@ use std::{
     collections::VecDeque,
     sync::{Arc, Mutex},
 };
+#[path = "workflow_flow_tests.rs"]
+mod workflow_flow_tests;
 
 #[tokio::test]
 #[ignore = "Requires real POML; graph navigation, source read and models are offline fixtures"]
@@ -434,7 +436,7 @@ async fn decision_ir_source_rollback_then_verified_completion_in_chat_and_agent(
         .suffix(".sm")
         .tempfile_in("contexts")
         .unwrap();
-    std::fs::write(workflow.path(), "@steps [working, done]\n[state working]\nsettings.activated_tools = [\"execute_decision\",\"inspect_file\",\"modify_source\",\"build_project\",\"run_tests\",\"agent_complete\"]\n[state done]\nsettings.activated_tools = [\"execute_decision\",\"agent_complete\"]\n[decision_ir]\nR = inspect_file\nM = native/modify_source\nB = native/build_project\nT = native/run_tests\nC = agent_complete\n[action_guards]\n_complete = [native/modify_source, native/build_project, native/run_tests]\n").unwrap();
+    std::fs::write(workflow.path(), "@steps [working, done]\n[state working]\nsettings.activated_tools = [\"execute_decision\",\"inspect_file\",\"modify_source\",\"build_project\",\"run_tests\",\"agent_complete\"]\n[state done]\nsettings.activated_tools = [\"execute_decision\",\"agent_complete\"]\n[decision_ir]\nR = inspect_file\nM = native/modify_source\nB = native/build_project\nT = native/run_tests\nC = agent_complete\n[decision_ir done]\nC = agent_complete\n[action_guards]\n_complete = [native/modify_source, native/build_project, native/run_tests]\n").unwrap();
     for flow in ["message", "agent"] {
         std::fs::write(source.path(), "old").unwrap();
         let ir = |id: &str, instruction: String| {

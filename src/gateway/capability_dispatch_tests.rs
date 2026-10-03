@@ -98,6 +98,17 @@ mod capability_dispatch_tests {
         String,
         task_control::TaskGuard,
     ) {
+        ir_fixture_with_policy(false, false)
+    }
+
+    fn ir_fixture_with_policy(conditional: bool, failing_tests: bool) -> (
+        tempfile::TempDir,
+        tempfile::TempDir,
+        crate::db::Database,
+        crate::plugins::PluginRegistry,
+        String,
+        task_control::TaskGuard,
+    ) {
         let dir = tempfile::tempdir().unwrap();
         let db = crate::db::Database::new(dir.path()).unwrap();
         crate::db::tools::init_default_tools(&db).unwrap();
@@ -107,7 +118,7 @@ mod capability_dispatch_tests {
         let mut tools:Vec<_> = ["build_project", "run_tests"].into_iter().map(|name| json!({
             "name":name,"description":name,"parameters":{"type":"object","properties":{},"additionalProperties":false},
             "handler":{"type":"verification"},
-            "contract":{"effect":"verification","idempotency":"idempotent","timeout_secs":5,"postconditions":[{"program":"/bin/true","resources":["source"]}]}
+            "contract":{"effect":"verification","idempotency":"idempotent","timeout_secs":5,"postconditions":[{"program":if failing_tests && name == "run_tests" {"/bin/false"} else {"/bin/true"},"resources":["source"]}]}
         })).collect();
         tools.push(json!({"name":"modify_source","description":"edit","handler":{"type":"source_edit"},
             "parameters":{"type":"object","properties":{"path":{"type":"string"},"expected_sha256":{"type":"string"},"content":{"type":"string"}},"required":["path","expected_sha256","content"],"additionalProperties":false},
@@ -122,7 +133,9 @@ mod capability_dispatch_tests {
         let user = format!("ir-dispatch-{}", uuid::Uuid::new_v4());
         db.merge_context(&user,json!({"settings.sm_file":"ir-fixture","settings.activated_tools":["execute_decision","inspect_file","modify_source","build_project","run_tests","agent_complete"]})).unwrap();
         let task = task_control::begin(&user).unwrap();
-        let sm = crate::sm::parse("[state done]\n[decision_ir]\nR = inspect_file\nM = native/modify_source\nB = native/build_project\nT = native/run_tests\nC = agent_complete\n[action_guards]\n_complete = [native/modify_source, native/build_project, native/run_tests]").unwrap();
+        let mut source = "[state done]\n[decision_ir]\nR = inspect_file\nM = native/modify_source\nB = native/build_project\nT = native/run_tests\nC = agent_complete\n[action_guards]\n_complete = [native/modify_source, native/build_project, native/run_tests]".to_owned();
+        if conditional { source.push_str("\n[action_guard_triggers]\n_complete = [native/modify_source]"); }
+        let sm = crate::sm::parse(&source).unwrap();
         action_contracts::bind(&user, "ir-fixture", &sm, root.path()).unwrap();
         (dir, root, db, registry, user, task)
     }
@@ -221,6 +234,41 @@ mod capability_dispatch_tests {
     }
 
     #[tokio::test]
+    async fn conditional_coding_guard_survives_rollback_failed_tests_and_later_edits() {
+        for ir in [false, true] {
+            for failing_tests in [false, true] {
+                let (_dir, root, db, registry, user, _task) = ir_fixture_with_policy(true, failing_tests);
+                let invoke = |id: &str, op: &str, name: &str, args: serde_json::Value| {
+                    if ir { ir_call(id, &format!("1 {op} {args}")) }
+                    else { ToolCall { id: id.into(), function: FunctionCall { name: name.into(), arguments: args.to_string() } } }
+                };
+                // Conversational completion is eligible until a source action is attempted.
+                action_contracts::require(&user, "_complete").unwrap();
+                for (id, content, outcome) in [("rollback", "bad", "rolled_back"), ("edit", "good", "committed")] {
+                    let result: serde_json::Value = serde_json::from_str(&execute_tool_call(&db, &user, &invoke(id, "M", "modify_source", json!({"path":"source","expected_sha256":crate::tools::apply_patch::hash(b"old"),"content":content})), &registry).await).unwrap();
+                    assert_eq!(result["receipt"]["outcome"], outcome);
+                    assert!(action_contracts::require(&user, "_complete").is_err());
+                    if id == "rollback" { assert_eq!(std::fs::read(root.path().join("source")).unwrap(), b"old"); }
+                }
+                let build: serde_json::Value = serde_json::from_str(&execute_tool_call(&db, &user, &invoke("build", "B", "build_project", json!({})), &registry).await).unwrap();
+                assert_eq!(build["receipt"]["verified"], true);
+                let tests: serde_json::Value = serde_json::from_str(&execute_tool_call(&db, &user, &invoke("tests", "T", "run_tests", json!({})), &registry).await).unwrap();
+                assert_eq!(tests["receipt"]["verified"], !failing_tests);
+                if failing_tests {
+                    assert_eq!(tests["receipt"]["outcome"], "failed");
+                    let complete = execute_tool_call(&db, &user, &invoke("complete", "C", "agent_complete", json!({})), &registry).await;
+                    assert!(complete.contains("requires current verified capabilities"), "{complete}");
+                } else {
+                    action_contracts::require(&user, "_complete").unwrap();
+                    let edit: serde_json::Value = serde_json::from_str(&execute_tool_call(&db, &user, &invoke("later-edit", "M", "modify_source", json!({"path":"source","expected_sha256":crate::tools::apply_patch::hash(b"good"),"content":"good\n"})), &registry).await).unwrap();
+                    assert_eq!(edit["receipt"]["verified"], true);
+                    assert!(action_contracts::require(&user, "_complete").is_err(), "earlier build/test evidence must not survive a later edit");
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn decision_ir_cannot_bypass_state_plugin_or_builtin_disable() {
         let (_dir, root, db, registry, user, _task) = ir_fixture();
         let edit = ir_call(
@@ -312,18 +360,15 @@ mod capability_dispatch_tests {
         )
         .unwrap();
         action_contracts::bind(&user, "ir-fixture", &sm, root.path()).unwrap();
-        assert!(
-            execute_tool_call(&db, &user, &ir_call("wrong", "1 T"), &registry)
-                .await
-                .contains("declared enabled contracted capability owner")
-        );
+        let wrong: serde_json::Value = serde_json::from_str(&execute_tool_call(&db, &user, &ir_call("wrong", "1 T"), &registry).await).unwrap();
+        assert_eq!(wrong["error"]["code"], "plugin_missing");
+        assert_eq!(wrong["executed"], false);
         registry.register(serde_json::from_value(json!({"name":"legacy","description":"legacy","version":"1","tools":[{
             "name":"legacy_action","description":"legacy","handler":{"type":"script","path":"never","interpreter":"/bin/sh"},"parameters":{"type":"object","properties":{}}
         }]})).unwrap());
-        assert!(
-            execute_tool_call(&db, &user, &ir_call("legacy", "1 L"), &registry)
-                .await
-                .contains("declared enabled contracted capability owner")
-        );
+        let legacy: serde_json::Value = serde_json::from_str(&execute_tool_call(&db, &user, &ir_call("legacy", "1 L"), &registry).await).unwrap();
+        assert_eq!(legacy["error"]["code"], "contract_missing");
+        assert_eq!(legacy["error"]["retryable"], false);
+        assert_eq!(legacy["verified"], false);
     }
 }

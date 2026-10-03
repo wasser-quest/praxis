@@ -34,7 +34,7 @@ pub fn validate_name(name: &str) -> anyhow::Result<()> {
 pub fn mode(ctx: &Context) -> anyhow::Result<String> {
     let mode = match ctx.settings.system_template.as_deref().unwrap_or(STANDARD) {
         "system" => STANDARD,
-        "language_learning" | "daily_quiz" | "tasks/daily_quiz" => "language_instructor",
+        "language_learning" | "language-flow" | "daily_quiz" | "tasks/daily_quiz" => "language_instructor",
         name => name,
     };
     validate_name(mode)?;
