@@ -77,6 +77,9 @@ pub struct StateMachine {
     /// Trusted Decision IR opcode -> native tool or plugin/tool capability.
     #[serde(default)]
     pub decision_ir: HashMap<String, String>,
+    /// Operator-authored project requirements checked before model calls.
+    #[serde(default)]
+    pub workspace: crate::workspace::Requirements,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -153,6 +156,7 @@ impl From<std::io::Error> for SmError {
 pub fn parse(content: &str) -> Result<StateMachine, SmError> {
     let mut sm = StateMachine::default();
     let mut current_section: Option<String> = None;
+    let mut workspace_keys = std::collections::HashSet::new();
     let mut current_state_name: Option<String> = None;
 
     for (line_num, line) in content.lines().enumerate() {
@@ -201,7 +205,7 @@ pub fn parse(content: &str) -> Result<StateMachine, SmError> {
                     current_state_name = None;
                     current_section = Some("tool_groups".to_string());
                 }
-                "checks" | "guards" | "action_guards" | "decision_ir" => {
+                "checks" | "guards" | "action_guards" | "decision_ir" | "workspace" => {
                     current_state_name = None;
                     current_section = Some(parts[0].to_string());
                 }
@@ -275,6 +279,19 @@ pub fn parse(content: &str) -> Result<StateMachine, SmError> {
                     .collect();
                 sm.tool_groups.insert(key, tools);
             }
+            Some("workspace") => {
+                let (key, value) = parse_assignment(trimmed, line_num)?;
+                if !workspace_keys.insert(key.clone()) {
+                    return Err(SmError::ParseError("Workspace requirements must not repeat keys".into()));
+                }
+                let paths: Vec<String> = serde_json::from_str(&value)
+                    .map_err(|e| SmError::ParseError(format!("Line {}: workspace requirements must be JSON string arrays: {e}", line_num + 1)))?;
+                match key.as_str() {
+                    "required_files" => sm.workspace.required_files = paths,
+                    "required_directories" => sm.workspace.required_directories = paths,
+                    _ => return Err(SmError::ParseError(format!("Unknown workspace requirement: {key}"))),
+                }
+            }
             Some("checks") => {
                 let (key, value) = parse_assignment(trimmed, line_num)?;
                 let contract: crate::gateway::action_contracts::CheckContract =
@@ -319,6 +336,7 @@ pub fn parse(content: &str) -> Result<StateMachine, SmError> {
         }
     }
 
+    sm.workspace.validate().map_err(|e| SmError::ParseError(e.to_string()))?;
     for (target, required) in &sm.guards {
         if (target != "_complete" && (target == "_default" || !sm.states.contains_key(target))) || required.is_empty() || required.iter().any(|name| !sm.checks.contains_key(name)) {
             return Err(SmError::ParseError(format!("Invalid guard '{target}': expected a state or _complete and declared checks")));

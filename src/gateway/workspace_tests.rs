@@ -64,6 +64,74 @@ pub(super) fn fixture() -> (tempfile::TempDir, GatewayState, String, PathBuf) {
 }
 
 #[tokio::test]
+async fn ir_workspace_preflight_rejects_install_directory_before_binding_or_context_save() {
+    let (install, mut state, user, _workspace) = fixture();
+    state.config.workspace_dir = None;
+    let before = serde_json::to_value(state.db.load_context(&user).unwrap()).unwrap();
+    let _task = task_control::begin(&user).unwrap();
+    let error = prompt::prepare_runtime(&state, &user, "Build Snake", None, None)
+        .unwrap_err().to_string();
+    for expected in ["WORKSPACE_DIR", "Cargo.toml", "Cargo.lock", "src", install.path().to_str().unwrap()] {
+        assert!(error.contains(expected), "{error}");
+    }
+    assert!(action_contracts::action_root(&user).is_err());
+    assert_eq!(serde_json::to_value(state.db.load_context(&user).unwrap()).unwrap(), before);
+    assert!(!install.path().join("Cargo.toml").exists());
+}
+
+#[tokio::test]
+async fn ir_workspace_preflight_stops_real_message_entry_before_provider_or_tool_calls() {
+    for turns in [1, 4] {
+        let (install, mut state, user, _workspace) = fixture();
+        state.config.workspace_dir = None;
+        let mut context = state.db.load_context(&user).unwrap();
+        context.settings.max_llm_turns = Some(turns);
+        state.db.save_context(&context).unwrap();
+        // The router has no providers: reaching chat would produce a different error.
+        let error = message_handler::handle_message(&state, &user, "Implement Snake", None)
+            .await.unwrap_err().to_string();
+        assert!(error.contains("workspace preflight") && error.contains("WORKSPACE_DIR"), "{error}");
+        assert!(state.db.get_messages(&user, 100).unwrap().is_empty());
+        assert!(!install.path().join("Cargo.toml").exists());
+    }
+}
+
+#[tokio::test]
+async fn ir_workspace_preflight_accepts_the_explicit_prepared_project() {
+    let (_install, state, user, workspace) = fixture();
+    let _task = task_control::begin(&user).unwrap();
+    prompt::prepare_runtime(&state, &user, "Build Snake", None, None).unwrap();
+    assert_eq!(action_contracts::action_root(&user).unwrap(), workspace.canonicalize().unwrap());
+}
+
+#[tokio::test]
+async fn ir_workspace_preflight_requirements_cannot_be_removed_during_a_task() {
+    let (install, state, user, workspace) = fixture();
+    let _task = task_control::begin(&user).unwrap();
+    prompt::prepare_runtime(&state, &user, "Build Snake", None, None).unwrap();
+    let mut changed = crate::sm::load_file_in(&install.path().join("contexts"), "verified-implementation").unwrap();
+    changed.workspace = Default::default();
+    let error = action_contracts::bind(&user, "verified-implementation", &changed, &workspace).unwrap_err().to_string();
+    assert!(error.contains("pinned"), "{error}");
+    assert_eq!(action_contracts::action_root(&user).unwrap(), workspace.canonicalize().unwrap());
+}
+
+#[test]
+fn ir_workspace_preflight_parser_rejects_ambiguous_or_escaping_requirements() {
+    for assignment in [
+        "required_files = [\"../Cargo.toml\"]", "required_files = [\"/Cargo.toml\"]",
+        "required_files = [\"src/../Cargo.toml\"]", "required_files = [\"./Cargo.toml\"]",
+        "required_files = [\"src//main.rs\"]", "required_files = [\"src\\\\main.rs\"]",
+        "required_files = [\"\"]", "required_files = [\"Cargo.toml\", \"Cargo.toml\"]",
+        "required_files = Cargo.toml", "required_file = [\"Cargo.toml\"]",
+        "required_files = [\"Cargo.toml\"]\nrequired_files = [\"Cargo.lock\"]",
+    ] {
+        assert!(crate::sm::parse(&format!("[state working]\n[workspace]\n{assignment}")).is_err(), "{assignment}");
+    }
+    assert!(crate::sm::parse("[state working]\n[workspace]\nrequired_files = [\"Cargo.toml\"]\nrequired_directories = [\"src\"]").is_ok());
+}
+
+#[tokio::test]
 async fn ir_workspace_runtime_uses_project_root_and_keeps_install_assets_separate() {
     let (_install, state, user, workspace) = fixture();
     let _task = task_control::begin(&user).unwrap();
@@ -94,6 +162,10 @@ async fn ir_workspace_root_stays_pinned_until_a_new_task() {
     let (install, mut state, user, workspace) = fixture();
     let next = install.path().join("other-project");
     std::fs::create_dir(&next).unwrap();
+    std::fs::create_dir(next.join("src")).unwrap();
+    for file in ["Cargo.toml", "Cargo.lock", "src/main.rs"] {
+        std::fs::copy(workspace.join(file), next.join(file)).unwrap();
+    }
     let task = task_control::begin(&user).unwrap();
     prompt::prepare_runtime(&state, &user, "First task", None, None).unwrap();
     state.config.workspace_dir = Some("other-project".into());
@@ -175,8 +247,10 @@ async fn ir_workspace_rust_checks_never_search_parent_manifest() {
     )
     .unwrap();
     let _task = task_control::begin(&user).unwrap();
-    let sm = crate::sm::load_file_in(&install.path().join("contexts"), "verified-implementation")
+    let mut sm = crate::sm::load_file_in(&install.path().join("contexts"), "verified-implementation")
         .unwrap();
+    // Isolate the verifier's manifest boundary independently of the new setup check.
+    sm.workspace = Default::default();
     action_contracts::bind(&user, "verified-implementation", &sm, &workspace).unwrap();
     for tool in ["build_workspace", "run_workspace_tests"] {
         let result: Value = serde_json::from_str(

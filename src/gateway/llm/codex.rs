@@ -340,7 +340,7 @@ impl CodexProvider {
             .bearer_auth(&auth.access_token)
             .header("OpenAI-Beta", "responses=experimental")
             .header("originator", "praxis")
-            .header("user-agent", concat!("praxis/", env!("CARGO_PKG_VERSION")))
+            .header("user-agent", crate::branding::USER_AGENT)
             .header("session_id", uuid::Uuid::new_v4().to_string())
             .header("accept", "text/event-stream")
             .json(body);

@@ -84,7 +84,10 @@ def generate():
     timeout = timeout_seconds("OPENROUTER_IMAGE_TIMEOUT_SECONDS", 300)
     usage_metadata = {}
     with OutputBatch() as output:
-        raw = post(base + "/images", {"Authorization": "Bearer " + key, "Accept": "application/json"}, body, timeout, 64 * 1024 * 1024)
+        raw = post(base + "/images", {
+            "Authorization": "Bearer " + key, "Accept": "application/json",
+            "HTTP-Referer": "https://getpraxis.boo", "X-OpenRouter-Title": "Praxis",
+        }, body, timeout, 64 * 1024 * 1024)
         try:
             response = json.loads(raw)
         except (ValueError, UnicodeError):

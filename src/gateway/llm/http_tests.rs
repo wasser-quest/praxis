@@ -58,6 +58,11 @@ fn adapter(name: &str, base: String) -> (Box<dyn LLMProvider>, &'static str, ser
             "/v1/chat/completions",
             openai,
         ),
+        "free-router" => (
+            Box::new(super::free_router::FreeRouterProvider::new(Some(key), model, base)),
+            "/free/v1/chat/completions",
+            openai,
+        ),
         "anthropic" => (
             Box::new(super::anthropic::AnthropicProvider::new(key, model, base)),
             "/v1/messages",
@@ -122,6 +127,65 @@ const ADAPTERS: &[&str] = &[
     "minimax-anthropic",
     "mimo-anthropic",
 ];
+
+#[tokio::test]
+async fn branding_http_adapters_identify_praxis_without_changing_model_or_credentials() {
+    for name in ADAPTERS.iter().copied().chain(["free-router"]) {
+        let server = MockServer::start().await;
+        let (provider, endpoint, response) = adapter(name, server.uri());
+        Mock::given(method("POST")).and(path(endpoint))
+            .respond_with(ResponseTemplate::new(200).set_body_json(response))
+            .expect(1).mount(&server).await;
+        provider.chat(request()).await.unwrap();
+        let requests = server.received_requests().await.unwrap();
+        let sent = requests.iter().find(|sent| sent.method == "POST" && sent.url.path() == endpoint).unwrap();
+        assert_eq!(sent.headers.get("user-agent").unwrap().to_str().unwrap(),
+            concat!("Praxis/", env!("CARGO_PKG_VERSION"), " (+https://getpraxis.boo)"), "{name}");
+        assert_eq!(sent.body_json::<serde_json::Value>().unwrap()["model"], "test-model");
+        if name == "openrouter" {
+            assert_eq!(sent.headers["http-referer"], "https://getpraxis.boo");
+            assert_eq!(sent.headers["x-openrouter-title"], "Praxis");
+            assert_eq!(sent.headers["authorization"], "Bearer local-test-only");
+        } else {
+            assert!(!sent.headers.contains_key("http-referer"), "{name}");
+            assert!(!sent.headers.contains_key("x-openrouter-title"), "{name}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn branding_openrouter_model_requests_use_the_same_app_attribution() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET")).and(path("/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"data":[]})))
+        .expect(1).mount(&server).await;
+    let (provider, _, _) = adapter("openrouter", server.uri());
+    assert!(provider.health_check().await);
+    let sent = server.received_requests().await.unwrap();
+    assert_eq!(sent[0].headers["http-referer"], "https://getpraxis.boo");
+    assert_eq!(sent[0].headers["x-openrouter-title"], "Praxis");
+}
+
+#[tokio::test]
+async fn branding_embedding_clients_identify_praxis_without_openrouter_headers() {
+    use super::embeddings::{EmbeddingConfig, EmbeddingProvider};
+    for (name, endpoint, response) in [
+        ("openai", "/embeddings", serde_json::json!({"data":[{"embedding":[0.1,0.2]}]})),
+        ("ollama", "/api/embeddings", serde_json::json!({"embedding":[0.1,0.2]})),
+    ] {
+        let server = MockServer::start().await;
+        Mock::given(method("POST")).and(path(endpoint))
+            .respond_with(ResponseTemplate::new(200).set_body_json(response))
+            .expect(1).mount(&server).await;
+        let provider = EmbeddingProvider::new(EmbeddingConfig {
+            provider: name.into(), model: "test-embedding".into(), base_url: server.uri(), api_key: Some("local-test-only".into()),
+        });
+        assert_eq!(provider.embed("synthetic input").await.unwrap().len(), 2);
+        let sent = server.received_requests().await.unwrap();
+        assert_eq!(sent[0].headers["user-agent"], concat!("Praxis/", env!("CARGO_PKG_VERSION"), " (+https://getpraxis.boo)"));
+        assert!(!sent[0].headers.contains_key("http-referer"));
+    }
+}
 
 #[tokio::test]
 async fn resilience_http_all_adapters_retry_429_and_keep_request_identical() {

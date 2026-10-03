@@ -41,6 +41,7 @@ async fn decision_client_uses_playground_protocol_and_validates_complete_results
     let sent=server.received_requests().await.unwrap()[0].body_json::<serde_json::Value>().unwrap();
     assert_eq!(sent["contexts"],json!(["synthetic task"]));assert_eq!(sent["model"],"test-router");
     assert_eq!(sent["schema"],p.schema);assert_eq!(sent["cache_prompt"],true);
+    assert_eq!(server.received_requests().await.unwrap()[0].headers["user-agent"], crate::branding::USER_AGENT);
     for bad in [json!({"results":[]}),json!({"results":[{"decision":{"category":"not-declared"},"fields":{"category":{"value":"not-declared","probability":0.99}}}]}),
         json!({"results":[{"decision":{"category":"A"},"fields":{"category":{"value":"B","probability":0.99}}}]}),
         json!({"results":[{"decision":{"category":"A"},"fields":{"category":{"value":"A","probability":2}}}]})] {

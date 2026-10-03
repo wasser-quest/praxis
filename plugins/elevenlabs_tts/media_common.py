@@ -98,7 +98,7 @@ def post(url, headers, body, timeout, limit):
     def request():
         try:
             req = urllib.request.Request(url, json.dumps(body, ensure_ascii=False, allow_nan=False).encode(),
-                                         {"Content-Type": "application/json", **headers}, method="POST")
+                                         {"Content-Type": "application/json", "User-Agent": "Praxis (+https://getpraxis.boo)", **headers}, method="POST")
             with urllib.request.build_opener(NoRedirect()).open(req, timeout=timeout) as response:
                 length = response.headers.get("Content-Length", "")
                 if length.isdecimal() and (len(length) > 12 or int(length) > limit):

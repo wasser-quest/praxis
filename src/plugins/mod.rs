@@ -270,7 +270,7 @@ async fn execute_http_tool(
     method: &str,
     args: &serde_json::Value,
 ) -> anyhow::Result<String> {
-    let client = reqwest::Client::new();
+    let client = crate::branding::client();
     let resp = match method.to_uppercase().as_str() {
         "POST" => client.post(url).json(args).send().await?,
         "GET" => {

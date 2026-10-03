@@ -71,23 +71,24 @@ praxis/                           ← NEUES Projekt (hier implementieren)
 ## Visual Identity
 
 ```
-Primary:    #6C63FF (Electric Purple)
-Secondary:  #00D9FF (Cyber Cyan)
-Accent:     #FF6B6B (Coral Red)
-Background: #0A0A1A (Deep Space)
-Surface:    #1A1A2E (Dark Navy)
-Text:       #E0E0E0 (Light Gray)
-Success:    #00E676 (Neon Green)
-Warning:    #FFD600 (Gold)
-Error:      #FF5252 (Red)
+Brand:      #23594D (Deep Green)
+Signal:     #C58938 (Ochre checkpoint)
+Homepage:   #F5F4EE (Paper)
+Ink:        #142724
+Dashboard:  #101C19 (Dark), #F5F4EE (Light)
+Surface:    #1B2C25 (Dark), #FFFEF9 (Light)
+Text:       #EBEEE5 (Dark), #142724 (Light)
+Success:    #82C8AD (Dark), #23664C (Light)
+Warning:    #E1B36A (Dark), #805114 (Light)
+Error:      #EF7B73 (Dark), #B53835 (Light)
 ```
 
 ## Typography
 
 ```
-Headers:  Inter, -apple-system, sans-serif
-Body:     Inter, -apple-system, sans-serif
-Code:     JetBrains Mono, Fira Code, monospace
+Homepage headers: Georgia, Times New Roman, serif
+Dashboard / body: System sans-serif
+Code:             System monospace (Consolas, Liberation Mono)
 ```
 
 ## Dashboard Layout

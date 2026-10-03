@@ -144,6 +144,7 @@ pub struct VerificationState {
     action_pins: HashMap<String, String>,
     action_calls: HashSet<String>,
     decision_ir: HashMap<String, String>,
+    workspace_requirements: crate::workspace::Requirements,
 }
 impl VerificationState {
     pub(crate) fn bind(
@@ -156,6 +157,7 @@ impl VerificationState {
             && sm.guards.is_empty()
             && sm.action_guards.is_empty()
             && sm.decision_ir.is_empty()
+            && sm.workspace.is_empty()
             && self.policy.is_none()
         {
             return Ok(());
@@ -163,12 +165,15 @@ impl VerificationState {
         let root = root.canonicalize()?;
         anyhow::ensure!(root.is_dir(), "Verification root must be a directory");
         if let Some((name, checks, guards, pinned)) = &self.policy {
-            anyhow::ensure!(name == workflow && checks == &sm.checks && guards == &sm.guards && self.action_guards == sm.action_guards && self.decision_ir == sm.decision_ir && pinned == &root,
+            anyhow::ensure!(name == workflow && checks == &sm.checks && guards == &sm.guards && self.action_guards == sm.action_guards && self.decision_ir == sm.decision_ir && self.workspace_requirements == sm.workspace && pinned == &root,
                 "Action-contract policy and root are pinned for this task; changes require a new task");
-        } else {
+        }
+        sm.workspace.check(&root)?;
+        if self.policy.is_none() {
             self.task_id = uuid::Uuid::new_v4().to_string();
             self.action_guards = sm.action_guards.clone();
             self.decision_ir = sm.decision_ir.clone();
+            self.workspace_requirements = sm.workspace.clone();
             self.policy = Some((workflow.into(), sm.checks.clone(), sm.guards.clone(), root));
         }
         Ok(())

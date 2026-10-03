@@ -19,7 +19,7 @@ impl EmbeddingProvider {
     pub fn new(config: EmbeddingConfig) -> Self {
         Self {
             config,
-            client: Client::new(),
+            client: crate::branding::client(),
         }
     }
 

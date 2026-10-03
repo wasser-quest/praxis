@@ -1,10 +1,10 @@
 <p align="center">
-  <img src="static/logo.svg" alt="Praxis" width="200">
+  <img src="static/logo.png" alt="Praxis" width="112" height="112">
 </p>
 
-# Praxis — AI Agent Platform
+# Praxis — A runtime for AI agent workflows
 
-Self-hosted AI agent platform with Discord bot, dashboard, tool-calling, and QEMU VM support. Your data, your keys, your rules.
+Run agents on your own machine, with your chosen models and explicit workflows. Praxis combines state machines, POML prompts, tools and plugins with opt-in verified actions: contracts, rollback and execution receipts that can guard completion. Chat through the web dashboard, terminal or Discord.
 
 **Website**: [getpraxis.boo](https://getpraxis.boo)
 
@@ -19,69 +19,58 @@ Self-hosted AI agent platform with Discord bot, dashboard, tool-calling, and QEM
 - **POML Templates**: Customizable system prompts and workflows
 - **Memory & Learning**: User-private [memory profiles](docs/MEMORY_PROFILES.md) per persona, with separate rare shared identity facts
 - **Encrypted Secrets**: AES-256-GCM encrypted at rest (enc2)
-- **Statemachine (.sm)**: File-driven agent workflows with regex conditions
+- **State machines (.sm)**: File-driven roles, prompts, tool access and guarded transitions
+- **Decision router**: Select declared states with a configurable probability threshold, including Ollama System One
+- **Verified execution**: Opt-in action contracts, pre/postcondition checks, transactional source edits and task-owned receipts
+- **Decision IR**: Compact instructions mapped to trusted capabilities; [verified Rust workflow and setup](docs/DECISION_IR.md)
 - **Voice**: STT (Vosk/Whisper/ElevenLabs) + TTS (SAPI/ElevenLabs/Qwen)
 - **RAG**: Vector store with embedding search
 - **Cron Jobs**: Scheduled agent tasks
 
 ## Requirements
 
-- Rust 1.75+
-- SQLite3
+- A recent stable Rust toolchain (Rust and Cargo); build with the committed lockfile
+- SQLite is bundled by the Rust dependency; no separate SQLite server is required
 - For VM: `qemu-system-x86_64`, `qemu-img` (apt: `qemu-system-x86`)
 - For voice: Vosk or Whisper models
 
-## ⚠️ Security Notice
+## Network access and authentication
 
-**Praxis is currently designed for private/VPN networks only.** Do not expose it directly to the public internet.
+Praxis listens on **`0.0.0.0`** by default, so both HTTP services are reachable on the host's network interfaces. The dashboard and gateway are separate services:
 
-### Default network exposure
+| Service | Default address | Authentication |
+|---------|-----------------|----------------|
+| Dashboard (web UI) | `0.0.0.0:1337` | Admin password; authenticated sessions for protected APIs |
+| Gateway (API / TUI) | `0.0.0.0:3537` | Gateway API key for protected endpoints |
 
-| Service | Default Port | Binding | Access |
-|---------|-------------|---------|--------|
-| Gateway (API) | `3537` | `127.0.0.1` | Local only |
-| Dashboard (Web) | `3537` | `127.0.0.1` | Local only |
-| VNC (QEMU VM) | `5900+` | `127.0.0.1` | Local only |
+Open **`http://localhost:1337`**, or `http://<server-hostname>:1337` from another machine. `0.0.0.0` is the bind address, not the address to type into a remote browser. `DASHBOARD_PORT` and `GATEWAY_PORT` override the ports. Enable `DASHBOARD_TLS=true` for the dashboard's built-in TLS, or terminate TLS at your reverse proxy.
 
-### How to expose safely
+Keep these services behind a firewall, VPN or authenticated TLS reverse proxy. Tool access can modify files and execute commands with Praxis's process permissions. Login and public dashboard assets remain accessible before authentication. Provider credentials are encrypted at rest; requests send credentials to the configured provider endpoint.
 
-**Option 1: VPN (recommended)**
-- Use [NetBird](https://netbird.io/), [Tailscale](https://tailscale.com/) or [WireGuard](https://www.wireguard.com/)
-- Access via VPN IP/hostname only
-- No ports exposed to public internet
+For dashboard access through an SSH tunnel:
 
-**Option 2: Reverse proxy with auth**
-- Use Caddy, Nginx or Traefik in front of Praxis
-- Add TLS termination and authentication
-- Never expose port 3537 directly
-
-**Option 3: SSH tunnel**
 ```bash
-ssh -L 3537:localhost:3537 user@your-server
-# Then open http://localhost:3537 in your browser
+ssh -L 1337:localhost:1337 user@your-server
+# Open http://localhost:1337
 ```
 
-### What is NOT secure by default
-
-- No built-in authentication for the dashboard (relies on network isolation)
-- API keys stored encrypted, but the gateway accepts any request on the bound interface
-- VNC proxy has no authentication beyond the token in the URL
-- Discord bot tokens and provider API keys are in the local database
-
-**Bottom line:** Treat Praxis like any self-hosted service with root-level tool access. Keep it behind a VPN or firewall.
+Forward port `3537` separately if you also need the gateway API or a remote TUI.
 
 ## Quick Start
 
 ```bash
 # Clone and build
-git clone <repo> && cd praxis
-cargo build --release
+git clone https://github.com/wasser-boo/praxis.git
+cd praxis
+cargo build --release --locked
 
 # Interactive setup
 ./target/release/praxis onboard --interactive
 
 # Run
 ./target/release/praxis run
+# Dashboard: http://localhost:1337
+# Gateway API: http://localhost:3537
 ```
 
 ### Repair missing onboarding files
@@ -138,7 +127,22 @@ Praxis resolves `templates/`, `contexts/`, `plugins/`, `skills/` from its instal
 For verified host actions, set `WORKSPACE_DIR` to the prepared project (absolute,
 or relative to `ROOT_DIR`). Installation assets remain at `ROOT_DIR`; leaving
 `WORKSPACE_DIR` unset preserves the old root. Restart and start a new task after
-changing it. See [Decision IR setup](docs/DECISION_IR.md).
+changing it. You can also override the environment for this process:
+
+```bash
+./target/release/praxis run --workspace-dir /absolute/path/to/ir-snake
+```
+
+The bundled `verified-implementation` workflow checks for `Cargo.toml`, `Cargo.lock` and `src/` before making a model call. A binary/installation directory such as `target/release` is not a prepared coding project. `settings.path` does not change the verified root. See [Decision IR project setup and troubleshooting](docs/DECISION_IR.md#project-preflight).
+
+### Provider application identity
+
+Provider HTTP requests identify the application as **Praxis**, with **https://getpraxis.boo**, independently of the conversation's persona or `agent_name`.
+
+- OpenRouter chat and the OpenRouter image plugin send `HTTP-Referer: https://getpraxis.boo` and `X-OpenRouter-Title: Praxis` automatically. No extra configuration is needed. These are OpenRouter's [app attribution headers](https://openrouter.ai/docs/app-attribution).
+- Other built-in model, embedding, Decision and media clients send `User-Agent: Praxis/<version> (+https://getpraxis.boo)` (script plugins omit the version). This identifies the HTTP client; public app listings depend on the provider.
+
+Update an installed OpenRouter image plugin by reinstalling its complete folder. Existing provider credentials and model selections continue to apply.
 
 ## Configuration (.env)
 
@@ -156,6 +160,10 @@ GATEWAY_API_KEY=<auto-generated>
 # Dashboard
 DASHBOARD_PORT=1337
 DASHBOARD_ADMIN_PASSWORD=<auto-generated>
+
+# Installation and verified project (optional)
+# ROOT_DIR=/path/to/praxis-installation
+# WORKSPACE_DIR=/path/to/prepared-project
 
 # Data
 DATA_DIR=./data
@@ -515,12 +523,9 @@ sudo systemctl start praxis
 ./target/release/praxis service logs -f
 ```
 
-## Docker
+## Containers
 
-```bash
-docker build -t praxis .
-docker run -p 3537:3537 -p 1337:1337 -v ./data:/app/data praxis
-```
+This repository does not currently include a Dockerfile or a prebuilt container image. For a custom container, expose dashboard port `1337` and gateway port `3537`, persist the installation assets and data, and mount the verified project separately through `WORKSPACE_DIR`.
 
 ## API
 

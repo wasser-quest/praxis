@@ -1,4 +1,5 @@
 pub mod assets;
+pub mod branding;
 pub mod sm;
 pub mod sse;
 pub mod config;
@@ -19,3 +20,4 @@ pub mod tui;
 pub mod util;
 pub mod vm;
 pub mod voice;
+pub mod workspace;

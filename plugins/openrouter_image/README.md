@@ -11,3 +11,5 @@ Uses **`POST https://openrouter.ai/api/v1/images`**, not Chat Completions. Disco
 **Paid calls.** One POST per tool invocation, no automatic retries/redirects and no provider fallback. HTTP budget 300 s (`OPENROUTER_IMAGE_TIMEOUT_SECONDS`, max 600 s). Cap 16 MiB/image and 64 MiB/JSON response. Operator endpoint override: `OPENROUTER_IMAGE_API_BASE` (HTTPS, except loopback test servers). Existing files are never overwritten.
 
 Full installation, configuration, safeguards and offline tests: `docs/MEDIA_PLUGINS.md` in the Praxis source distribution. This plugin is independent of the configured Chat LLM provider.
+
+Requests attribute the app to **Praxis** with `HTTP-Referer: https://getpraxis.boo` and `X-OpenRouter-Title: Praxis`, following [OpenRouter app attribution](https://openrouter.ai/docs/app-attribution). The shared HTTP helper also sends a Praxis User-Agent. Reinstall the complete plugin folder to update an existing installation.

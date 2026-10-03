@@ -63,7 +63,7 @@ function makeServer() {
     if (req.method === 'OPTIONS') return res.writeHead(204).end();
     if (url.pathname === '/' || url.pathname === '/index.html') return serveFile(res, INDEX);
     if (url.pathname.startsWith('/static/')) return serveFile(res, path.join(STATIC, url.pathname.replace('/static/', '')));
-    if (['/logo.png', '/favicon.ico', '/favicon.png', '/apple-touch-icon.png'].includes(url.pathname)) return serveFile(res, path.join(STATIC, path.basename(url.pathname)));
+    if (['/logo.svg', '/logo.png', '/favicon.ico', '/favicon.png', '/apple-touch-icon.png'].includes(url.pathname)) return serveFile(res, path.join(STATIC, path.basename(url.pathname)));
     if (url.pathname.startsWith('/api/avatar/')) return serveFile(res, path.join(STATIC, 'logo.png'));
     if (url.pathname === '/api/auth/login') return json(res, { token: 'synthetic-token' });
     if (url.pathname === '/api/status') return json(res, { version: 'browser-fixture' });
@@ -205,7 +205,7 @@ async function runViewport(browser, baseURL, width, height, theme = 'dark') {
   assert(await page.locator('.logo-img').evaluate(async img => {
     try { await img.decode(); return img.naturalWidth > 0; } catch { return false; }
   }), `${width}: login logo could not be decoded`);
-  for (const [file, type] of [['/logo.png', 'image/png'], ['/favicon.ico', 'image/x-icon'], ['/apple-touch-icon.png', 'image/png']]) {
+  for (const [file, type] of [['/logo.svg', 'image/svg+xml'], ['/logo.png', 'image/png'], ['/favicon.ico', 'image/x-icon'], ['/apple-touch-icon.png', 'image/png']]) {
     const response = await page.request.get(new URL(file, baseURL).href);
     assert(response.ok() && response.headers()['content-type'].startsWith(type), `${file}: missing asset or wrong MIME type`);
   }

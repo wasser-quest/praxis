@@ -1,7 +1,7 @@
 {
   "name": "openrouter_image",
   "description": "Generate downloadable PNG/JPEG/WebP images through the OpenRouter Image API",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "enabled": true,
   "context": {"openrouter_image_model": ""},
   "secrets": ["openrouter_api_key"],
