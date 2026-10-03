@@ -487,9 +487,12 @@ The dashboard can list/edit/create `.sm` files and still read legacy `.cl`. See 
 
 ## Plugins
 
-The [plugin-first migration plan](docs/PLUGIN_FIRST_PLAN.md) proposes feature
-packages and an eventual minimal runtime. Current plugins install tools;
-workflow/template packaging and plugin-only startup are planned work.
+The [pluginization roadmap](plan/PLUGINIZATION.md) starts with VM support and
+the full dashboard, then moves the remaining tools, providers and workflows
+into optional packages. Its target is a small runtime with three builtin
+`file_ops` tools. See the [delivery checklist](plan/README.md) and
+[architecture overview](docs/PLUGIN_FIRST_PLAN.md). Current plugins install
+tools; service/UI packaging and minimal startup are planned work.
 
 Install plugins by placing a directory with `plugin.json` in `plugins/`:
 
