@@ -1,0 +1,163 @@
+# Opt-in project profile: install verified_rust and select WORKSPACE_DIR.
+# Normal role routing is retained. Source-edit attempts activate the completion
+# guard for the rest of the task, including after rollback and role changes.
+# Routing contract v3: the model switches roles with
+#   set_context("sm_data.role", "<role>")
+# The [auto] rules below map that value to a real state on the very next
+# routing pass (every LLM request, including tool-call follow-ups), which
+# swaps settings.system_template AND the activated tool set. Manual
+# settings.system_template choices stick; a stale name falls back to standard.
+@name "Standard roles with verified Rust coding"
+@version "1.0"
+@steps [routing, standard, teach, code, code_architect, senior_dev, expert_programmer, debugger, review, research]
+
+# The role catalog belongs to this workflow, not to a saved user context.
+# Apply on every routing pass, including contexts imported from other workflows.
+[overrides]
+if active_state != "" -> sm_data.persona_roles = "standard, code, code_architect, senior_dev, expert_programmer, debugger, review, teach, research"
+
+# Tool groups are defined per workflow; there are no built-in groups.
+# Members may be tool names (built-in or plugin) or other group names.
+[tool_groups]
+core_files = [read_file, inspect_file]
+coding = [execute_decision, inspect_file, modify_source, build_workspace, run_workspace_tests]
+code_verification = [execute_decision, inspect_file, build_workspace, run_workspace_tests]
+# Discovery must stay callable even in narrow states (e.g. teach needs memory).
+agent_basic = [agent_complete, agent_next, agent_back, agent_feedback, search_tools, search_skills, use_skill, read_tool_result]
+context = [get_context, set_context, read_tool_result]
+memory = [memory_get, memory_set, learn_fact, learn_preference, learn_topic]
+discovery = [search_tools, search_skills]
+skills = [search_skills, use_skill]
+discord = [discord_send_message, discord_send_embed, discord_upload_file]
+vm = [vm_start, vm_stop, vm_shell, vm_keys, vm_mouse, vm_screenshot, vm_file_transfer, vm_snapshot, vm_shared_folder]
+cron = [cron_add, cron_delete, cron_list, cron_toggle, cron_run]
+# Every state needs set_context to switch roles again.
+role_switch = [set_context, get_context]
+
+[state routing]
+settings.system_template = "states/standard/standard"
+settings.activated_tools = ["core_files", "agent_basic", "role_switch"]
+settings.tool_discovery_mode = "DescriptionOnly"
+
+[state standard]
+settings.system_template = "states/standard/standard"
+settings.activated_tools = ["core_files", "agent_basic", "role_switch"]
+settings.tool_discovery_mode = "DescriptionOnly"
+
+[state teach]
+settings.system_template = "states/teach/teach"
+settings.activated_tools = ["agent_basic", "role_switch"]
+settings.tool_discovery_mode = "DescriptionOnly"
+
+[state code]
+settings.max_llm_turns = 40
+settings.max_tool_calls = 80
+settings.system_template = "states/code/code"
+settings.activated_tools = ["coding", "agent_basic", "role_switch"]
+settings.tool_discovery_mode = "DescriptionOnly"
+
+[state code_architect]
+settings.max_llm_turns = 40
+settings.max_tool_calls = 80
+settings.system_template = "states/code_architect/code_architect"
+settings.activated_tools = ["core_files", "code_verification", "agent_basic", "context"]
+settings.tool_discovery_mode = "DescriptionOnly"
+
+[state senior_dev]
+settings.max_llm_turns = 40
+settings.max_tool_calls = 80
+settings.system_template = "states/senior_dev/senior_dev"
+settings.activated_tools = ["coding", "agent_basic", "context"]
+settings.tool_discovery_mode = "DescriptionOnly"
+
+[state expert_programmer]
+settings.max_llm_turns = 40
+settings.max_tool_calls = 80
+settings.system_template = "states/expert_programmer/expert_programmer"
+settings.activated_tools = ["coding", "agent_basic", "role_switch"]
+settings.tool_discovery_mode = "DescriptionOnly"
+
+[state debugger]
+settings.max_llm_turns = 40
+settings.max_tool_calls = 80
+settings.system_template = "states/debugger/debugger"
+settings.activated_tools = ["coding", "agent_basic", "context"]
+settings.tool_discovery_mode = "DescriptionOnly"
+
+[state review]
+settings.max_llm_turns = 40
+settings.max_tool_calls = 80
+settings.system_template = "states/review/review"
+settings.activated_tools = ["core_files", "code_verification", "agent_basic", "context"]
+settings.tool_discovery_mode = "DescriptionOnly"
+
+[state research]
+settings.system_template = "states/research/research"
+settings.activated_tools = ["discovery", "agent_basic", "context", "brave_web_search"]
+settings.tool_discovery_mode = "Full"
+
+# Model-driven routing: first match wins, evaluated on every request.
+# An unknown or unset role keeps the current state.
+[auto]
+sm_data.role == "standard" -> use standard
+sm_data.role == "code" -> use code
+sm_data.role == "code_architect" -> use code_architect
+sm_data.role == "senior_dev" -> use senior_dev
+sm_data.role == "expert_programmer" -> use expert_programmer
+sm_data.role == "debugger" -> use debugger
+sm_data.role == "review" -> use review
+sm_data.role == "teach" -> use teach
+sm_data.role == "research" -> use research
+
+[workspace]
+required_files = ["Cargo.toml", "Cargo.lock"]
+required_directories = ["src"]
+
+[state _default]
+settings.max_llm_turns = 1
+settings.max_tool_calls = 8
+
+[action_guards]
+_complete = [verified_rust/modify_source, verified_rust/build_workspace, verified_rust/run_workspace_tests]
+[action_guard_triggers]
+_complete = [verified_rust/modify_source]
+
+[decision_ir code]
+R = inspect_file
+M = verified_rust/modify_source
+B = verified_rust/build_workspace
+T = verified_rust/run_workspace_tests
+C = agent_complete
+
+[decision_ir senior_dev]
+R = inspect_file
+M = verified_rust/modify_source
+B = verified_rust/build_workspace
+T = verified_rust/run_workspace_tests
+C = agent_complete
+
+[decision_ir expert_programmer]
+R = inspect_file
+M = verified_rust/modify_source
+B = verified_rust/build_workspace
+T = verified_rust/run_workspace_tests
+C = agent_complete
+
+[decision_ir debugger]
+R = inspect_file
+M = verified_rust/modify_source
+B = verified_rust/build_workspace
+T = verified_rust/run_workspace_tests
+C = agent_complete
+
+[decision_ir code_architect]
+R = inspect_file
+B = verified_rust/build_workspace
+T = verified_rust/run_workspace_tests
+C = agent_complete
+
+[decision_ir review]
+R = inspect_file
+B = verified_rust/build_workspace
+T = verified_rust/run_workspace_tests
+C = agent_complete

@@ -140,6 +140,12 @@ pub struct VerificationState {
     revision: u64,
     receipts: HashMap<String, ExecutionReceipt>,
     action_guards: HashMap<String, Vec<String>>,
+    action_guard_triggers: HashMap<String, Vec<String>>,
+    attempted_actions: HashSet<String>,
+    user_reply_guards: HashMap<String, Vec<String>>,
+    input_state: Option<String>,
+    input_message_id: Option<i64>,
+    transitions_since_input: u64,
     actions: HashMap<String, ActionEvidence>,
     action_pins: HashMap<String, String>,
     action_calls: HashSet<String>,
@@ -172,13 +178,15 @@ impl VerificationState {
         anyhow::ensure!(root.is_dir(), "Verification root must be a directory");
         let graph_policy = if sm.is_graph() || !sm.state_ir.is_empty() { Some(serde_json::to_value(sm)?) } else { None };
         if let Some((name, checks, guards, pinned)) = &self.policy {
-            anyhow::ensure!(name == workflow && checks == &sm.checks && guards == &sm.guards && self.action_guards == sm.action_guards && self.decision_ir == sm.decision_ir && self.state_ir == sm.state_ir && self.graph_policy == graph_policy && self.workspace_requirements == sm.workspace && pinned == &root,
+            anyhow::ensure!(name == workflow && checks == &sm.checks && guards == &sm.guards && self.action_guards == sm.action_guards && self.action_guard_triggers == sm.action_guard_triggers && self.user_reply_guards == sm.user_reply_guards && self.decision_ir == sm.decision_ir && self.state_ir == sm.state_ir && self.graph_policy == graph_policy && self.workspace_requirements == sm.workspace && pinned == &root,
                 "Action-contract policy and root are pinned for this task; changes require a new task");
         }
         sm.workspace.check(&root)?;
         if self.policy.is_none() {
             self.task_id = uuid::Uuid::new_v4().to_string();
             self.action_guards = sm.action_guards.clone();
+            self.action_guard_triggers = sm.action_guard_triggers.clone();
+            self.user_reply_guards = sm.user_reply_guards.clone();
             self.decision_ir = sm.decision_ir.clone();
             self.state_ir = sm.state_ir.clone();
             self.graph_policy = graph_policy;
@@ -191,12 +199,14 @@ impl VerificationState {
         let Some((_, definitions, guards, root)) = &self.policy else {
             return Ok(());
         };
+        if let Some(states) = self.user_reply_guards.get(target) {
+            anyhow::ensure!(self.input_message_id.is_some() && self.transitions_since_input == 0 && self.input_state.as_ref().is_some_and(|state| states.contains(state)),
+                "Guard '{target}' requires a new user message while at {:?}. Ask the learner, return visible text and wait for their reply; context/model claims cannot satisfy this guard", states);
+        }
         let checks = guards.get(target).map(Vec::as_slice).unwrap_or(&[]);
-        let actions = self
-            .action_guards
-            .get(target)
-            .map(Vec::as_slice)
-            .unwrap_or(&[]);
+        let activated = self.action_guard_triggers.get(target)
+            .is_none_or(|triggers| triggers.iter().any(|key| self.attempted_actions.contains(key)));
+        let actions = if activated { self.action_guards.get(target).map(Vec::as_slice).unwrap_or(&[]) } else { &[] };
         if checks.is_empty() && actions.is_empty() {
             return Ok(());
         }
@@ -365,6 +375,7 @@ pub(crate) fn start_action(
         );
         ledger.action_pins.insert(key.into(), fingerprint.into());
         ledger.action_calls.insert(call.into());
+        ledger.attempted_actions.insert(key.into());
         ledger.actions.remove(key);
         Ok(ActionTicket {
             task_id: ledger.task_id.clone(),
@@ -466,7 +477,7 @@ pub fn require(user: &str, target: &str) -> anyhow::Result<()> {
     task_control::with_verification(user, |ledger| ledger.require(target))
 }
 pub fn require_for_workflow(user: &str, sm: &StateMachine, target: &str) -> anyhow::Result<()> {
-    if sm.guards.contains_key(target) || sm.action_guards.contains_key(target) {
+    if sm.guards.contains_key(target) || sm.action_guards.contains_key(target) || sm.user_reply_guards.contains_key(target) {
         anyhow::ensure!(
             task_control::cancellation(user).is_some(),
             "Guarded transitions require an active verification task"
@@ -480,6 +491,27 @@ pub fn require_for_workflow(user: &str, sm: &StateMachine, target: &str) -> anyh
         });
     }
     require(user, target)
+}
+
+/// Called only after the gateway persists an inbound user message. Never
+/// derived from context flags, prompt text or a tool-returned claim.
+pub(crate) fn record_user_message(user: &str, id: i64) -> anyhow::Result<()> {
+    if task_control::cancellation(user).is_none() { return Ok(()); }
+    task_control::with_verification(user, |ledger| {
+        anyhow::ensure!(id > 0 && ledger.input_message_id.is_none_or(|previous| id > previous), "Inbound message must be fresh");
+        ledger.input_message_id = Some(id);
+        ledger.input_state = ledger.graph_state.clone();
+        ledger.transitions_since_input = 0;
+        Ok(())
+    })
+}
+
+pub(crate) fn reply_facts(user: &str) -> serde_json::Value {
+    task_control::with_verification(user, |ledger| Ok(serde_json::json!({
+        "input_message_id":ledger.input_message_id,
+        "input_state":ledger.input_state,
+        "state_changed_since_input":ledger.transitions_since_input > 0
+    }))).unwrap_or(serde_json::Value::Null)
 }
 /// Reject authority-changing model updates before any context is saved.
 pub fn validate_context(before: &Context, after: &Context) -> anyhow::Result<()> {
@@ -695,6 +727,11 @@ pub fn instructions_for(user: &str, state: &str) -> String {
             Some((_, checks, guards, _)) => format!("\n\n[EXECUTION CONTRACTS]\nAvailable run_check names: {:?}. Required checks by destination (_complete means completion): {:?}. Only runtime receipts authorize these transitions. Run checks after your last mutation. Declared resource changes, including external edits, invalidate evidence; rerun the affected checks. On Unix, any transactional patch or pending-journal recovery for this root invalidates prior receipts across Praxis processes, including checks without resource scopes; rerun all required checks. For controlled host edits use inspect_file to obtain expected_sha256, then apply_patch with edits and named checks. Only a committed patch publishes passing evidence; rolled_back or rollback_conflict means incomplete work. Missing evidence blocks completion; report incomplete work honestly.\n", checks.keys().collect::<Vec<_>>(), guards) + &format!("Required capabilities by destination: {:?}. Only committed, task-owned action receipts authorize these guards; handler claims and compensated failures cannot. Shared workspace changes invalidate action evidence.\n", ledger.action_guards),
             None => String::new(),
         })
+    }).unwrap_or_default() + &task_control::with_verification(user, |ledger| {
+        if ledger.action_guard_triggers.is_empty() { return Ok(String::new()); }
+        let mut attempted: Vec<_> = ledger.attempted_actions.iter().collect();
+        attempted.sort();
+        Ok(format!("\n[CONDITIONAL CAPABILITY GUARDS]\nActivation triggers by destination: {:?}. Runtime-observed attempted capabilities: {:?}. A capability guard with triggers becomes mandatory after ANY listed capability is attempted in this task. It stays active after failure/rollback, receipt invalidation and role changes; context claims cannot reset it. Named-check guards remain unconditional. Before activation, read-only planning or conversation may finish normally. For verified source editing, inspect the current path/hash, send full formatted replacement content, then obtain fresh build and test receipts after the last edit. Build/test operands are scope=workspace. Setup errors with retryable=false require the stated operator action; stop guessing owners, keys or another root.\n", ledger.action_guard_triggers, attempted))
     }).unwrap_or_default() + &super::decision_ir::instructions(user, state)
 }
 
@@ -750,6 +787,7 @@ pub(crate) fn commit_navigation(
                 .push(before.active_state.clone().unwrap_or_default());
         }
         ledger.graph_state = after.active_state.clone();
+        ledger.transitions_since_input = ledger.transitions_since_input.saturating_add(1);
         Ok(())
     })
 }

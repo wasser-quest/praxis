@@ -198,7 +198,14 @@ pub fn prepare_runtime(
         ctx.turn = turn;
     }
     let workspace = state.config.workspace_root()?;
-    route_context_with_workspace(std::path::Path::new(&state.config.root_dir), &workspace, &mut ctx, input, &state.plugins, channel_id)?;
+    let root = Path::new(&state.config.root_dir);
+    let candidate = super::workflow_actions::plan(root, &ctx, input, &state.plugins, channel_id)?;
+    let workflow = crate::sm::load_file_in(&root.join("contexts"), workflow_name(&candidate))
+        .map_err(|e| anyhow::anyhow!("Workflow routing failed: {e}"))?;
+    super::workflow_preflight::validate(&state.db, &state.plugins, workflow_name(&candidate), &workflow, &candidate)?;
+    super::action_contracts::bind(user_id, workflow_name(&candidate), &workflow, &workspace)?;
+    super::action_contracts::validate_context(&ctx, &candidate)?;
+    ctx = candidate;
     super::task_control::set_show_thinking(user_id, ctx.settings.show_thinking);
     state.db.save_context(&ctx)?;
     Ok(ctx)
@@ -345,6 +352,7 @@ pub async fn build_context(
     value["compaction_token_limit"] = json!(compaction_limit);
     value["compaction_percentage"] = json!(percentage(compaction_limit));
     value["message_count"] = json!(messages.len());
+    value["workflow_turn"] = super::action_contracts::reply_facts(&ctx.user_id);
     crate::skills::discovery::enrich(db, &mut value, root).await?;
     if let Some(name) = ctx.settings.active_skill.as_deref() {
         anyhow::ensure!(
@@ -404,9 +412,10 @@ pub async fn append_injected_message(
     // turns never carry rendered POML payloads (raw-storing policy).
     let ctx = prepare_runtime(state, user_id, input, None, None)?;
     let _ = ctx;
-    state
+    let input_message_id = state
         .db
         .add_message(user_id, &crate::db::messages::Message::user(input.to_string()))?;
+    super::action_contracts::record_user_message(user_id, input_message_id)?;
     Ok(())
 }
 
@@ -668,7 +677,7 @@ mod tests {
             .map(|path| path.file_stem().unwrap().to_str().unwrap().to_string())
             .collect();
         names.sort();
-        assert_eq!(names, vec!["20-tasks", "branching-coding", "standard", "verified-capabilities", "verified-coding", "verified-implementation"]);
+        assert_eq!(names, vec!["20-tasks", "branching-coding", "language-learning", "standard", "standard-verified", "verified-capabilities", "verified-coding", "verified-implementation"]);
         let mut explicit_selections = 0;
         for name in names {
             let sm = crate::sm::load_file_in(&contexts, &name).unwrap();
@@ -701,7 +710,7 @@ mod tests {
                     .unwrap_or_else(|error| panic!("{name}:{state_name} -> {selected}: {error}"));
             }
         }
-        assert_eq!(explicit_selections, 28, "all shipped state template contracts must be exercised");
+        assert_eq!(explicit_selections, 44, "all shipped state template contracts must be exercised");
     }
 
     fn fixture() -> tempfile::TempDir {

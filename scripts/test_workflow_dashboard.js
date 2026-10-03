@@ -26,11 +26,16 @@ run('zoomWorkflowGraph(0.8);'); assert.notEqual(element('workflow-graph').viewBo
 run('fitWorkflowGraph();'); assert.equal(element('workflow-graph').viewBox,before);
 context.fixture.nodes[1].title = '<script>alert(1)</script>';
 context.fixture.nodes[1].decision_ir = { R:'inspect_file' };
+context.fixture.nodes[1].action_guard_triggers = ['rust/modify_source'];
+context.fixture.nodes[1].user_reply_guards = ['practice', '<answer>'];
 run('inspectGraphNode("a");');
 assert(!element('graph-inspector').innerHTML.includes('<script>'));
 assert(element('graph-inspector').innerHTML.includes('&lt;script&gt;'));
 assert(element('graph-inspector').innerHTML.includes('inspect_file'));
 assert(!element('graph-inspector').innerHTML.includes('agent_back'), 'inspector uses state-local IR');
+assert(element('graph-inspector').innerHTML.includes('rust/modify_source'));
+assert(element('graph-inspector').innerHTML.includes('practice or &lt;answer&gt;'));
+assert(!element('graph-inspector').innerHTML.includes('<answer>'), 'reply-guard sources must be escaped');
 assert.equal(run('diffPromptLines("a\\nb\\nc", "b\\na\\nc").removed.join("|")'),'a|b', 'reordered instructions count as changes');
 run('updateHistoryBudget({history_tokens_estimate:6240, history_limit:32000, compaction_enabled:true,compaction_threshold:8000,compaction_due:false});');
 assert.equal(element('history-progress').value,19.5);

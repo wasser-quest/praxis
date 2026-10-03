@@ -192,6 +192,8 @@ function inspectGraphNode(id) {
         <h4>Decision IR</h4>${mappings.length ? `<dl class="ir-table">${mappings.map(([op, target]) => `<dt>${escapeHtml(op)}</dt><dd>${escapeHtml(target)}</dd>`).join('')}</dl>` : '<p>IR disabled in this state.</p>'}
         <h4>Outgoing choices</h4>${outgoing.length ? outgoing.map(edge => `<div class="edge-choice"><div><strong>${edge.index == null ? escapeHtml(edge.kind) : edge.index} · ${escapeHtml(edge.title)}</strong><span class="state-pill ${edge.eligible ? 'eligible' : 'blocked'}">${edge.eligible ? 'Available' : 'Blocked'}</span></div><p>→ ${escapeHtml(edge.to)}${edge.description ? ' · ' + escapeHtml(edge.description) : ''}</p>${edge.condition ? `<code>${escapeHtml(edge.condition)}</code>` : ''}${edge.blocked_reason ? `<p class="blocked-reason">${escapeHtml(edge.blocked_reason)}</p>` : ''}</div>`).join('') : '<p>No outgoing transitions.</p>'}
         <h4>Required evidence on entry</h4><p>${escapeHtml([...(node.guards || []), ...(node.action_guards || [])].join(', ') || 'No entry guard.')}</p>
+        ${node.action_guard_triggers?.length ? `<h4>Capability activation triggers</h4><p>${escapeHtml(node.action_guard_triggers.join(', '))}</p>` : ''}
+        ${node.user_reply_guards?.length ? `<h4>New user input required</h4><p>A new message must arrive at ${escapeHtml(node.user_reply_guards.join(' or '))}, with no subsequent transition.</p>` : ''}
         <details><summary>State settings and template</summary><pre>${escapeHtml(JSON.stringify(node.variables, null, 2))}</pre></details>`;
     if (inspector.graphMarkup !== markup) { inspector.innerHTML = markup; inspector.graphMarkup = markup; }
 }

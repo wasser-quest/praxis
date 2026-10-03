@@ -63,7 +63,8 @@ pub(crate) async fn handle_message_inner(
     let mut current_tool_ids = std::collections::HashSet::new();
     let mut finalizing = tool_limit == 0;
     // Persist raw input, then route BEFORE either current-request template.
-    state.db.add_message(user_id, &crate::db::messages::Message::user(content.to_string()))?;
+    let input_message_id = state.db.add_message(user_id, &crate::db::messages::Message::user(content.to_string()))?;
+    super::action_contracts::record_user_message(user_id, input_message_id)?;
     crate::gateway::compaction::before_request(state, user_id).await?;
     let mut ctx = crate::gateway::decision_routing::prepare(state, user_id, content, None, channel_id).await?;
     let rendered_user = crate::gateway::prompt::render_user(state, &ctx, content).await?;
@@ -622,7 +623,7 @@ async fn execute_tool_call_in(
     let tc = if tc.function.name == "execute_decision" {
         resolved = match super::decision_ir::resolve(db, user_id, tc, plugins) {
             Ok(call) => call,
-            Err(error) => return format!("Error: {error}; decision not executed"),
+            Err(error) => return super::workflow_preflight::tool_error(&error),
         };
         &resolved
     } else { tc };
@@ -732,15 +733,16 @@ async fn execute_tool_call_in(
                 Err(e) => format!("Error: {}", e),
             }
         }
-        "agent_next" | "agent_back" => crate::tools::agent_control::navigate(
+        "agent_next" | "agent_back" => crate::tools::agent_control::navigate_with_plugins(
             db,
             root,
+            plugins,
             user_id,
             tc.function.name == "agent_back",
             &args,
         )
         .await
-        .unwrap_or_else(|e| format!("Error: {}", e)),
+        .unwrap_or_else(|e| e),
         "agent_complete" => crate::tools::agent_control::run(
             db,
             user_id,

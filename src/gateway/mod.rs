@@ -11,6 +11,7 @@ pub mod decision_client;
 pub mod decision_routing;
 pub mod workflow_actions;
 pub mod workflow_graph;
+pub mod workflow_preflight;
 pub mod telemetry;
 #[cfg(test)]
 mod workspace_tests;
@@ -35,6 +36,10 @@ pub mod decision_ir;
 pub(crate) mod resource_snapshots;
 #[cfg(test)]
 mod action_contract_tests;
+#[cfg(test)]
+mod coding_profile_tests;
+#[cfg(test)]
+mod learning_flow_tests;
 #[cfg(test)]
 mod resource_contract_tests;
 pub mod templates;

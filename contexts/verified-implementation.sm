@@ -1,5 +1,5 @@
 @name verified-implementation
-@version 1.2
+@version 1.3
 @steps [working, done]
 
 # Reject an unprepared installation/binary directory before calling the model.
@@ -24,6 +24,10 @@ R = inspect_file
 M = verified_rust/modify_source
 B = verified_rust/build_workspace
 T = verified_rust/run_workspace_tests
+C = agent_complete
+
+# Completion state deliberately has no source/build/test permissions.
+[decision_ir done]
 C = agent_complete
 
 [action_guards]

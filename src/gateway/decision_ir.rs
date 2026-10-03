@@ -101,23 +101,7 @@ pub(crate) fn resolve(
     let target = mappings
         .get(&op)
         .ok_or_else(|| anyhow::anyhow!("Opcode {op} is not declared by this workflow"))?;
-    let tool = if let Some((owner, name)) = target.split_once('/') {
-        anyhow::ensure!(
-            plugins.manages_contract(name)
-                && plugins.get(owner).is_some_and(|p| p.enabled
-                    && p.tools
-                        .iter()
-                        .any(|t| t.name == name && t.contract.is_some())),
-            "IR target requires the declared enabled contracted capability owner"
-        );
-        name
-    } else {
-        anyhow::ensure!(
-            matches!(target.as_str(), "inspect_file" | "agent_complete" | "agent_next" | "agent_back"),
-            "Unsupported IR target"
-        );
-        target.as_str()
-    };
+    let tool = super::workflow_preflight::target(db, plugins, super::prompt::workflow_name(&ctx), ctx.active_state.as_deref().unwrap_or(""), target)?;
     let definitions = crate::tools::registry::build_tool_definitions_for_user(
         &ctx.settings,
         Some(&plugins.tool_definitions()),

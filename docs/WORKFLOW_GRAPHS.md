@@ -139,6 +139,29 @@ as chat history. Existing authentication protects the graph, audit and usage API
 
 ## Test prompt
 
+The [complete Snake reproduction](SNAKE_IR_TEST.md) includes the Cargo
+`ir-snake` creation/dependency commands, plugin installation, explicit startup
+paths and the complete prompt. Run preparation as the operator before starting
+the agent task.
+
+From the Praxis checkout, create a new project before pasting the prompt:
+
+```bash
+PRAXIS_DIR="$(pwd)"
+rustup component add rustfmt
+cargo new --bin --edition 2021 "$PRAXIS_DIR/ir-snake"
+cd "$PRAXIS_DIR/ir-snake"
+cargo add ratatui@0.29 crossterm@0.28
+cargo fmt
+cargo build --locked
+cargo test --locked
+cd "$PRAXIS_DIR"
+```
+
+If that directory exists, choose a fresh name and use the same name in
+`--workspace-dir`. Follow the linked guide to install the plugin and start
+Praxis against this project; the agent's IR task does not run these commands.
+
 > Implement a playable Snake game in this prepared Rust project, changing only
 > the existing src/main.rs. Use execute_decision, one instruction per call, and
 > the current state's IR table. Navigate the branching-coding graph with N/K.
@@ -150,6 +173,12 @@ as chat history. Existing authentication protects the graph, audit and usage API
 For Ratatui, prepare `ratatui = "0.29"` and `crossterm = "0.28"` in the project
 before this prompt; the source-modification contract does not install packages
 or create Cargo manifests.
+
+For ordinary role routing with the same semantic capabilities, use
+[standard-verified](VERIFIED_CODING_ROLES.md). For a graph that waits for the
+user between exercises, use [language-learning](LANGUAGE_LEARNING_FLOW.md).
+The [plugin-first migration plan](PLUGIN_FIRST_PLAN.md) describes the proposed
+packaging and minimal-runtime direction.
 
 ## Local verification
 
