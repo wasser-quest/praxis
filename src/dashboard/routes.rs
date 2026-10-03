@@ -965,9 +965,29 @@ async fn update_tool(
     Path(name): Path<String>,
     Json(update): Json<ToolUpdate>,
 ) -> Result<String, StatusCode> {
-    crate::db::tools::set_enabled(&state.db, &name, update.is_enabled)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let plugins_dir = std::env::var("PLUGINS_DIR").unwrap_or_else(|_| "./plugins".into());
+    let plugins = crate::plugins::load_all_plugins(std::path::Path::new(&plugins_dir));
+    set_dashboard_tool_enabled(&state.db, &plugins, &name, update.is_enabled)?;
     Ok("Tool updated".to_string())
+}
+
+fn set_dashboard_tool_enabled(
+    db: &crate::db::Database,
+    plugins: &crate::plugins::PluginRegistry,
+    name: &str,
+    enabled: bool,
+) -> Result<(), StatusCode> {
+    let builtins = crate::db::tools::list(db).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    // Builtins own their names, including when a plugin declares the same name.
+    if builtins.iter().any(|tool| tool.name == name) {
+        crate::db::tools::set_enabled(db, name, enabled)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+    } else if plugins.enabled_tools().iter().any(|tool| tool.name == name) {
+        crate::db::tools::set_plugin_tool_enabled(db, name, enabled)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+    } else {
+        Err(StatusCode::NOT_FOUND)
+    }
 }
 
 // ── Memory ───────────────────────────────────────────────────────────────────
@@ -2665,6 +2685,10 @@ async fn handle_vnc_proxy(
 #[cfg(test)]
 #[path = "audio_tests.rs"]
 mod audio_tests;
+
+#[cfg(test)]
+#[path = "tool_tests.rs"]
+mod tool_tests;
 
 #[cfg(test)]
 mod dashboard_tests {

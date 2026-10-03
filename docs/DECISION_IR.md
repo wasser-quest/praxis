@@ -47,7 +47,12 @@ through the dashboard, keeping the other settings:
     "active_state": "working",
     "use_decision_router": false,
     "decision_profile": "off",
-    "done": false
+    "done": false,
+    "activated_tools": [
+      "execute_decision", "inspect_file", "modify_source",
+      "build_workspace", "run_workspace_tests", "agent_complete",
+      "get_context", "read_tool_result"
+    ]
   }
 }
 ```
@@ -73,6 +78,35 @@ Normal calls remain compatible; ask for `execute_decision` explicitly when
 testing IR. In the tool archive, expect `execute_decision` calls with canonical
 capability names inside the receipts. `agent_complete` need not switch
 `active_state` to `done`.
+
+### Diagnose disabled or unavailable IR targets
+
+The runtime's `IR tool ... is disabled or unavailable in the current state`
+error covers both global enable flags and the current state's tool selection.
+An absent schema alone does not prove that a tool is globally disabled.
+
+Check the active runtime's startup log for `Loaded plugin` with
+`name=verified_rust`, `version=1.2.0` and `tools=3`. If the plugin is missing or
+failed to load, update its manifest in the actual `PLUGINS_DIR` and restart
+Praxis. Copying it into a different project's directory does not install it in
+the running process.
+
+In the dashboard's **Tools** tab, enable `execute_decision`, `inspect_file`,
+`agent_complete`, `modify_source`, `build_workspace` and `run_workspace_tests`.
+Plugin tool switches persist in `DATA_DIR/plugin_tools.json`; builtin switches
+persist in `DATA_DIR/tools.json`. A tool flag change takes effect on the next
+request without restarting. Plugin installation or manifest changes require a
+restart because the gateway holds the loaded plugin registry.
+
+Then inspect the **current chat's** saved context: both `sm_file` fields must
+select `verified-implementation`, both state fields must be `working`, and
+`settings.activated_tools` must contain the eight names in the setup example.
+Use bare tool names in that list; `verified_rust/...` is the qualified identity
+for opcode mappings and receipts. In `done`, M/B/T are intentionally unavailable.
+Changing an allow-list cannot install a missing plugin or override a globally
+disabled tool. After correcting setup, start a new task. Inspecting with
+`execute_decision({"ir":"1 R {\"path\":\"src/main.rs\"}"})` can confirm R, but does
+not itself verify access to M/B/T or satisfy implementation completion guards.
 
 The workflow enables both normal capability calls and `execute_decision`.
 Normal `modify_source`, `build_workspace` and `run_workspace_tests` calls use the
