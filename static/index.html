@@ -33,15 +33,19 @@
             <nav class="sidebar" id="sidebar">
                 <div class="sidebar-header"><a class="sidebar-brand" href="https://getpraxis.boo" target="_blank" rel="noopener" aria-label="Praxis website"><img src="/logo.svg" width="32" height="32" alt=""><h2>Praxis</h2></a></div>
                 <ul class="nav-links">
+                    <li class="nav-section" role="presentation">Workspace</li>
                     <li class="active" data-tab="overview">Overview</li>
                     <li data-tab="chat">Chat</li>
+                    <li data-tab="graphs">Graphs</li>
+                    <li data-tab="messages">Messages</li>
+                    <li class="nav-section" role="presentation">Runtime</li>
                     <li data-tab="vm">VM</li>
                     <li data-tab="contexts">Contexts</li>
-                    <li data-tab="messages">Messages</li>
                     <li data-tab="templates">Templates</li>
                     <li data-tab="decision-profiles">Decision Routing</li>
                     <li data-tab="tools">Tools</li>
                     <li data-tab="memory">Memory</li>
+                    <li class="nav-section" role="presentation">Administration</li>
                     <li data-tab="secrets">Secrets</li>
                     <li data-tab="pairings">Pairings</li>
                     <li data-tab="sm-files">Statemachine</li>
@@ -55,6 +59,7 @@
             </nav>
 
             <main class="content">
+                <header class="workspace-heading"><div><span class="eyebrow">PRAXIS / WORKSPACE</span><h1 id="workspace-title">Overview</h1></div><a href="https://getpraxis.boo" target="_blank" rel="noopener" class="workspace-link">getpraxis.boo ↗</a></header>
                 <div id="tab-overview" class="tab active">
                     <h2>Overview</h2>
                     <div class="stats-grid">
@@ -82,6 +87,11 @@
                             <div id="chat-session-list" class="chat-session-list"></div>
                         </div>
                         <div class="chat-main">
+                            <div id="chat-telemetry" class="chat-telemetry" aria-label="Generation and context usage">
+                                <span id="generation-speed">Generation —</span><span id="generation-latency">First output —</span>
+                                <span id="history-budget">History —</span><span id="compaction-budget">Compaction —</span>
+                                <progress id="history-progress" value="0" max="100" aria-label="History budget usage"></progress>
+                            </div>
                             <div id="chat-sm-status" class="sm-status-bar" style="display:none">
                                 <span id="sm-status-file" class="sm-badge">-</span>
                                 <span id="sm-status-state" class="sm-badge">-</span>
@@ -171,13 +181,31 @@
                     <h2>Contexts</h2>
                     <div id="contexts-list" class="data-list"></div>
                 </div>
+                <div id="tab-graphs" class="tab">
+                    <div class="page-intro"><span class="eyebrow">WORKFLOW EXPLORER</span><h2>Follow the decision.</h2><p>States, available actions and verified transitions from the loaded workflow.</p></div>
+                    <div class="graph-toolbar">
+                        <label>Context<select id="graph-user-id" aria-label="Graph context"></select></label>
+                        <label>Workflow<select id="graph-workflow" aria-label="Graph workflow"><option value="">Active workflow</option></select></label>
+                        <button id="graph-refresh" class="btn btn-secondary btn-sm">Refresh</button>
+                        <button id="graph-fit" class="btn btn-secondary btn-sm">Fit</button>
+                        <button id="graph-zoom-in" class="btn btn-secondary btn-sm" aria-label="Zoom in">+</button>
+                        <button id="graph-zoom-out" class="btn btn-secondary btn-sm" aria-label="Zoom out">−</button>
+                    </div>
+                    <div id="graph-status" class="graph-status" aria-live="polite">Select a context to explore its workflow.</div>
+                    <div class="graph-layout">
+                        <div class="graph-stage" id="graph-stage"><svg id="workflow-graph" role="img" aria-label="State machine graph"><title>Workflow graph</title></svg><div class="graph-legend"><span><i class="legend-dot active"></i>Current</span><span><i class="legend-dot visited"></i>Visited</span><span><i class="legend-line"></i>Transition</span><span><i class="legend-line blocked"></i>Blocked / automatic</span></div></div>
+                        <aside id="graph-inspector" class="graph-inspector"><span class="eyebrow">STATE INSPECTOR</span><p>Select a node to see its purpose, IR and outgoing choices.</p></aside>
+                    </div>
+                </div>
                 <div id="tab-messages" class="tab">
                     <h2>Messages</h2>
+                    <p class="page-description">Conversation, actual system prompts, configuration changes and execution evidence in one timeline.</p>
                     <div class="form-group" style="display:flex;gap:0.5rem;align-items:end">
                         <div style="flex:1"><label for="message-user-id">User</label>
                             <select id="message-user-id"><option value="">Select user...</option></select>
                         </div>
                         <button id="load-messages-btn" class="btn btn-primary" style="width:auto">Load</button>
+                        <label class="timeline-filter">Show<select id="message-filter"><option value="all">Everything</option><option value="model">Model calls &amp; prompts</option><option value="changes">Transitions &amp; compaction</option><option value="conversation">Conversation &amp; tools</option></select></label>
                     </div>
                     <div id="messages-list" class="data-list"></div>
                 </div>
@@ -211,7 +239,8 @@
         </div>
     </div>
 
-    <script src="/static/app.js?v=14"></script>
+    <script src="/static/app.js?v=15"></script>
+    <script src="/static/workflow-dashboard.js?v=1"></script>
     <script src="/static/chat-audio.js?v=1"></script>
 </body>
 </html>

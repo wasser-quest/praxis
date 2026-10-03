@@ -10,7 +10,8 @@ fn discovery_is_bounded_task_local_and_respects_disabled_tools() {
     let plugins = crate::plugins::load_all_plugins(std::path::Path::new("plugins"));
     let user = format!("discovery-{}", uuid::Uuid::new_v4());
     let initial = definitions(&db, &plugins, &user).unwrap();
-    assert!(initial.len() <= 13); // existing core plus read_tool_result
+    assert!(initial.len() <= 14); // existing core plus graph back navigation
+    assert!(initial.iter().any(|t| t.function.name == "agent_back"));
     assert!(initial.iter().any(|t| t.function.name == "read_tool_result"));
     assert!(initial.iter().any(|t| t.function.name == "search_tools"));
     assert!(!initial.iter().any(|t| t.function.name == "brave_web_search"));

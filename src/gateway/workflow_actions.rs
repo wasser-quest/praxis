@@ -33,7 +33,7 @@ pub fn plan(root:&Path,original:&Context,input:&str,plugins:&PluginRegistry,chan
         None | Some("standard") => false,
         Some(template) => {
             let workflow = crate::sm::load_file_in(&root.join("contexts"), super::prompt::workflow_name(original)).ok();
-            !workflow.is_some_and(|sm| sm.states.values().any(|s| s.variables.get("settings.system_template").is_some_and(|t| t == template)))
+            !workflow.is_some_and(|sm| sm.is_graph() || sm.states.values().any(|s| s.variables.get("settings.system_template").is_some_and(|t| t == template)))
         }
     };
 

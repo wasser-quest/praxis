@@ -289,8 +289,14 @@ pub(crate) fn get_default_tools() -> Vec<Tool> {
         },
         Tool {
             name: "agent_next".into(),
-            description: Some("Advance to next step".into()),
-            parameters: serde_json::json!({"type":"object","properties":{}}),
+            description: Some("Advance the workflow. In graph mode select an outgoing edge by its stable zero-based index. Omit edge only when exactly one edge is eligible. Pass from_state to reject stale choices. Conditions and receipt guards remain enforced.".into()),
+            parameters: serde_json::json!({"type":"object","properties":{"edge":{"type":"integer","minimum":0},"from_state":{"type":"string"}},"additionalProperties":false}),
+            is_enabled: true,
+        },
+        Tool {
+            name: "agent_back".into(),
+            description: Some("Return to the previously visited graph node in this task. Restores that state's prompt and IR; source changes are not undone. Receipt guards still apply.".into()),
+            parameters: serde_json::json!({"type":"object","properties":{"from_state":{"type":"string"}},"additionalProperties":false}),
             is_enabled: true,
         },
         Tool {

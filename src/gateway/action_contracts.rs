@@ -144,6 +144,10 @@ pub struct VerificationState {
     action_pins: HashMap<String, String>,
     action_calls: HashSet<String>,
     decision_ir: HashMap<String, String>,
+    state_ir: HashMap<String, HashMap<String, String>>,
+    pub(crate) graph_policy: Option<serde_json::Value>,
+    pub(crate) graph_state: Option<String>,
+    pub(crate) navigation_history: Vec<String>,
     workspace_requirements: crate::workspace::Requirements,
 }
 impl VerificationState {
@@ -157,6 +161,8 @@ impl VerificationState {
             && sm.guards.is_empty()
             && sm.action_guards.is_empty()
             && sm.decision_ir.is_empty()
+            && sm.state_ir.is_empty()
+            && !sm.is_graph()
             && sm.workspace.is_empty()
             && self.policy.is_none()
         {
@@ -164,8 +170,9 @@ impl VerificationState {
         }
         let root = root.canonicalize()?;
         anyhow::ensure!(root.is_dir(), "Verification root must be a directory");
+        let graph_policy = if sm.is_graph() || !sm.state_ir.is_empty() { Some(serde_json::to_value(sm)?) } else { None };
         if let Some((name, checks, guards, pinned)) = &self.policy {
-            anyhow::ensure!(name == workflow && checks == &sm.checks && guards == &sm.guards && self.action_guards == sm.action_guards && self.decision_ir == sm.decision_ir && self.workspace_requirements == sm.workspace && pinned == &root,
+            anyhow::ensure!(name == workflow && checks == &sm.checks && guards == &sm.guards && self.action_guards == sm.action_guards && self.decision_ir == sm.decision_ir && self.state_ir == sm.state_ir && self.graph_policy == graph_policy && self.workspace_requirements == sm.workspace && pinned == &root,
                 "Action-contract policy and root are pinned for this task; changes require a new task");
         }
         sm.workspace.check(&root)?;
@@ -173,6 +180,8 @@ impl VerificationState {
             self.task_id = uuid::Uuid::new_v4().to_string();
             self.action_guards = sm.action_guards.clone();
             self.decision_ir = sm.decision_ir.clone();
+            self.state_ir = sm.state_ir.clone();
+            self.graph_policy = graph_policy;
             self.workspace_requirements = sm.workspace.clone();
             self.policy = Some((workflow.into(), sm.checks.clone(), sm.guards.clone(), root));
         }
@@ -318,15 +327,20 @@ pub(crate) fn action_root(user: &str) -> anyhow::Result<PathBuf> {
             })
     })
 }
-pub(crate) fn decision_ir_mapping(user: &str) -> anyhow::Result<HashMap<String, String>> {
+pub(crate) fn decision_ir_mapping_for(
+    user: &str,
+    state: &str,
+) -> anyhow::Result<HashMap<String, String>> {
     task_control::with_verification(user, |ledger| {
+        let mapping = ledger.state_ir.get(state).unwrap_or(&ledger.decision_ir);
         anyhow::ensure!(
-            ledger.policy.is_some() && !ledger.decision_ir.is_empty(),
-            "Decision IR requires a pinned workflow [decision_ir] section"
+            ledger.policy.is_some() && !mapping.is_empty(),
+            "Decision IR requires an enabled opcode table for the active state"
         );
-        Ok(ledger.decision_ir.clone())
+        Ok(mapping.clone())
     })
 }
+
 pub(crate) fn start_action(
     user: &str,
     call: &str,
@@ -479,6 +493,13 @@ pub fn validate_context(before: &Context, after: &Context) -> anyhow::Result<()>
                 super::prompt::workflow_name(after) == workflow,
                 "Guarded workflow cannot be changed during this task"
             );
+            if ledger.graph_policy.as_ref().and_then(|p| p.get("routing")).and_then(|v| v.as_str()) == Some("graph") {
+                if let Some(state) = &ledger.graph_state {
+                    anyhow::ensure!(before.active_state.as_ref() == Some(state) && after.active_state == before.active_state && after.settings.active_state == after.active_state,
+                        "Graph state changes require agent_next or agent_back; external state changes require a new task");
+                }
+                ledger.graph_state = after.active_state.clone();
+            }
             if before.active_state != after.active_state
                 || before.settings.active_state != after.settings.active_state
             {
@@ -511,6 +532,7 @@ pub fn before_tool(user: &str, tool: &str) -> anyhow::Result<()> {
             | "search_skills"
             | "agent_complete"
             | "agent_next"
+            | "agent_back"
             | "agent_feedback"
             | "set_context"
             | "delete_context"
@@ -662,6 +684,9 @@ pub(crate) fn patch_workspace_current(policy: &PatchPolicy, evidence: &[CheckEvi
 }
 
 pub fn instructions(user: &str) -> String {
+    instructions_for(user, "")
+}
+pub fn instructions_for(user: &str, state: &str) -> String {
     let workspace = action_root(user).map(|root| format!(
         "\n[VERIFIED WORKSPACE]\nPinned workspace root: {}. Relative action paths and verification working directories resolve here. ROOT_DIR selects installation assets; WORKSPACE_DIR selects this project. Neither a path found in context nor a guessed subdirectory changes this pinned root.\n", root.display()
     )).unwrap_or_default();
@@ -670,7 +695,63 @@ pub fn instructions(user: &str) -> String {
             Some((_, checks, guards, _)) => format!("\n\n[EXECUTION CONTRACTS]\nAvailable run_check names: {:?}. Required checks by destination (_complete means completion): {:?}. Only runtime receipts authorize these transitions. Run checks after your last mutation. Declared resource changes, including external edits, invalidate evidence; rerun the affected checks. On Unix, any transactional patch or pending-journal recovery for this root invalidates prior receipts across Praxis processes, including checks without resource scopes; rerun all required checks. For controlled host edits use inspect_file to obtain expected_sha256, then apply_patch with edits and named checks. Only a committed patch publishes passing evidence; rolled_back or rollback_conflict means incomplete work. Missing evidence blocks completion; report incomplete work honestly.\n", checks.keys().collect::<Vec<_>>(), guards) + &format!("Required capabilities by destination: {:?}. Only committed, task-owned action receipts authorize these guards; handler claims and compensated failures cannot. Shared workspace changes invalidate action evidence.\n", ledger.action_guards),
             None => String::new(),
         })
-    }).unwrap_or_default() + &super::decision_ir::instructions(user)
+    }).unwrap_or_default() + &super::decision_ir::instructions(user, state)
+}
+
+pub(crate) fn commit_navigation(
+    db: &crate::db::Database,
+    before: &Context,
+    after: &Context,
+    sm: &StateMachine,
+    back: bool,
+    receipt: &serde_json::Value,
+) -> anyhow::Result<()> {
+    let cancel = task_control::cancellation(&before.user_id)
+        .ok_or_else(|| anyhow::anyhow!("Graph navigation requires an active task"))?;
+    task_control::with_verification(&before.user_id, |ledger| {
+        anyhow::ensure!(
+            ledger.graph_policy.as_ref() == Some(&serde_json::to_value(sm)?),
+            "Graph policy changed; start a new task"
+        );
+        anyhow::ensure!(!cancel.is_cancelled(), "Task cancelled");
+        anyhow::ensure!(
+            ledger.graph_state.is_none() || ledger.graph_state == before.active_state,
+            "Graph state changed outside navigation; start a new task"
+        );
+        let target = after
+            .active_state
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("Missing graph target"))?;
+        ledger.require(target)?;
+        if back {
+            anyhow::ensure!(
+                ledger.navigation_history.last().map(String::as_str) == Some(target),
+                "Back destination changed"
+            );
+        } else {
+            anyhow::ensure!(
+                ledger.navigation_history.len() < 512,
+                "Navigation history limit reached"
+            );
+        }
+        anyhow::ensure!(
+            db.compare_and_save_context_with_event(
+                before,
+                after,
+                Some(("state_transition", receipt))
+            )?,
+            "Context changed during navigation; retry with current choices"
+        );
+        if back {
+            ledger.navigation_history.pop();
+        } else {
+            ledger
+                .navigation_history
+                .push(before.active_state.clone().unwrap_or_default());
+        }
+        ledger.graph_state = after.active_state.clone();
+        Ok(())
+    })
 }
 
 pub async fn run(user: &str, call: &str, args: &serde_json::Value) -> anyhow::Result<String> {

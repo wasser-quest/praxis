@@ -1,4 +1,5 @@
 pub mod contexts;
+pub mod execution;
 pub mod cron_jobs;
 pub mod enc2;
 pub mod logs;
@@ -123,6 +124,12 @@ impl Database {
             tx.commit()?;
         }
 
+        if version < 15 {
+            let tx = conn.unchecked_transaction()?;
+            tx.execute_batch(include_str!("../../migrations/015_execution_audit.sql"))?;
+            tx.pragma_update(None, "user_version", 15)?;
+            tx.commit()?;
+        }
         Ok(())
     }
 

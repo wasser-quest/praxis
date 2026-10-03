@@ -95,7 +95,10 @@ pub fn build_anthropic_messages(messages: &[ChatMessage]) -> (String, Vec<serde_
 
     for m in messages {
         if m.role == "system" {
-            system_prompt = m.content.clone().unwrap_or_default();
+            if let Some(content) = m.content.as_deref().filter(|text| !text.is_empty()) {
+                if !system_prompt.is_empty() { system_prompt.push_str("\n\n"); }
+                system_prompt.push_str(content);
+            }
             continue;
         }
         if m.role == "tool" {

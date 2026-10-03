@@ -119,7 +119,7 @@ pub async fn run_agent_loop(
     feedback_tx: Option<tokio::sync::mpsc::UnboundedSender<String>>,
 ) -> anyhow::Result<AgentLoopResult> {
     let _task = crate::gateway::task_control::begin(user_id)?;
-    crate::gateway::prompt::reset_task_completion(&state.db, user_id)?;
+    crate::gateway::prompt::reset_task_completion_in(&state.db, std::path::Path::new(&state.config.root_dir), user_id)?;
     run_agent_loop_in_task(state, user_id, user_message_input, config, feedback_tx).await
 }
 
@@ -431,9 +431,7 @@ role: "system".to_string(),
 
         // Call LLM
         let llm_start = std::time::Instant::now();
-        let response = match state
-            .llm.get()
-            .streaming_chat(request, provider, user_id)
+        let response = match super::telemetry::chat(state, &ctx, request, provider)
             .await
         {
             Ok(r) => {
@@ -507,7 +505,7 @@ role: "system".to_string(),
                     },
                 })
                 .collect();
-            state.db.add_message(
+            let tool_message_id = state.db.add_message(
                 user_id,
                 &crate::db::messages::Message::assistant_with_tool_calls(
                     response.content.clone().unwrap_or_default(),
@@ -604,7 +602,7 @@ role: "system".to_string(),
                 }
 
                 let tool_start_time = chrono::Local::now();
-                let result = execute_tool_call(&state.db, user_id, tc, &state.plugins).await;
+                let result = execute_tool_call_in(std::path::Path::new(&state.config.root_dir), &state.db, user_id, tc, &state.plugins).await;
                 // The tool may have changed settings, state, or custom_data.
                 // Start history/screenshot updates from that fresh snapshot.
                 ctx = state.db.load_context(user_id)?;
@@ -803,6 +801,12 @@ role: "system".to_string(),
                 }
                 tracing::info!(user_id, turn, "Current task explicitly marked complete");
                 completed = true;
+                // A completion opcode stops this loop. Preserve text from this
+                // same response only after its execution guard has passed.
+                if let Some(text) = response.content.as_deref().filter(|text| !text.trim().is_empty()) {
+                    final_response = Some(text.to_string());
+                    final_message_id = Some(tool_message_id);
+                }
                 break;
             }
             continue;
@@ -1036,7 +1040,13 @@ pub async fn generate_compaction_summary(
         &ctx.settings.compaction_summary, compaction_template).await
 }
 
-async fn execute_tool_call(
+#[cfg(test)]
+async fn execute_tool_call(db: &crate::db::Database, user_id: &str, tc: &crate::gateway::llm::provider::ToolCall, plugins: &crate::plugins::PluginRegistry) -> String {
+    execute_tool_call_in(std::path::Path::new("."), db, user_id, tc, plugins).await
+}
+
+async fn execute_tool_call_in(
+    root: &std::path::Path,
     db: &crate::db::Database,
     user_id: &str,
     tc: &ToolCall,
@@ -1294,10 +1304,12 @@ async fn execute_tool_call(
                 Err(e) => format!("Error: {}", e),
             }
         }
-        "agent_next" => crate::tools::agent_control::run(
+        "agent_next" | "agent_back" => crate::tools::agent_control::navigate(
             db,
+            root,
             user_id,
-            crate::tools::agent_control::AgentControlSignal::Next,
+            tc.function.name == "agent_back",
+            &args,
         )
         .await
         .unwrap_or_else(|e| format!("Error: {}", e)),

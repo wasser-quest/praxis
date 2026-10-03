@@ -698,3 +698,106 @@ body.agent-loop-running .agent-badge { animation: agent-pulse 2s ease-in-out inf
     border-radius: 999px;
     padding: 0.15rem 0.6rem;
 }
+/* Workspace shell: editorial hierarchy and a consistent Praxis palette. */
+.workspace-heading { display:flex; justify-content:space-between; align-items:center; gap:24px; padding-bottom:24px; margin-bottom:28px; border-bottom:1px solid var(--border); }
+.workspace-heading h1 { font-family:Georgia,'Times New Roman',serif; font-size:32px; font-weight:500; letter-spacing:-0.8px; margin-top:7px; }
+.eyebrow { font-size:10px; letter-spacing:1.8px; font-weight:700; color:var(--text-secondary); }
+.workspace-link { font-size:12px; color:var(--text-secondary); text-decoration:none; }
+.page-intro h2 { font-family:Georgia,'Times New Roman',serif; font-size:32px; font-weight:500; margin:10px 0; }
+.page-intro p,.page-description { color:var(--text-secondary); font-size:14px; line-height:1.7; margin-bottom:24px; }
+.nav-links li.nav-section { cursor:default; font-size:10px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; padding-top:24px; opacity:0.65; }
+.nav-links li.nav-section:hover { background:transparent; }
+.nav-links li[data-tab] { margin:3px 12px; border-radius:7px; padding:10px 14px; font-size:13px; border-left:3px solid transparent; }
+.nav-links li[data-tab].active { border-left-color:var(--brand-signal); color:var(--text-primary); background:var(--bg-hover); }
+.sidebar-header { padding:28px 24px; }
+.sidebar-header h2 { font-family:Georgia,'Times New Roman',serif; font-weight:500; font-size:27px; }
+.sidebar-footer .btn { font-size:12px; }
+.tab > h2:first-child { display:none; }
+body.chat-tab-active .workspace-heading { display:none; }
+.stats-grid { gap:16px; }
+.stat-card { position:relative; padding:24px; box-shadow:none; }
+.stat-card h3 { font-size:11px; text-transform:uppercase; letter-spacing:1px; }
+.stat-card p { font-size:30px; margin-top:18px; font-weight:500; }
+.data-list { box-shadow:none; }
+.btn { font-weight:600; }
+:focus-visible { outline:2px solid var(--brand-signal); outline-offset:3px; }
+
+/* Graph canvas and inspector. */
+.graph-toolbar { display:flex; align-items:flex-end; gap:10px; flex-wrap:wrap; padding:18px 20px; border:1px solid var(--border); border-radius:12px 12px 0 0; background:var(--bg-card); }
+.graph-toolbar label { display:flex; flex-direction:column; gap:7px; font-size:11px; color:var(--text-secondary); min-width:150px; }
+.graph-toolbar select,.timeline-filter select { padding:9px 12px; background:var(--bg-secondary); color:var(--text-primary); border:1px solid var(--border); border-radius:6px; font-size:12px; max-width:100%; }
+.graph-toolbar label:nth-child(2) { margin-right:auto; }
+.graph-status { padding:12px 20px; color:var(--text-secondary); font:11px/1.6 monospace; background:var(--bg-secondary); border-left:1px solid var(--border); border-right:1px solid var(--border); overflow-wrap:anywhere; }
+.graph-layout { display:grid; grid-template-columns:minmax(0,1fr) 300px; min-height:580px; border:1px solid var(--border); border-radius:0 0 12px 12px; overflow:hidden; }
+.graph-stage { position:relative; min-height:580px; background-color:var(--bg-primary); background-image:radial-gradient(var(--border) 1px,transparent 1px); background-size:20px 20px; overflow:hidden; }
+#workflow-graph { width:100%; height:580px; display:block; touch-action:none; cursor:grab; }
+#workflow-graph:active { cursor:grabbing; }
+#workflow-arrow path { fill:var(--text-secondary); }
+.graph-edge path { stroke:var(--text-secondary); stroke-width:1.4; fill:none; opacity:0.7; }
+.graph-edge.blocked path { stroke-dasharray:5 5; opacity:0.35; }
+.graph-edge.traversed path { stroke:var(--brand-signal); stroke-width:2.5; opacity:1; }
+.graph-edge text { fill:var(--text-secondary); font:10px monospace; paint-order:stroke; stroke:var(--bg-primary); stroke-width:5px; stroke-linejoin:round; }
+.graph-node { cursor:pointer; }
+.graph-node rect { fill:var(--bg-card); stroke:var(--border); stroke-width:1.4; }
+.graph-node circle { fill:var(--text-secondary); }
+.graph-node text { fill:var(--text-primary); }
+.graph-node .node-title { font:600 13px system-ui,sans-serif; }
+.graph-node .node-id { font:10px monospace; fill:var(--text-secondary); }
+.graph-node .node-ir { font:9px monospace; fill:var(--text-secondary); }
+.graph-node.visited rect { stroke:var(--brand-signal); }
+.graph-node.current rect { fill:var(--bg-hover); stroke:var(--success); stroke-width:2; }
+.graph-node.current circle { fill:var(--success); }
+.graph-node.selected rect,.graph-node:focus-visible rect { stroke:var(--brand-signal); stroke-width:3; }
+.graph-node:hover rect { stroke:var(--text-primary); }
+.graph-legend { position:absolute; bottom:15px; left:15px; right:15px; display:flex; flex-wrap:wrap; gap:16px; padding:10px 12px; background:var(--bg-card); border:1px solid var(--border); border-radius:7px; font-size:10px; color:var(--text-secondary); pointer-events:none; }
+.graph-legend span { display:flex; align-items:center; gap:6px; }
+.legend-dot { width:6px; height:6px; border-radius:50%; background:var(--text-secondary); }
+.legend-dot.active { background:var(--success); }.legend-dot.visited { background:var(--brand-signal); }
+.legend-line { width:16px; border-top:1px solid var(--text-secondary); }.legend-line.blocked { border-top-style:dashed; opacity:0.6; }
+.graph-inspector { padding:24px; background:var(--bg-card); border-left:1px solid var(--border); min-width:0; max-height:650px; overflow-y:auto; }
+.graph-inspector h3 { font-family:Georgia,'Times New Roman',serif; font-size:24px; font-weight:500; margin:12px 0 8px; overflow-wrap:anywhere; }
+.graph-inspector h4 { font-size:10px; text-transform:uppercase; letter-spacing:1px; margin:24px 0 12px; }
+.graph-inspector p { color:var(--text-secondary); font-size:12px; line-height:1.6; margin:10px 0; overflow-wrap:anywhere; }
+.graph-inspector code { font-size:11px; color:var(--brand-signal); overflow-wrap:anywhere; }
+.ir-table { display:grid; grid-template-columns:22px minmax(0,1fr); gap:8px; font:11px/1.5 monospace; }
+.ir-table dt { color:var(--brand-signal); font-weight:700; }.ir-table dd { overflow-wrap:anywhere; }
+.edge-choice { padding:12px 0; border-bottom:1px solid var(--border); font-size:11px; }
+.edge-choice > div { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:8px; }
+.state-pill { display:inline-block; padding:3px 6px; border:1px solid var(--border); border-radius:4px; font-size:10px; white-space:nowrap; }
+.state-pill.eligible { color:var(--success); }.state-pill.blocked,.blocked-reason { color:var(--warning); }
+.graph-inspector pre,.audit-card pre { white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word; font:11px/1.6 monospace; max-height:480px; overflow:auto; padding:14px; background:var(--bg-secondary); border:1px solid var(--border); border-radius:6px; margin-top:12px; }
+.graph-inspector details,.audit-card details { margin-top:14px; font-size:12px; }
+details summary { cursor:pointer; color:var(--text-secondary); line-height:1.5; }
+
+/* Audit timeline and live generation strip. */
+#messages-list { background:transparent; border:0; overflow:visible; }
+.timeline-filter { display:flex; flex-direction:column; gap:6px; font-size:11px; color:var(--text-secondary); }
+.timeline-summary { display:flex; flex-direction:column; gap:9px; padding:20px; margin-bottom:20px; border:1px solid var(--border); border-radius:10px; background:var(--bg-card); font-size:12px; color:var(--text-secondary); }
+.timeline-summary strong { color:var(--text-primary); }.timeline-summary small { font-size:10px; line-height:1.6; }
+.audit-card { position:relative; margin:0 0 14px 14px; padding:20px; border:1px solid var(--border); border-radius:10px; background:var(--bg-card); }
+.audit-card::before { content:''; position:absolute; width:7px; height:7px; border-radius:50%; background:var(--brand-signal); left:-18px; top:25px; }
+.audit-card header { display:flex; flex-wrap:wrap; align-items:center; gap:10px; color:var(--text-secondary); font-size:10px; }
+.audit-card header time { margin-left:auto; font:10px monospace; }
+.audit-kind { text-transform:uppercase; letter-spacing:1px; }
+.audit-card h3 { font-size:15px; font-weight:500; margin:15px 0 8px; overflow-wrap:anywhere; }
+.audit-card p { font-size:12px; color:var(--text-secondary); overflow-wrap:anywhere; }
+.audit-metrics { display:flex; flex-wrap:wrap; gap:7px; margin-top:16px; }
+.audit-metrics span { padding:5px 8px; border:1px solid var(--border); border-radius:4px; font-size:10px; color:var(--text-secondary); }
+.conversation-entry::before { background:var(--success); }.audit-event { border-left:3px solid var(--brand-signal); }
+.empty-state { padding:24px; color:var(--text-secondary); font-size:13px; }
+.chat-telemetry { display:flex; flex-wrap:wrap; gap:8px 18px; align-items:center; padding:12px 18px; background:var(--bg-secondary); border-bottom:1px solid var(--border); color:var(--text-secondary); font:10px/1.6 monospace; flex-shrink:0; }
+.chat-telemetry span:first-child { color:var(--success); }
+.chat-telemetry progress { width:70px; height:4px; margin-left:auto; accent-color:var(--success); }
+.chat-telemetry progress.budget-high { accent-color:var(--brand-signal); }
+.saved-usage { display:block; margin-top:6px; font:10px monospace; color:var(--text-secondary); }
+@media (max-width:1100px) { .graph-layout { grid-template-columns:minmax(0,1fr) 260px; }.graph-inspector { padding:18px; } }
+@media (max-width:768px) {
+    .workspace-heading { padding-bottom:16px; margin-bottom:20px; }.workspace-heading h1 { font-size:27px; }.workspace-link { display:none; }
+    .nav-links li.nav-section { display:none; }.nav-links li[data-tab] { margin:0; padding:8px 12px; border-left:0; }
+    .graph-toolbar { padding:14px; gap:8px; }.graph-toolbar label { min-width:0; flex:1 1 40%; }.graph-toolbar label:nth-child(2) { margin-right:0; }
+    .graph-layout { grid-template-columns:1fr; }.graph-stage { min-height:400px; }#workflow-graph { height:400px; }
+    .graph-inspector { border-left:0; border-top:1px solid var(--border); max-height:none; }
+    .graph-legend { gap:8px; font-size:9px; }.audit-card { padding:16px; }.audit-card header time { margin-left:0; }
+    .chat-telemetry { gap:5px 12px; padding:9px 12px; font-size:9px; }.chat-telemetry progress { width:45px; }
+    #tab-messages > .form-group { flex-wrap:wrap; }
+}

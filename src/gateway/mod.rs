@@ -10,6 +10,8 @@ pub mod decision_profiles;
 pub mod decision_client;
 pub mod decision_routing;
 pub mod workflow_actions;
+pub mod workflow_graph;
+pub mod telemetry;
 #[cfg(test)]
 mod workspace_tests;
 #[cfg(test)]

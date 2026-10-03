@@ -2,6 +2,31 @@
 mod tests {
     use super::super::provider::*;
 
+    #[test]
+    fn execution_anthropic_keeps_graph_instructions_before_prompt_change_notice() {
+        let messages: Vec<_> = [
+            ("system", "Graph contract and active IR"),
+            ("user", "Implement"),
+            ("system", "Prompt changed"),
+            ("system", ""),
+        ]
+        .into_iter()
+        .map(|(role, content)| ChatMessage {
+            role: role.into(),
+            content: Some(content.into()),
+            reasoning_content: None,
+            content_parts: None,
+            tool_calls: None,
+            tool_call_id: None,
+            tool_name: None,
+        })
+        .collect();
+        let (system, ordinary) = super::super::anthropic::build_anthropic_messages(&messages);
+        assert_eq!(system, "Graph contract and active IR\n\nPrompt changed");
+        assert_eq!(ordinary.len(), 1);
+        assert_eq!(ordinary[0]["role"], "user");
+    }
+
     // ── OpenAI tool call parsing tests ────────────────────────────────────────
 
     #[test]

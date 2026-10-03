@@ -105,7 +105,7 @@ function showScreen(screenId) {
 
 function showTab(tabId) {
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-    document.querySelectorAll('.nav-links li').forEach(l => l.classList.remove('active'));
+    document.querySelectorAll('.nav-links li[data-tab]').forEach(l => l.classList.remove('active'));
     document.getElementById(`tab-${tabId}`).classList.add('active');
     document.querySelector(`[data-tab="${tabId}"]`).classList.add('active');
 
@@ -116,6 +116,7 @@ function showTab(tabId) {
     content.classList.toggle('chat-expanded', tabId === 'chat');
     sidebar.classList.toggle('collapsed', tabId === 'chat' || sidebarCollapsed);
     updateNavigationButtons();
+    document.getElementById('workspace-title').textContent = document.querySelector(`[data-tab="${tabId}"]`).textContent.trim();
     loadTabData(tabId);
 }
 
@@ -167,6 +168,7 @@ async function loadTabData(tab) {
             case 'secrets': await loadSecrets(); break;
             case 'pairings': await loadPairings(); break;
             case 'sm-files': await loadSmFiles(); break;
+            case 'graphs': await initGraphs(); break;
             case 'cron-jobs': await loadCronJobs(); break;
             case 'messages': await populateUserDropdowns(); break;
             case 'memory': await populateUserDropdowns(); break;
@@ -618,7 +620,7 @@ async function loadChatStatus() {
     const active = await checkAgentActive(uid);
     if (uid !== chatUserId) return;
     updateAgentUI(active);
-    await loadCLStatus();
+    await Promise.all([loadCLStatus(), loadChatBudget(uid)]);
     loadAvatar();
 }
 
@@ -933,6 +935,7 @@ function startChatStream() {
 
     es.addEventListener('assistant_saved', (e) => {
         if (!current()) return;
+        loadChatBudget(uid);
         try {
             const d = JSON.parse(e.data);
             const m = typeof d.data === 'string' ? JSON.parse(d.data) : (d.data || d);
@@ -998,8 +1001,23 @@ function startChatStream() {
         if (!current()) return;
         for (const p of toolPreviews.values()) previewText(p.node, `Tool call — received; execution reported separately\n${p.name}\n${p.args}`);
     });
+    es.addEventListener('generation', (e) => {
+        if (!current()) return;
+        try { const d = JSON.parse(e.data); receiveGeneration(typeof d.data === 'string' ? JSON.parse(d.data) : (d.data || d)); } catch (_) {}
+    });
+    es.addEventListener('compaction', (e) => {
+        if (!current()) return;
+        try { const d = JSON.parse(e.data); const data = typeof d.data === 'string' ? JSON.parse(d.data) : (d.data || d); updateHistoryBudget(data.limits); document.getElementById('compaction-budget').textContent += ' · ' + data.status; } catch (_) {}
+    });
+    es.addEventListener('state_transition', () => {
+        if (!current()) return;
+        loadCLStatus();
+        if (document.getElementById('tab-graphs').classList.contains('active') && document.getElementById('graph-user-id').value === uid) loadGraphs();
+    });
     // Display token usage after each response.
     es.addEventListener('usage', (e) => {
+        if (!current()) return;
+        loadChatBudget(uid);
         try {
             const d = JSON.parse(e.data);
             const data = d.data ? JSON.parse(d.data) : d;
@@ -1183,6 +1201,7 @@ function startChatStream() {
         // EventSource reconnects itself. Closing/recreating it here used to
         // tear down the independent TTS channels and interrupt playback too.
         console.warn('[SSE] connection interrupted; waiting for automatic reconnect');
+        if (current()) document.getElementById('generation-speed').textContent = 'Connection interrupted · reconnecting';
     };
     chatEventSource = es;
     console.log('[SSE] EventSource created, readyState:', es.readyState);
@@ -1542,6 +1561,7 @@ function renderChatMessage(m, autoplayAudio = false, savedMessages = null, termi
     }
     if (m.role === 'system' && m.content && !div) div = addChatMessage('system', m.content);
     chatBindSavedMessage(div, m.id);
+    attachMessageUsage(div, m);
     return div;
 }
 
@@ -2643,7 +2663,7 @@ async function populateUserDropdowns() {
         if (!res.ok) return;
         const data = await res.json();
         const users = (data.contexts || []).map(c => c.user_id).filter(Boolean);
-        for (const selectId of ['message-user-id', 'memory-user-id']) {
+        for (const selectId of ['message-user-id', 'memory-user-id', 'graph-user-id']) {
             const select = document.getElementById(selectId);
             if (!select) continue;
             const current = select.value;
@@ -2655,32 +2675,7 @@ async function populateUserDropdowns() {
 }
 
 async function loadMessages() {
-    const userId = document.getElementById('message-user-id').value;
-    if (!userId) { alert('Please select a User'); return; }
-    const list = document.getElementById('messages-list');
-    list.innerHTML = '<div class="data-item"><span class="name">Loading...</span></div>';
-    try {
-        const res = await apiGet(`/api/messages/${encodeURIComponent(userId)}`);
-        if (!res.ok) { list.innerHTML = `<div class="data-item"><span style="color:var(--error)">Error ${res.status}</span></div>`; return; }
-        const data = await res.json();
-        if (!data.messages || data.messages.length === 0) { list.innerHTML = '<div class="data-item"><span class="name">No messages found</span></div>'; return; }
-        list.innerHTML = data.messages.map(m => {
-            let toolCallsHtml = '';
-            if (m.tool_calls && m.tool_calls.length > 0) {
-                toolCallsHtml = '<div class="tool-calls">' + m.tool_calls.map(tc =>
-                    `<div class="tool-call"><span class="tool-name">${escapeHtml(tc.name)}</span>: <span class="tool-args">${escapeHtml(tc.arguments)}</span></div>`
-                ).join('') + '</div>';
-            }
-            return `<div class="message ${m.role}">
-                <div class="role">${escapeHtml(m.role)}${m.tool_call_id ? ' (tool: ' + escapeHtml(m.tool_call_id) + ')' : ''}</div>
-                ${toolCallsHtml}
-                <div class="content">${escapeHtml(m.content || '')}</div>
-            </div>`;
-        }).join('');
-        const info = document.createElement('div'); info.className = 'data-item';
-        info.innerHTML = `<span class="name">${data.message_count} messages (~${data.total_tokens} tokens)</span>`;
-        list.prepend(info);
-    } catch (err) { list.innerHTML = `<div class="data-item"><span style="color:var(--error)">Error: ${escapeHtml(err.message)}</span></div>`; }
+    return loadExecutionTimeline();
 }
 
 let memoryLoadGeneration = 0;
@@ -3329,8 +3324,10 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     document.getElementById('logout-btn').addEventListener('click', logout);
-    document.querySelectorAll('.nav-links li').forEach(li => {
+    document.querySelectorAll('.nav-links li[data-tab]').forEach(li => {
+        li.setAttribute('role', 'button'); li.tabIndex = 0;
         li.addEventListener('click', () => showTab(li.dataset.tab));
+        li.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showTab(li.dataset.tab); } });
     });
     document.getElementById('load-messages-btn').addEventListener('click', loadMessages);
     document.getElementById('load-memory-btn').addEventListener('click', loadMemory);

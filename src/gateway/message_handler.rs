@@ -20,7 +20,7 @@ pub(crate) async fn handle_message_inner(
     channel_id: Option<&str>,
 ) -> anyhow::Result<String> {
     // A prior agent_complete must not stop this independent task after one tool.
-    crate::gateway::prompt::reset_task_completion(&state.db, user_id)?;
+    crate::gateway::prompt::reset_task_completion_in(&state.db, std::path::Path::new(&state.config.root_dir), user_id)?;
     // Route before deciding the path and before either prompt is rendered.
     let ctx = crate::gateway::prompt::prepare_runtime(state, user_id, content, None, channel_id)?;
 
@@ -145,9 +145,7 @@ role: "system".to_string(),
         ctx.settings.provider.as_deref()
     };
 
-    let mut response = state
-        .llm.get()
-        .streaming_chat(request, provider, user_id)
+    let mut response = super::telemetry::chat(state, &ctx, request, provider)
         .await?;
 
     // Track cumulative usage across tool-call continuations.
@@ -231,7 +229,7 @@ role: "system".to_string(),
                 continue;
             }
 
-            let result = execute_tool_call(&state.db, user_id, tc, &state.plugins).await;
+            let result = execute_tool_call_in(std::path::Path::new(&state.config.root_dir), &state.db, user_id, tc, &state.plugins).await;
             let mut image_content_parts: Option<Vec<serde_json::Value>> = None;
             let mut final_result = result.clone();
 
@@ -373,9 +371,7 @@ role: "system".to_string(),
             thinking: crate::gateway::llm::provider::ThinkingMode::from_setting(&ctx.settings.thinking_mode),
         };
 
-        response = state
-            .llm.get()
-            .streaming_chat(followup_request, ctx.settings.provider.as_deref(), user_id)
+        response = super::telemetry::chat(state, &ctx, followup_request, ctx.settings.provider.as_deref())
             .await?;
         if let Some(ref usage) = response.usage {
             cumulative_prompt_tokens = cumulative_prompt_tokens.saturating_add(usage.prompt_tokens);
@@ -608,7 +604,13 @@ async fn handle_message_agent_loop(
     Ok(reply)
 }
 
-async fn execute_tool_call(
+#[cfg(test)]
+async fn execute_tool_call(db: &crate::db::Database, user_id: &str, tc: &crate::gateway::llm::provider::ToolCall, plugins: &crate::plugins::PluginRegistry) -> String {
+    execute_tool_call_in(std::path::Path::new("."), db, user_id, tc, plugins).await
+}
+
+async fn execute_tool_call_in(
+    root: &std::path::Path,
     db: &crate::db::Database,
     user_id: &str,
     tc: &crate::gateway::llm::provider::ToolCall,
@@ -730,10 +732,12 @@ async fn execute_tool_call(
                 Err(e) => format!("Error: {}", e),
             }
         }
-        "agent_next" => crate::tools::agent_control::run(
+        "agent_next" | "agent_back" => crate::tools::agent_control::navigate(
             db,
+            root,
             user_id,
-            crate::tools::agent_control::AgentControlSignal::Next,
+            tc.function.name == "agent_back",
+            &args,
         )
         .await
         .unwrap_or_else(|e| format!("Error: {}", e)),

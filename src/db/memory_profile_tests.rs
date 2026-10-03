@@ -202,7 +202,7 @@ fn memory_profiles_legacy_upgrade_keeps_ids_and_data_and_is_idempotent() {
         .conn()
         .pragma_query_value(None, "user_version", |r| r.get(0))
         .unwrap();
-    assert_eq!(version, 14); // memory profiles plus durable tool-response snapshots plus message usage
+    assert_eq!(version, 15); // memory profiles, tool-response snapshots, usage and execution audit
     drop(db);
     assert_eq!(
         Database::new(dir.path())

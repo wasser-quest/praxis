@@ -13,6 +13,156 @@ use std::{
 };
 
 #[tokio::test]
+#[ignore = "Requires real POML; graph navigation, source read and models are offline fixtures"]
+async fn state_graph_ir_navigation_rerenders_and_restarts_on_both_paths() {
+    let source = tempfile::Builder::new()
+        .prefix("graph-source-")
+        .tempfile_in(".")
+        .unwrap();
+    std::fs::write(source.path(), "source contents").unwrap();
+    let path = source.path().file_name().unwrap().to_str().unwrap();
+    let workflow = tempfile::Builder::new()
+        .prefix("graph-workflow-")
+        .suffix(".sm")
+        .tempfile_in("contexts")
+        .unwrap();
+    std::fs::write(workflow.path(), "@name \"Offline graph\"\n@routing graph\n@start route\n[state route]\nsettings.system_template = \"standard\"\nsettings.activated_tools = [\"execute_decision\",\"agent_next\",\"agent_back\"]\n[state inspect]\nsettings.system_template = \"standard\"\nsettings.activated_tools = [\"execute_decision\",\"inspect_file\",\"agent_back\"]\n[state done]\nsettings.system_template = \"standard\"\nsettings.activated_tools = [\"execute_decision\",\"agent_complete\"]\n[node inspect]\ndescription = \"Read the real file before choosing again\"\n[transitions]\nroute -> inspect\nroute -> done\n[decision_ir]\nN = agent_next\nK = agent_back\n[decision_ir inspect]\nR = inspect_file\nK = agent_back\n[decision_ir done]\nC = agent_complete").unwrap();
+    for flow in ["message", "agent"] {
+        let ir = |id: &str, instruction: String| {
+            call(
+                id,
+                "execute_decision",
+                serde_json::json!({"ir":instruction}),
+            )
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let mut steps = vec![
+            Step::Reply(reply(
+                None,
+                vec![ir(
+                    "unavailable",
+                    format!("1 R {}", serde_json::json!({"path":path})),
+                )],
+            )),
+            Step::Reply(reply(
+                None,
+                vec![ir(
+                    "next",
+                    "1 N {\"edge\":0,\"from_state\":\"route\"}".into(),
+                )],
+            )),
+            Step::Reply(reply(
+                None,
+                vec![ir(
+                    "read",
+                    format!("1 R {}", serde_json::json!({"path":path})),
+                )],
+            )),
+            Step::Reply(reply(
+                None,
+                vec![ir("back", "1 K {\"from_state\":\"inspect\"}".into())],
+            )),
+            Step::Reply(reply(
+                None,
+                vec![ir(
+                    "finish-node",
+                    "1 N {\"edge\":1,\"from_state\":\"route\"}".into(),
+                )],
+            )),
+            Step::Reply(reply(
+                Some("Graph completed."),
+                vec![ir("complete", "1 C".into())],
+            )),
+        ];
+        // Chat keeps its existing final-summary request; agent mode stops at C.
+        if flow == "message" {
+            steps.push(Step::Reply(reply(Some("Graph completed."), vec![])));
+        }
+        steps.push(Step::Reply(reply(Some("Ready for another task."), vec![])));
+        let (state, user, requests) = fixture(dir.path(), steps);
+        state.db.merge_context(&user,serde_json::json!({"settings.sm_file":workflow.path().file_stem().unwrap().to_str().unwrap(),"settings.max_llm_turns":if flow=="message" {1} else {12},"settings.max_tool_calls":12,"settings.compaction_enabled":false})).unwrap();
+        let response = if flow == "message" {
+            handle_message(&state, &user, "Navigate and inspect.", None)
+                .await
+                .unwrap()
+        } else {
+            crate::gateway::agent_loop::run_agent_loop(
+                &state,
+                &user,
+                "Navigate and inspect.",
+                Default::default(),
+                None,
+            )
+            .await
+            .unwrap()
+            .response
+        };
+        assert!(response.contains("Graph completed"), "{flow}: {response}");
+        assert_eq!(
+            state
+                .db
+                .load_context(&user)
+                .unwrap()
+                .active_state
+                .as_deref(),
+            Some("done")
+        );
+        assert_paired_history(&state, &user, 6);
+        let response = handle_message(&state, &user, "A new task.", None)
+            .await
+            .unwrap();
+        assert!(
+            response.contains("Ready for another task"),
+            "{flow}: {response}"
+        );
+        assert_eq!(
+            state
+                .db
+                .load_context(&user)
+                .unwrap()
+                .active_state
+                .as_deref(),
+            Some("route")
+        );
+        let requests = requests.lock().unwrap();
+        let request_count = if flow == "message" { 8 } else { 7 };
+        assert_eq!(requests.len(), request_count, "{flow}");
+        let system = |turn: usize| requests[turn].messages[0].content.as_deref().unwrap();
+        assert!(system(0).contains("Current node: route"));
+        assert!(system(0).contains("Read the real file before choosing again"));
+        assert!(system(2).contains("Current node: inspect"));
+        assert!(system(2).contains("R=inspect_file"));
+        assert!(!system(4).contains("R=inspect_file"));
+        assert!(system(5).contains("C=agent_complete"));
+        assert!(system(request_count - 1).contains("Current node: route"));
+        let read = requests[3]
+            .messages
+            .iter()
+            .find(|m| m.tool_call_id.as_deref() == Some("read"))
+            .unwrap();
+        assert!(read
+            .content
+            .as_deref()
+            .unwrap()
+            .contains(&crate::tools::apply_patch::hash(b"source contents")));
+        let events = state.db.execution_events(&user, 100).unwrap();
+        assert_eq!(
+            events
+                .iter()
+                .filter(|e| e["kind"] == "state_transition")
+                .count(),
+            3
+        );
+        assert_eq!(
+            events.iter().filter(|e| e["kind"] == "model_call").count(),
+            request_count
+        );
+    }
+    workflow.close().unwrap();
+    source.close().unwrap();
+}
+
+#[tokio::test]
 #[ignore = "Requires the real Microsoft POML CLI; Decision HTTP and main model are scripted"]
 async fn decision_routing_rerenders_before_chat_and_agent_requests() {
     use wiremock::{Mock,MockServer,ResponseTemplate,matchers::method};
@@ -662,20 +812,42 @@ async fn tool_output_model_controls_all_three_loops_and_default_is_full_without_
 #[tokio::test]
 #[ignore = "Requires Node and POML_CLI; provider and all inputs are synthetic"]
 async fn tool_chain_skill_then_reference_then_action_reaches_final_answer() {
+    // Keep the skill contract and its reference controlled by this fixture;
+    // shipped skills can have different required inputs and reference files.
+    let skill_dir = tempfile::Builder::new()
+        .prefix("tool-chain-")
+        .tempdir_in("skills")
+        .unwrap();
+    let skill_name = skill_dir.path().file_name().unwrap().to_str().unwrap();
+    std::fs::create_dir(skill_dir.path().join("references")).unwrap();
+    std::fs::write(
+        skill_dir.path().join("skill.json"),
+        serde_json::json!({
+            "name": skill_name,
+            "description": "Offline tool-chain fixture",
+            "required_parameters": ["user_request"]
+        })
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        skill_dir.path().join("skill.poml"),
+        "<poml><task>{{user_request}}. Read references/STYLE_GUIDE.md before writing the requested artifact.</task></poml>",
+    )
+    .unwrap();
+    let reference = skill_dir.path().join("references/STYLE_GUIDE.md");
+    std::fs::write(&reference, "SYNTHETIC_STYLE_RULE: use clear names.").unwrap();
     for max_turns in [None, Some(5)] {
         for with_history in [false, true] {
             let dir = tempfile::tempdir().unwrap();
             let output = dir.path().join("synthetic-artifact.txt");
-            let reference = std::env::current_dir()
-                .unwrap()
-                .join("skills/code_review/references/STYLE_GUIDE.md");
             let steps = vec![
                 Step::Reply(reply(
                     None,
                     vec![call(
                         "skill",
                         "use_skill",
-                        serde_json::json!({"name":"code_review","parameters":{"user_request":"offline synthetic inspection"}}),
+                        serde_json::json!({"name":skill_name,"parameters":{"user_request":"offline synthetic inspection"}}),
                     )],
                 )),
                 Step::Reply(reply(
@@ -726,16 +898,16 @@ async fn tool_chain_skill_then_reference_then_action_reaches_final_answer() {
                     "current tool results lost at continuation {i}"
                 );
             }
-            assert!(requests[1].messages.iter().any(|m| m.role == "tool"
+            assert!(requests[1].messages.iter().any(|m| m.tool_call_id.as_deref() == Some("skill")
                 && m.content
                     .as_deref()
                     .unwrap_or("")
-                    .contains("references/format-cheatsheet.md")));
+                    .contains("references/STYLE_GUIDE.md")));
             assert!(requests[2]
                 .messages
                 .iter()
                 .any(|m| m.tool_call_id.as_deref() == Some("reference")
-                    && !m.content.as_deref().unwrap_or("").starts_with("Error:")));
+                    && m.content.as_deref().unwrap_or("").contains("SYNTHETIC_STYLE_RULE")));
         }
     }
 }

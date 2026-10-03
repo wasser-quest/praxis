@@ -1,5 +1,6 @@
 pub mod routes;
 pub mod decision_profiles;
+pub mod graphs;
 pub mod stream;
 
 use std::net::IpAddr;

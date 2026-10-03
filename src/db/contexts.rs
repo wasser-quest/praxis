@@ -596,6 +596,12 @@ impl Database {
     /// Atomic commit after an asynchronous routing decision. Never changes the
     /// active-session pointer or overwrites a concurrent user edit.
     pub fn compare_and_save_context(&self, expected: &Context, next: &Context) -> anyhow::Result<bool> {
+        self.compare_and_save_context_with_event(expected, next, None)
+    }
+
+    /// The navigation record and context share one transaction: audit failure
+    /// must never report a failed transition after the state was committed.
+    pub(crate) fn compare_and_save_context_with_event(&self, expected: &Context, next: &Context, event: Option<(&str, &serde_json::Value)>) -> anyhow::Result<bool> {
         anyhow::ensure!(expected.user_id==next.user_id && expected.session_id==next.session_id,"Routing must preserve user/session identity");
         let mut conn=self.conn();let tx=conn.transaction()?;
         let raw:String=tx.query_row("SELECT data FROM contexts WHERE user_id=?1",[&expected.user_id],|r|r.get(0))?;
@@ -606,6 +612,9 @@ impl Database {
         let current=decode_context(&raw)?;
         if serde_json::to_value(current)?!=serde_json::to_value(expected)? {return Ok(false);}
         tx.execute("UPDATE contexts SET data=?2,updated_at=datetime('now') WHERE user_id=?1",rusqlite::params![key,serde_json::to_string(next)?])?;
+        if let Some((kind, payload)) = event {
+            super::execution::insert_event(&tx, next, kind, payload, None)?;
+        }
         tx.commit()?;Ok(true)
     }
 

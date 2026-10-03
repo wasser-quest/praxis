@@ -237,6 +237,13 @@ fn build_registry() -> Vec<ToolMeta> {
             default_enabled: true,
         },
         ToolMeta {
+            name: "agent_back",
+            description: "Return to the previously visited graph node",
+            category: ToolCategory::AgentControl,
+            params_schema: canonical_tool("agent_back").map(|tool| tool.parameters.clone()).unwrap_or_else(|| json!({"type":"object","properties":{}})),
+            default_enabled: true,
+        },
+        ToolMeta {
             name: "agent_feedback",
             description: "Send progress feedback message",
             category: ToolCategory::AgentControl,
@@ -998,6 +1005,8 @@ fn agent_next_schema() -> serde_json::Value {
     json!({
         "type": "object",
         "properties": {
+            "edge": {"type": "integer", "minimum": 0, "description": "Declared outgoing edge index in graph mode"},
+            "from_state": {"type": "string", "description": "Reject navigation if the current state has changed"},
             "_output": {"$ref": "#/components/schemas/OutputSelection"}
         }
     })

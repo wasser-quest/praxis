@@ -14,7 +14,7 @@ const MAX_IR_BYTES: usize = 2 * 1024 * 1024;
 pub(crate) fn valid_mapping(op: &str, target: &str) -> bool {
     op.len() == 1
         && op.as_bytes()[0].is_ascii_uppercase()
-        && (matches!(target, "inspect_file" | "agent_complete")
+        && (matches!(target, "inspect_file" | "agent_complete" | "agent_next" | "agent_back")
             || target.split_once('/').is_some_and(|(plugin, tool)| {
                 crate::plugins::contracts::identifier(plugin)
                     && crate::plugins::contracts::identifier(tool)
@@ -96,7 +96,8 @@ pub(crate) fn resolve(
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("IR must be a string"))?,
     )?;
-    let mappings = action_contracts::decision_ir_mapping(user)?;
+    let ctx = db.load_context(user)?;
+    let mappings = action_contracts::decision_ir_mapping_for(user, ctx.active_state.as_deref().unwrap_or(""))?;
     let target = mappings
         .get(&op)
         .ok_or_else(|| anyhow::anyhow!("Opcode {op} is not declared by this workflow"))?;
@@ -112,12 +113,11 @@ pub(crate) fn resolve(
         name
     } else {
         anyhow::ensure!(
-            matches!(target.as_str(), "inspect_file" | "agent_complete"),
+            matches!(target.as_str(), "inspect_file" | "agent_complete" | "agent_next" | "agent_back"),
             "Unsupported IR target"
         );
         target.as_str()
     };
-    let ctx = db.load_context(user)?;
     let definitions = crate::tools::registry::build_tool_definitions_for_user(
         &ctx.settings,
         Some(&plugins.tool_definitions()),
@@ -157,8 +157,8 @@ pub fn definition() -> crate::db::tools::Tool {
     }
 }
 
-pub(crate) fn instructions(user: &str) -> String {
-    let Ok(mapping) = action_contracts::decision_ir_mapping(user) else {
+pub(crate) fn instructions(user: &str, state: &str) -> String {
+    let Ok(mapping) = action_contracts::decision_ir_mapping_for(user, state) else {
         return String::new();
     };
     let mut entries: Vec<_> = mapping

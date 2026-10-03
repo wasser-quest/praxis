@@ -20,7 +20,7 @@ core_files = [read_file, write_file, edit_file]
 core_terminal = [execute_terminal, core_files]
 coding = [core_terminal, search_tools]
 # Discovery must stay callable even in narrow states (e.g. teach needs memory).
-agent_basic = [agent_complete, agent_next, agent_feedback, search_tools, search_skills, use_skill, read_tool_result]
+agent_basic = [agent_complete, agent_next, agent_back, agent_feedback, search_tools, search_skills, use_skill, read_tool_result]
 context = [get_context, set_context, read_tool_result]
 memory = [memory_get, memory_set, learn_fact, learn_preference, learn_topic]
 discovery = [search_tools, search_skills]

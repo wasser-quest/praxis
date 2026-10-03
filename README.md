@@ -22,7 +22,9 @@ Run agents on your own machine, with your chosen models and explicit workflows. 
 - **State machines (.sm)**: File-driven roles, prompts, tool access and guarded transitions
 - **Decision router**: Select declared states with a configurable probability threshold, including Ollama System One
 - **Verified execution**: Opt-in action contracts, pre/postcondition checks, transactional source edits and task-owned receipts
-- **Decision IR**: Compact instructions mapped to trusted capabilities; [verified Rust workflow and setup](docs/DECISION_IR.md)
+- **Decision IR**: Compact instructions mapped to trusted capabilities, with an opcode table per state; [verified Rust setup](docs/DECISION_IR.md)
+- **Workflow graphs**: Indexed `agent_next`, task-owned `agent_back`, verified transitions and a dashboard graph explorer; [branching example and setup](docs/WORKFLOW_GRAPHS.md)
+- **Execution timeline**: Actual system prompts, prompt/context changes, receipts, token budgets and generation metrics in the dashboard
 - **Voice**: STT (Vosk/Whisper/ElevenLabs) + TTS (SAPI/ElevenLabs/Qwen)
 - **RAG**: Vector store with embedding search
 - **Cron Jobs**: Scheduled agent tasks
