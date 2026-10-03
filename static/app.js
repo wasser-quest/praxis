@@ -657,7 +657,7 @@ function loadAvatar() {
     const key = (chatUsername && chatUsername !== 'User') ? chatUsername : chatUserId;
     img.src = `/api/avatar/${encodeURIComponent(key)}?t=${Date.now()}`;
     img.style.display = '';
-    img.onerror = () => { img.src = '/logo.png'; };
+    img.onerror = () => { img.onerror = null; img.src = '/logo.svg'; };
 }
 
 async function chatStartAgent() {
@@ -757,7 +757,7 @@ function addChatQuestionCard(questionId, text, suggestions) {
 
     card.innerHTML = `<div class="msg-row">
         <div class="msg-col">
-            <img class="msg-avatar" src="/logo.png" alt="" style="border-color:var(--accent-purple)" onerror="this.src='/logo.png'">
+            <img class="msg-avatar" src="/logo.svg" alt="" style="border-color:var(--accent-purple)" onerror="this.onerror=null;this.src='/logo.svg'">
             <span class="msg-label">Question</span>
         </div>
         <div class="msg-content">
@@ -1041,7 +1041,7 @@ function startChatStream() {
                     const botName = chatBotName || 'Praxis';
                     streamMsg.innerHTML = `<div class="msg-row">
                         <div class="msg-col">
-                            <img class="msg-avatar" src="${botAvatar}" alt="" style="border-color:var(--accent-purple)" onerror="this.src='/logo.png'" onclick="showAvatarModal('bot')">
+                            <img class="msg-avatar" src="${botAvatar}" alt="" style="border-color:var(--accent-purple)" onerror="this.onerror=null;this.src='/logo.svg'" onclick="showAvatarModal('bot')">
                             <span class="msg-label">${escapeHtml(botName)}</span>
                         </div>
                         <div class="msg-content markdown stream-live"></div>
@@ -1592,7 +1592,7 @@ function addChatMessage(type, content, extra = null) {
     if (type === 'user') {
         div.innerHTML = `<div class="msg-row">
             <div class="msg-col">
-                <img class="msg-avatar" src="${userAvatar}" alt="" onerror="this.src='/logo.png'" onclick="showAvatarModal('user')">
+                <img class="msg-avatar" src="${userAvatar}" alt="" onerror="this.onerror=null;this.src='/logo.svg'" onclick="showAvatarModal('user')">
                 <span class="msg-label">${escapeHtml(userName)}</span>
             </div>
             <div class="msg-content">${escapeHtml(content)}</div>
@@ -1600,7 +1600,7 @@ function addChatMessage(type, content, extra = null) {
     } else if (type === 'assistant') {
         div.innerHTML = `<div class="msg-row">
             <div class="msg-col">
-                <img class="msg-avatar" src="${botAvatar}" alt="" style="border-color:var(--accent-purple)" onerror="this.src='/logo.png'" onclick="showAvatarModal('bot')">
+                <img class="msg-avatar" src="${botAvatar}" alt="" style="border-color:var(--accent-purple)" onerror="this.onerror=null;this.src='/logo.svg'" onclick="showAvatarModal('bot')">
                 <span class="msg-label">${escapeHtml(botName)}</span>
             </div>
             <div class="msg-content markdown">${renderMarkdown(content)}</div>
@@ -1609,7 +1609,7 @@ function addChatMessage(type, content, extra = null) {
         const args = extra || '';
         div.innerHTML = `<div class="msg-row">
             <div class="msg-col">
-                <img class="msg-avatar" src="${botAvatar}" alt="" style="border-color:var(--accent-cyan)" onerror="this.src='/logo.png'" onclick="showAvatarModal('bot')">
+                <img class="msg-avatar" src="${botAvatar}" alt="" style="border-color:var(--accent-cyan)" onerror="this.onerror=null;this.src='/logo.svg'" onclick="showAvatarModal('bot')">
                 <span class="msg-label">Tool</span>
             </div>
             <div class="msg-content">${content}${args ? `<div class="tool-out">${escapeHtml(args)}</div>` : ''}</div>
@@ -1638,7 +1638,7 @@ function addChatImage(path, caption) {
     const botName = chatBotName || 'Praxis';
     div.innerHTML = `<div class="msg-row">
         <div class="msg-col">
-            <img class="msg-avatar" src="${botAvatar}" alt="" style="border-color:var(--accent-purple)" onerror="this.src='/logo.png'" onclick="showAvatarModal('bot')">
+            <img class="msg-avatar" src="${botAvatar}" alt="" style="border-color:var(--accent-purple)" onerror="this.onerror=null;this.src='/logo.svg'" onclick="showAvatarModal('bot')">
             <span class="msg-label">${escapeHtml(botName)}</span>
         </div>
         <div class="msg-content">
@@ -3249,7 +3249,7 @@ function showAvatarModal(which) {
     overlay.innerHTML = `
         <div class="modal avatar-modal">
             <h3>${escapeHtml(name)} Avatar</h3>
-            <img id="avatar-current-preview" class="avatar-preview" src="${imgUrl}" alt="" onerror="this.src='/logo.png'">
+            <img id="avatar-current-preview" class="avatar-preview" src="${imgUrl}" alt="" onerror="this.onerror=null;this.src='/logo.svg'">
             <img id="avatar-new-preview" class="avatar-preview" src="" alt="New avatar" style="display:none;margin-top:0.5rem">
             <input type="file" id="avatar-upload-input" accept="image/*" style="display:none" onchange="handleAvatarFileSelect(this, '${which}')">
             <button class="btn btn-primary" style="margin-top:1rem" onclick="document.getElementById('avatar-upload-input').click()">Upload Photo</button>

@@ -18,9 +18,9 @@ const complete = [{ id: 'complete', name: 'agent_complete', arguments: '{}' }];
 function json(res, data, status = 200) { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(data)); }
 const server = http.createServer((req, res) => {
     const p = new URL(req.url, 'http://127.0.0.1').pathname;
-    if (p === '/' || p.startsWith('/static/') || p.startsWith('/api/avatar/') || p === '/logo.png') {
+    if (p === '/' || p.startsWith('/static/') || p.startsWith('/api/avatar/') || ['/logo.svg', '/logo.png'].includes(p)) {
         const name = p === '/' ? 'index.html' : p.startsWith('/api/avatar/') ? 'logo.png' : path.basename(p);
-        res.writeHead(200, { 'content-type': { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png' }[path.extname(name)] || 'application/octet-stream' });
+        res.writeHead(200, { 'content-type': { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.svg': 'image/svg+xml' }[path.extname(name)] || 'application/octet-stream' });
         return res.end(fs.readFileSync(path.join(root, name)));
     }
     if (p === '/api/status') return json(res, { version: 'history-fixture' });

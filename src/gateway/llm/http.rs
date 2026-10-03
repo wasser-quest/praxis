@@ -7,7 +7,7 @@ use std::time::{Duration, SystemTime};
 pub fn client() -> reqwest::Client {
     // Connect timeout is separate from the configurable end-to-end attempt
     // deadline in the router. No fixed 30-second completion/read timeout.
-    let builder = reqwest::Client::builder()
+    let builder = crate::branding::client_builder()
         .connect_timeout(Duration::from_secs(10))
         .retry(reqwest::retry::never());
     // reqwest 0.12.28 otherwise sets a 30s TCP_USER_TIMEOUT on Linux.

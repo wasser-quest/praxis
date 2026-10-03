@@ -573,7 +573,7 @@ async fn handler(
         PluginHandler::Verification(_) => Ok(serde_json::json!({"requested":true})),
         PluginHandler::SourceEdit(_) => Err("handler_failed"), // native transaction dispatch only
         PluginHandler::Http { url, method } => {
-            let client = reqwest::Client::builder()
+            let client = crate::branding::client_builder()
                 .redirect(reqwest::redirect::Policy::none())
                 .build()
                 .map_err(|_| "handler_failed")?;

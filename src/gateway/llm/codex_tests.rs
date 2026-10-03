@@ -71,6 +71,18 @@ async fn codex_crlf_and_unicode_streams() {
 }
 
 #[tokio::test]
+async fn branding_codex_identifies_praxis_and_preserves_subscription_protocol() {
+    let server = MockServer::start().await;
+    stream(&server, COMPLETE).await;
+    provider(&server).chat(request()).await.unwrap();
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(requests[0].headers["user-agent"],
+        concat!("Praxis/", env!("CARGO_PKG_VERSION"), " (+https://getpraxis.boo)"));
+    assert_eq!(requests[0].headers["originator"], "praxis");
+    assert_eq!(requests[0].headers["authorization"], "Bearer access");
+}
+
+#[tokio::test]
 async fn codex_requires_terminal_success_and_valid_json() {
     for (text, kind) in [
         ("data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n", ErrorKind::Interrupted),

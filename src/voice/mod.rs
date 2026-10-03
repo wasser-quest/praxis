@@ -318,7 +318,7 @@ pub mod elevenlabs_stt {
         pub fn new(api_key: String) -> Self {
             Self {
                 api_key,
-                client: Client::new(),
+                client: crate::branding::client(),
                 base_url: "https://api.elevenlabs.io".to_string(),
             }
         }
@@ -328,7 +328,7 @@ pub mod elevenlabs_stt {
             Self {
                 api_key,
                 base_url,
-                client: Client::builder().no_proxy().build().unwrap(),
+                client: crate::branding::client_builder().no_proxy().build().unwrap(),
             }
         }
 
@@ -590,7 +590,7 @@ pub mod tts {
                 Self {
                     api_key,
                     voice_id,
-                    client: Client::new(),
+                    client: crate::branding::client(),
                     base_url: "https://api.elevenlabs.io".to_string(),
                 }
             }
@@ -601,7 +601,7 @@ pub mod tts {
                     api_key,
                     voice_id,
                     base_url,
-                    client: Client::builder().no_proxy().build().unwrap(),
+                    client: crate::branding::client_builder().no_proxy().build().unwrap(),
                 }
             }
 
@@ -761,7 +761,7 @@ pub mod tts {
                     api_key,
                     voice_id,
                     model,
-                    client: Client::new(),
+                    client: crate::branding::client(),
                 }
             }
 
@@ -891,10 +891,10 @@ pub mod tts {
                     server_url,
                     language,
                     speaker,
-                    client: Client::builder()
+                    client: crate::branding::client_builder()
                         .timeout(std::time::Duration::from_secs(120))
                         .build()
-                        .unwrap_or_else(|_| Client::new()),
+                        .unwrap_or_else(|_| crate::branding::client()),
                 }
             }
 
@@ -1157,7 +1157,7 @@ pub mod tts {
                     model,
                     base_url: base_url
                         .unwrap_or_else(|| "https://api.xiaomimimo.com/v1".to_string()),
-                    client: Client::new(),
+                    client: crate::branding::client(),
                 }
             }
 
@@ -1336,7 +1336,7 @@ pub mod tts {
                     server_url,
                     model_path,
                     index_path,
-                    client: Client::new(),
+                    client: crate::branding::client(),
                 }
             }
 

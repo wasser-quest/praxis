@@ -22,9 +22,9 @@ function json(res, data, status = 200) { res.writeHead(status, { 'content-type':
 const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1');
     const p = url.pathname;
-    if (p === '/' || p.startsWith('/static/') || p.startsWith('/api/avatar/') || p === '/logo.png') {
+    if (p === '/' || p.startsWith('/static/') || p.startsWith('/api/avatar/') || ['/logo.svg', '/logo.png'].includes(p)) {
         const name = p === '/' ? 'index.html' : p.startsWith('/api/avatar/') ? 'logo.png' : path.basename(p);
-        res.writeHead(200, { 'content-type': { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png' }[path.extname(name)] || 'application/octet-stream' });
+        res.writeHead(200, { 'content-type': { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.svg': 'image/svg+xml' }[path.extname(name)] || 'application/octet-stream' });
         res.end(fs.readFileSync(path.join(root, name))); return;
     }
     if (p === '/api/status') return json(res, { version: 'terminal-fixture' });

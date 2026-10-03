@@ -229,7 +229,7 @@ class Client:
 
         def perform():
             try:
-                request = urllib.request.Request(url, body, {**self.headers, "Content-Type": content_type}, method=method)
+                request = urllib.request.Request(url, body, {"User-Agent": "Praxis (+https://getpraxis.boo)", **self.headers, "Content-Type": content_type}, method=method)
                 with self.opener.open(request, timeout=min(30, remaining)) as response:
                     length = response.headers.get("Content-Length", "")
                     if length.isdecimal() and (len(length) > 12 or int(length) > limit):

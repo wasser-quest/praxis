@@ -145,7 +145,7 @@ async fn generate_image(args: &serde_json::Value) -> anyhow::Result<String> {
     let width = args["width"].as_u64().unwrap_or(1024) as u32;
     let height = args["height"].as_u64().unwrap_or(1024) as u32;
 
-    let client = reqwest::Client::new();
+    let client = crate::branding::client();
     let url = "https://api.minimax.chat/v1/text/image";
 
     let request = serde_json::json!({
@@ -207,7 +207,7 @@ async fn analyze_image(args: &serde_json::Value) -> anyhow::Result<String> {
         .as_str()
         .unwrap_or("Describe this image in detail");
 
-    let client = reqwest::Client::new();
+    let client = crate::branding::client();
     let url = "https://api.minimax.chat/v1/text/chatcompletion_v2";
 
     let request = serde_json::json!({

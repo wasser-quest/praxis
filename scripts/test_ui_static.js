@@ -11,9 +11,10 @@ const js = fs.readFileSync(path.join(root, 'static/app.js'), 'utf8');
 
 assert(html.includes('href="/favicon.ico"'), 'index must use /favicon.ico');
 assert(html.includes('href="/apple-touch-icon.png"'), 'index must use /apple-touch-icon.png');
-assert(html.includes('src="/logo.png"'), 'branding must reference /logo.png');
-assert(!html.includes('/logo.svg'), 'index should not reference legacy logo.svg');
-assert(!js.includes('/logo.svg'), 'app fallbacks should not reference legacy logo.svg');
+assert(html.includes('src="/logo.svg"'), 'branding must reference the editable SVG master');
+assert(!html.includes('/logo.png') && !js.includes('/logo.png'), 'dashboard fallbacks must use the SVG master');
+assert(js.includes("this.onerror=null;this.src='/logo.svg'"), 'failed custom avatars need a bounded brand fallback');
+assert(fs.readFileSync(path.join(root, 'static/logo.svg')).equals(fs.readFileSync(path.join(root, 'homepage/assets/logo.svg'))), 'homepage and dashboard must share one logo');
 
 assert(/function\s+contextSmFile\s*\(ctx\)\s*{\s*return ctx\?\.sm_file \|\| ctx\?\.cl_file \|\| '';/s.test(js),
   'UI must prefer canonical sm_file while retaining cl_file fallback');

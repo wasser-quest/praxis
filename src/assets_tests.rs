@@ -30,11 +30,18 @@ fn onboarding_assets_install_every_bundled_file_and_executable() {
     }
     for name in [
         "contexts/standard.sm",
+        "contexts/verified-implementation.sm",
+        "contexts/verified-capabilities.sm",
+        "templates/verified-implementation.poml",
+        "examples/plugins/verified-rust/plugin.json",
+        "docs/DECISION_IR.md",
+        "docs/BRANDING.md",
         "templates/standard.poml",
         "templates/user.poml",
         "templates/blueprints/standard.json",
         "templates/shared/runtime.poml",
         "static/logo.png",
+        "static/logo.svg",
         "static/favicon.ico",
         "static/chat-audio.js",
         "plugins/brave_search/plugin.json",
@@ -231,13 +238,14 @@ async fn onboarding_assets_first_message_and_active_skill_render_from_fresh_inst
         ..Default::default()
     };
     let plugins = crate::plugins::PluginRegistry::new();
-    for (input, selected, expected) in [
-        ("FIRST_INPUT_SENTINEL", None, "standard"),
+    for (input, selected_role, expected) in [
+        ("FIRST_INPUT_SENTINEL", None, "states/standard/standard"),
         // Role decisions are model/user context updates, not keyword switches.
-        ("Be a language instructor", None, "standard"),
-        ("SELECTED_ROLE_SENTINEL", Some("language_instructor"), "language_instructor"),
+        ("Be a language instructor", None, "states/standard/standard"),
+        ("SELECTED_ROLE_SENTINEL", Some("teach"), "states/teach/teach"),
     ] {
-        ctx.settings.system_template = selected.map(String::from);
+        ctx.settings.system_template = None;
+        ctx.sm_data["role"] = serde_json::json!(selected_role);
         crate::gateway::prompt::route_context(dir.path(), &mut ctx, input, &plugins, None).unwrap();
         db.save_context(&ctx).unwrap();
         let value =
@@ -253,7 +261,11 @@ async fn onboarding_assets_first_message_and_active_skill_render_from_fresh_inst
             )
             .await
             .unwrap();
-            assert!(text.contains(input));
+            assert!(!text.trim().is_empty(), "empty installed template: {name}");
+            // Current state prompts use runtime_minimal; user input is rendered separately.
+            if name == "user" {
+                assert!(text.contains(input));
+            }
         }
     }
     ctx.settings.active_skill = Some("poml_templates".into());

@@ -17,6 +17,10 @@ enum Cli {
         /// Disable dashboard
         #[arg(long)]
         no_dashboard: bool,
+        /// Prepared project root for verified actions (overrides WORKSPACE_DIR).
+        /// Relative paths resolve from ROOT_DIR, not the executable directory.
+        #[arg(long, value_name = "PROJECT")]
+        workspace_dir: Option<PathBuf>,
     },
     /// Pair a Discord user with a pairing code
     Pair {
@@ -446,7 +450,8 @@ async fn run() -> anyhow::Result<()> {
             password,
             no_discord,
             no_dashboard,
-        } => run_services(password, !no_discord, !no_dashboard).await,
+            workspace_dir,
+        } => run_services(password, !no_discord, !no_dashboard, workspace_dir).await,
         Cli::Pair { code } => pair_command(&code).await,
         Cli::Onboard { interactive: true } => praxis::onboard::run_interactive_onboard(),
         Cli::Onboard { interactive: false } => {
@@ -472,6 +477,7 @@ async fn run_services(
     cli_password: Option<String>,
     enable_discord: bool,
     enable_dashboard: bool,
+    workspace_dir: Option<PathBuf>,
 ) -> anyhow::Result<()> {
     // Master-Key-Zustellung. Reihenfolge = Expositionsrisiko aufsteigend:
     //   1. MASTER_KEY_FILE (Container-Standard: Root-Entrypoint kopiert den
@@ -614,9 +620,15 @@ async fn run_services(
 
     // Build config, overriding sensitive fields from secrets if available
     let mut config = praxis::config::Config::from_env();
+    if let Some(project) = workspace_dir {
+        config.workspace_dir = Some(project.into_os_string().into_string()
+            .map_err(|_| anyhow::anyhow!("--workspace-dir must be a UTF-8 project path"))?);
+    }
     config.apply_secrets(&secrets);
     config.ensure_generated();
     config.validate()?;
+    let workspace = config.workspace_root()?;
+    tracing::info!(root = %workspace.display(), "Verified action workspace selected");
     // Fail before starting VMs/Discord when the selected provider is missing.
     praxis::gateway::llm::LLMRouter::new(&config, &secrets).validate_configuration()?;
 
@@ -1626,6 +1638,12 @@ mod tests {
         let args = vec!["praxis", "run"];
         let cli = Cli::try_parse_from(args).unwrap();
         assert!(matches!(cli, Cli::Run { .. }));
+    }
+
+    #[test]
+    fn test_cli_parsing_run_with_explicit_workspace() {
+        let cli = Cli::try_parse_from(["praxis", "run", "--workspace-dir", "/synthetic/ir-snake"]).unwrap();
+        assert!(matches!(cli, Cli::Run { workspace_dir: Some(path), .. } if path == PathBuf::from("/synthetic/ir-snake")));
     }
 
     #[test]

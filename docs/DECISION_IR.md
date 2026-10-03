@@ -24,7 +24,7 @@ workflow in the active runtime's `ROOT_DIR/contexts` directory. `ROOT_DIR` selec
 installation assets; `WORKSPACE_DIR` selects the project for verified file and
 build/test actions. Unset `WORKSPACE_DIR` preserves the old `ROOT_DIR` default.
 Relative values resolve from `ROOT_DIR`; absolute values may select a separate
-existing project. Ensure `cargo` and `rustfmt` are on
+existing project. `praxis run --workspace-dir /absolute/project` overrides the environment for that process; relative flag values also resolve from `ROOT_DIR`. Ensure `cargo` and `rustfmt` are on
 Praxis's PATH. Adapt the plugin's edition, commands and resource scopes for the
 project. This example assumes Rust edition 2021.
 
@@ -41,6 +41,39 @@ they do not need to be copied into the project. The workspace must already exist
 The runtime pins its canonical physical root for the task and prints it in
 `[VERIFIED WORKSPACE]` instructions and R's `workspace_root` result. Neither
 `settings.path` nor a model-selected path can change that root.
+
+### Project preflight
+
+The bundled workflow version **1.2** declares:
+
+```ini
+[workspace]
+required_files = ["Cargo.toml", "Cargo.lock"]
+required_directories = ["src"]
+```
+
+Praxis checks these trusted requirements at task setup **before the first model call**, without creating files or searching other projects. Missing paths, wrong file types and symlinks fail setup with the physical root and a `WORKSPACE_DIR` hint. Requirements and the root remain pinned for that task. JSON string arrays are required; paths must be unique, normalized and relative. Other workflows without this section keep their existing behavior. Customize the requirements for nonstandard Cargo source layouts.
+
+If the reported root is `/home/user/newpraxis/praxis/target/release`, you selected the installation/binary directory. `settings.path`, guessing `snake/src/main.rs`, or loading the SM file cannot relocate build and test commands. Select the actual prepared project explicitly:
+
+```bash
+/path/to/updated/praxis run --workspace-dir /absolute/path/to/ir-snake
+```
+
+For the single-file Snake example, that project needs its own `Cargo.toml`, `Cargo.lock` and existing `src/main.rs`, with Ratatui 0.29 and Crossterm 0.28 dependencies and Rust edition 2021. If you have not prepared one yet, create it **as the operator**, outside an active task:
+
+```bash
+cargo new --bin --edition 2021 /absolute/path/to/ir-snake
+cd /absolute/path/to/ir-snake
+cargo add ratatui@0.29 crossterm@0.28
+cargo build --locked
+```
+
+Keep `ROOT_DIR` pointing to the directory that already contains Praxis's installation templates and contexts. Restart with `--workspace-dir` or `WORKSPACE_DIR`, stop the old task, and start a new one. The agent can then read the real hash and replace the source through R → M → B → T → C.
+
+For an older installation, rebuilding or merging the PR is not enough: update the installed `contexts/verified-implementation.sm` and `templates/verified-implementation.poml`, and copy **the current** `examples/plugins/verified-rust/plugin.json` to the runtime's `PLUGINS_DIR/verified-rust/plugin.json`. The current manifest is **1.2.1** and its Cargo commands include `--manifest-path Cargo.toml`. A receipt showing only `cargo build --locked` indicates an older/custom manifest.
+
+The updated binary bundles both verified workflows, the implementation prompt, this guide and the opt-in plugin example. `praxis repair-assets --directory /path/to/installation` restores missing bundled files but preserves existing files. Install updated versions of an existing workflow or template deliberately, or review the backups created by `--overwrite`. Repair does not activate the plugin; copy its example manifest into `PLUGINS_DIR` as described above.
 
 ### Select the workflow and its prompt together
 

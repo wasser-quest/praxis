@@ -194,7 +194,7 @@ pub async fn decide(
         "Decision request exceeds 1 MiB"
     );
     // No credentials in profiles; no redirect may forward task data elsewhere.
-    let client = reqwest::Client::builder()
+    let client = crate::branding::client_builder()
         .redirect(reqwest::redirect::Policy::none())
         .build()?;
     let request = async {

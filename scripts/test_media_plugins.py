@@ -144,6 +144,8 @@ class MediaPlugins(unittest.TestCase):
         endpoint, headers, body = calls[0]
         self.assertEqual(endpoint, "/v1/text-to-speech/test-voice?output_format=mp3_44100_128")
         self.assertEqual(headers["Xi-Api-Key"], SECRET)
+        self.assertIn("Praxis", headers["User-Agent"])
+        self.assertIn("https://getpraxis.boo", headers["User-Agent"])
         self.assertEqual(body["text"], args["text"])
         self.assertEqual(body["model_id"], args["model_id"])
         self.assertEqual(body["language_code"], "de")
@@ -173,6 +175,9 @@ class MediaPlugins(unittest.TestCase):
         endpoint, headers, body = calls[0]
         self.assertEqual(endpoint, "/api/v1/images")
         self.assertEqual(headers["Authorization"], "Bearer " + SECRET)
+        self.assertEqual(headers["Http-Referer"], "https://getpraxis.boo")
+        self.assertEqual(headers["X-Openrouter-Title"], "Praxis")
+        self.assertIn("https://getpraxis.boo", headers["User-Agent"])
         self.assertEqual(body["model"], "openai/gpt-image-2")
         self.assertEqual(body["prompt"], args["prompt"])
         self.assertEqual(body["n"], 3)

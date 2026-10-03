@@ -7,6 +7,9 @@ Select `verified-coding` as the workflow to try the bundled example. Set
 keeping installation assets at `ROOT_DIR`. Unset `WORKSPACE_DIR` defaults to
 `ROOT_DIR`. Restart and begin a new task after a root change. Adapt commands and
 `cwd` for your workspace.
+The process-local `praxis run --workspace-dir /path/to/project` flag overrides
+`WORKSPACE_DIR`. Workflows can declare `[workspace]` requirements to reject an
+unprepared root before model calls; see [project preflight](DECISION_IR.md#project-preflight).
 For scoped file edits with expected hashes and automatic compensation, see
 [transactional patches](TRANSACTIONAL_PATCHES.md).
 

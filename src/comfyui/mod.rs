@@ -86,7 +86,7 @@ impl ComfyUiClient {
             private,
             "Refusing public ComfyUI endpoint; use the GPU NetBird IP"
         );
-        let http = Client::builder()
+        let http = crate::branding::client_builder()
             .no_proxy() // Never send private prompts through HTTP_PROXY/HTTPS_PROXY.
             .redirect(reqwest::redirect::Policy::none())
             .retry(reqwest::retry::never())

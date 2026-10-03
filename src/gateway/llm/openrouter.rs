@@ -102,8 +102,7 @@ impl LLMProvider for OpenRouterProvider {
             .client
             .post(&url)
             .header("Authorization", format!("Bearer {}", self.api_key))
-            .header("HTTP-Referer", "https://praxis-ai.app")
-            .header("X-Title", "Praxis")
+            .headers(crate::branding::openrouter_headers())
             .json(&body)
             .send()
             .await.map_err(super::error::ProviderError::from_reqwest)?;
@@ -155,6 +154,7 @@ impl LLMProvider for OpenRouterProvider {
             .client
             .get(&url)
             .header("Authorization", format!("Bearer {}", self.api_key))
+            .headers(crate::branding::openrouter_headers())
             .send()
             .await
         {

@@ -41,6 +41,7 @@ def chat_completion(api_key, messages, model=None, max_tokens=1024):
 
     data = json.dumps(body).encode("utf-8")
     headers = {
+        "User-Agent": "Praxis (+https://getpraxis.boo)",
         "Content-Type": "application/json",
         "api-key": api_key,
     }
