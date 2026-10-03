@@ -114,6 +114,10 @@ pub fn validate(
     sm: &StateMachine,
     ctx: &Context,
 ) -> anyhow::Result<()> {
+    crate::tools::catalog::validate(plugins).map_err(|error| failure(
+        "owner_conflict", workflow, ctx.active_state.as_deref().unwrap_or(""), "tool_catalog",
+        "Enabled tool declarations have conflicting owners", error.to_string(),
+    ))?;
     let mut states: Vec<_> = sm
         .states
         .keys()

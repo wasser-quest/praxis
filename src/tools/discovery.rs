@@ -10,19 +10,7 @@ pub const CORE: &[&str] = &[
 ];
 
 pub fn catalog(db: &Database, plugins: &PluginRegistry) -> anyhow::Result<Vec<ToolDefinition>> {
-    let mut tools = crate::db::tools::to_tool_definitions(db)?;
-    // Builtins own their names, even when disabled. A plugin cannot shadow them.
-    let builtin_names: std::collections::HashSet<_> = crate::db::tools::list(db)?.into_iter().map(|t| t.name).collect();
-    // Filter plugin tools by DB enabled state
-    let plugin_tools: Vec<_> = plugins.tool_definitions().into_iter()
-        .filter(|t| !builtin_names.contains(&t.function.name))
-        .filter(|t| crate::db::tools::get_plugin_tool_enabled(db, &t.function.name))
-        .collect();
-    tools.extend(plugin_tools);
-    tools.sort_by(|a, b| a.function.name.cmp(&b.function.name));
-    tools.dedup_by(|a, b| a.function.name == b.function.name);
-    for tool in &mut tools { super::tool_output::augment_definition(tool); }
-    Ok(tools)
+    super::catalog::definitions(db, plugins)
 }
 
 pub fn definitions(db: &Database, plugins: &PluginRegistry, user: &str) -> anyhow::Result<Vec<ToolDefinition>> {

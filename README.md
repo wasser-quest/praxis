@@ -494,6 +494,10 @@ into optional packages. Its target is a small runtime with three builtin
 [architecture overview](docs/PLUGIN_FIRST_PLAN.md). Current plugins install
 tools; service/UI packaging and minimal startup are planned work.
 
+The [shared execution boundary](docs/PLUGIN_RUNTIME.md) is the first implemented
+step: tool owners are checked consistently across discovery, workflow preflight
+and chat/agent/Decision IR execution.
+
 Install plugins by placing a directory with `plugin.json` in `plugins/`:
 
 ```bash

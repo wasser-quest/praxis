@@ -190,6 +190,18 @@ impl Database {
         Ok(())
     }
 
+    pub fn delete_cron_job_for_user(&self, id: &str, user: &str) -> anyhow::Result<()> {
+        let changed = self.conn().execute("DELETE FROM cron_jobs WHERE id = ?1 AND user_id = ?2", rusqlite::params![id, user])?;
+        anyhow::ensure!(changed == 1, "Cron job not found");
+        Ok(())
+    }
+
+    pub fn toggle_cron_job_for_user(&self, id: &str, user: &str, enabled: bool) -> anyhow::Result<()> {
+        let changed = self.conn().execute("UPDATE cron_jobs SET enabled = ?3 WHERE id = ?1 AND user_id = ?2", rusqlite::params![id, user, enabled as i32])?;
+        anyhow::ensure!(changed == 1, "Cron job not found");
+        Ok(())
+    }
+
     pub fn toggle_cron_job(&self, id: &str, enabled: bool) -> anyhow::Result<()> {
         let conn = self.conn();
         conn.execute(
