@@ -93,7 +93,7 @@ async fn vm_process_binding_is_read_only_until_host_initialization_and_keeps_sco
         .unwrap();
     assert_eq!(registry.tool_definitions().len(), 25);
     assert!(super::vm::guest_backend(&registry));
-    assert!(super::vm::runtime(&registry).is_none()); // Native screenshot/CLI bridge is not used in process mode.
+    assert!(super::vm::runtime(&registry).is_some());
     crate::db::tools::set_plugin_tool_enabled(&db, "vm_shell", true).unwrap();
     let user = format!("vm-process-{}", uuid::Uuid::new_v4());
     let _task = task(&db, &registry, dir.path(), &user);
@@ -266,4 +266,145 @@ async fn vm_process_forced_disable_cancels_worker_and_does_not_reactivate_old_bi
     assert!(super::vm::initialize_service(&config, &registry)
         .await
         .is_err());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn vm_process_screenshot_delivery_resolves_user_preferences_and_expires_on_disable() {
+    let (dir, db, config, mut registry) = fixture("capture");
+    super::vm::configure(&db, &config, &mut registry).unwrap();
+    assert!(super::vm::runtime(&registry).is_none());
+    super::vm::initialize_service(&config, &registry)
+        .await
+        .unwrap();
+    let user = format!("screenshot-{}", uuid::Uuid::new_v4());
+    let mut context = db.load_context(&user).unwrap();
+    context.settings.vm_keyboard_layout = "de".into();
+    context.settings.vm_screenshot_enabled = false;
+    context.settings.vm_screenshot_limit = 3;
+    db.save_context(&context).unwrap();
+    let access = super::vm::runtime(&registry).expect("process screenshot bridge");
+    let path = access.capture(&user, "desktop").await.unwrap();
+    assert_eq!(
+        crate::tools::vm_tools::screenshot_to_data_url(&registry, &path).unwrap(),
+        "data:image/png;base64,iVBORw0KGgo="
+    );
+    assert!(access
+        .screenshot_to_data_url(&dir.path().join("outside.png").to_string_lossy())
+        .is_none());
+    assert_eq!(
+        std::path::Path::new(&path).parent().unwrap(),
+        dir.path().join("data/vm/desktop/screenshots")
+    );
+    let captured: Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.path().join("worker.capture")).unwrap())
+            .unwrap();
+    assert_eq!(
+        captured,
+        json!({"name":"desktop","preferences":{"keyboard_layout":"de","screenshot_enabled":false,"screenshot_limit":3}})
+    );
+    assert!(access.capture(&user, "../outside").await.is_none());
+    assert!(super::vm::runtime(&registry).is_some());
+    registry
+        .service_handle("vm", "vm")
+        .unwrap()
+        .disable(Duration::from_secs(2))
+        .await
+        .unwrap();
+    assert!(super::vm::runtime(&registry).is_none());
+    assert!(access.capture(&user, "desktop").await.is_none());
+    assert!(access.screenshot_to_data_url(&path).is_none());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn vm_cli_forwards_literal_arguments_and_public_settings_without_opening_host_services() {
+    use std::os::unix::fs::PermissionsExt;
+    let (dir, _db, mut config, _registry) = fixture("echo");
+    let worker = dir.path().join("operator-cli");
+    std::fs::write(&worker, r#"#!/usr/bin/python3
+import json, os, pathlib, sys
+data = json.load(sys.stdin)
+pathlib.Path('operator.called').write_text(json.dumps({'args':sys.argv[1:],'settings':data,'env':sorted(os.environ)}))
+sys.exit(7 if 'fail' in sys.argv else 0)
+"#).unwrap();
+    std::fs::set_permissions(&worker, std::fs::Permissions::from_mode(0o755)).unwrap();
+    config.vm_service_executable = Some(worker.to_string_lossy().into());
+    let args = ["start", "--iso", "/a path/$(touch sentinel).iso"].map(std::ffi::OsString::from);
+    super::vm::cli::run_with_config(&config, &args)
+        .await
+        .unwrap();
+    let result: Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.path().join("operator.called")).unwrap())
+            .unwrap();
+    assert_eq!(
+        result["args"],
+        json!(["--cli", "start", "--iso", "/a path/$(touch sentinel).iso"])
+    );
+    assert_eq!(result["settings"]["data_dir"], config.data_dir);
+    assert!(result["settings"].get("web_token").is_none());
+    assert!(result["settings"].get("grants").is_none());
+    assert!(result["env"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|key| matches!(key.as_str(), Some("PATH" | "LC_CTYPE"))));
+    assert!(!dir.path().join("worker.ready").exists());
+    assert!(!dir.path().join("sentinel").exists());
+    assert!(!dir.path().join("data/vm").exists());
+    assert!(super::vm::cli::run_with_config(&config, &["fail".into()])
+        .await
+        .is_err());
+    config.vm_service_executable = Some("missing-worker".into());
+    assert!(super::vm::cli::run_with_config(&config, &["status".into()])
+        .await
+        .is_err());
+    config.vm_enabled = false;
+    config.vm_service_executable = Some(worker.to_string_lossy().into());
+    std::fs::remove_file(dir.path().join("operator.called")).unwrap();
+    assert!(super::vm::cli::run_with_config(&config, &["start".into()])
+        .await
+        .is_err());
+    assert!(!dir.path().join("operator.called").exists());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn vm_process_rejects_capture_paths_outside_the_selected_guest_and_symlinked_storage() {
+    for mode in ["capture_outside", "capture_symlink"] {
+        let (dir, db, config, mut registry) = fixture(mode);
+        super::vm::configure(&db, &config, &mut registry).unwrap();
+        super::vm::initialize_service(&config, &registry)
+            .await
+            .unwrap();
+        let access = super::vm::runtime(&registry).expect("process screenshot bridge");
+        assert!(access.capture("fixture-user", "desktop").await.is_none());
+        registry.shutdown_services(Duration::from_secs(2)).await;
+        assert!(!dir.path().join("data/vm/desktop/disk.qcow2").exists());
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn vm_process_forced_disable_interrupts_a_pending_screenshot_and_never_retries() {
+    let (dir, db, config, mut registry) = fixture("capture_cancel");
+    super::vm::configure(&db, &config, &mut registry).unwrap();
+    super::vm::initialize_service(&config, &registry)
+        .await
+        .unwrap();
+    let access = super::vm::runtime(&registry).expect("process screenshot bridge");
+    let capture = access.capture("fixture-user", "desktop");
+    tokio::pin!(capture);
+    tokio::select! { result = &mut capture => panic!("must block: {result:?}"), _ = async { while !dir.path().join("worker.capture").exists() { tokio::task::yield_now().await; } } => {} }
+    assert!(!registry
+        .service_handle("vm", "vm")
+        .unwrap()
+        .disable(Duration::from_millis(10))
+        .await
+        .unwrap());
+    assert!(tokio::time::timeout(Duration::from_secs(2), capture)
+        .await
+        .unwrap()
+        .is_none());
+    assert!(super::vm::runtime(&registry).is_none());
 }

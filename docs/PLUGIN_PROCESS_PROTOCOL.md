@@ -7,7 +7,8 @@ unless the operator sets `VM_SERVICE_EXECUTABLE`. See [installation commands](IN
 
 Roadmap PR 3 now includes the headless transport and the package-owned web
 contribution: administration, VNC, embedded noVNC and a dashboard page. The
-independent VM CLI and complete ownership/upgrade policy remain. Manifest v2, immutable
+independent VM CLI and screenshot delivery also work through the installed package;
+complete guest ownership/upgrade policy remains. Manifest v2, immutable
 package publication and generic process declarations remain later work. Only the
 VM adapter selects a worker today; models cannot select an executable.
 
@@ -31,7 +32,7 @@ ephemeral port; it is never exposed directly as the public dashboard. See
 | --- | --- |
 | `hello` | Host-selected initialization and declaration handshake |
 | `invoke` | Host caller envelope plus separate model arguments |
-| `control` | Host lifecycle/metadata operation; VM exposes `autostart` and `web_info` |
+| `control` | Host lifecycle/metadata/delivery operation; VM exposes `autostart`, `web_info` and `capture` |
 | `health` | Worker responsiveness without starting a guest |
 | `cancel` | Interrupt the matching in-flight request |
 | `shutdown` | Stop this worker instance |
@@ -61,6 +62,19 @@ autostart still reports a non-fatal failure if QEMU/guest setup is unavailable.
 `ROOT_DIR` resolves a relative `VM_SERVICE_EXECUTABLE`; the worker's cwd is that
 installation. `DATA_DIR` retains host-cwd semantics and is sent as an absolute
 path. `WORKSPACE_DIR` remains the separately pinned verified host project.
+
+`capture` accepts only a guest name and typed, host-resolved preferences, returning
+an image artifact path or null. The host bounds capture to ten seconds, validates
+the returned storage path and keeps delivery in the service drain/cancellation
+scope. This host-only control grants no model workspace authority or credentials.
+It is an explicit screenshot request; `screenshot_enabled` still controls optional
+automatic capture after tool effects.
+
+Operator CLI commands use a separate `--cli` entry point, ordinary stdout/stderr
+and an exit status. The host forwards literal OS arguments, public VM settings on
+bounded stdin, and the same environment allow-list. The VM package owns parsing,
+help and effects; no host database/UI/inference service is started. Models cannot
+choose this entry point or executable. See [commands and attachment limits](VM_PLUGIN.md#operator-cli-and-screenshots).
 
 The worker returns data, including guest-scoped results with `verified: false`.
 Only the host contract verifier/ledger can issue receipts that satisfy guards.

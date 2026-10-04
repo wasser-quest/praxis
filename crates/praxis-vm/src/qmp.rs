@@ -166,6 +166,15 @@ impl QmpClient {
         Ok(())
     }
 
+    pub async fn quit(&mut self) -> anyhow::Result<()> {
+        self.execute(QmpCommand {
+            execute: "quit".into(),
+            arguments: None,
+        })
+        .await?;
+        Ok(())
+    }
+
     /// Check the actual endpoint identity before adopting an existing guest.
     pub async fn query_name(&mut self) -> anyhow::Result<String> {
         let value = self

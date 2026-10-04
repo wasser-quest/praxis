@@ -283,7 +283,7 @@ role: "system".to_string(),
             .get("vm_last_screenshot")
             .and_then(|v| v.as_str())
         {
-            if let Some(data_url) = crate::tools::vm_tools::screenshot_to_data_url(ss_path) {
+            if let Some(data_url) = crate::tools::vm_tools::screenshot_to_data_url(&state.plugins, ss_path) {
                 messages.push(ChatMessage {
     reasoning_content: None,
                     role: "user".to_string(),

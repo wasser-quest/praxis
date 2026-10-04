@@ -9,9 +9,58 @@ use serde_json::{json, Value};
 use std::{collections::BTreeMap, path::Path, sync::Arc, time::Duration};
 use tokio::sync::OnceCell;
 
+pub(super) fn launch_configuration(
+    config: &Config,
+    executable: &str,
+) -> anyhow::Result<(LaunchSpec, Value)> {
+    let cwd = Path::new(&config.root_dir).canonicalize()?;
+    let path = Path::new(executable);
+    let program = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        cwd.join(path)
+    }
+    .canonicalize()
+    .map_err(|_| anyhow::anyhow!("VM_SERVICE_EXECUTABLE must name an installed VM worker"))?;
+    let data = Path::new(&config.data_dir);
+    // DATA_DIR keeps its existing host-cwd semantics; the worker receives
+    // an absolute path so its installation cwd cannot retarget storage.
+    let data = if data.is_absolute() {
+        data.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(data)
+    };
+    let mut environment = BTreeMap::new();
+    // Needed to find operator-installed QEMU utilities. Never pass the
+    // provider/admin environment or the host credential store.
+    if let Ok(path) = std::env::var("PATH") {
+        environment.insert("PATH".into(), path);
+    }
+    #[cfg(windows)]
+    for key in ["SystemRoot", "TEMP", "TMP"] {
+        if let Ok(value) = std::env::var(key) {
+            environment.insert(key.into(), value);
+        }
+    }
+    let spec = LaunchSpec {
+        program,
+        args: vec!["--stdio".into()],
+        cwd,
+        owner: "vm".into(),
+        service: "vm".into(),
+        operations: super::TOOL_NAMES.iter().map(|op| (*op).into()).collect(),
+        controls: vec!["autostart".into(), "web_info".into(), "capture".into()],
+        environment,
+    };
+    spec.validate()?;
+    let initialization = json!({"data_dir":data.to_string_lossy(), "arch":config.vm_arch, "socket_mode":config.vm_socket_mode, "cpu_cores":config.vm_cpu_cores, "ram_mb":config.vm_ram_mb, "disk_size":config.vm_disk_size, "web_token":uuid::Uuid::new_v4().simple().to_string()});
+    Ok((spec, initialization))
+}
+
 pub(super) struct VmProcessAdapter {
     spec: LaunchSpec,
     initialization: Value,
+    pub(super) data_dir: String,
     client: OnceCell<Client>,
     web: OnceCell<crate::runtime::web::WebEndpoint>,
     grants: super::Grants,
@@ -25,50 +74,15 @@ impl VmProcessAdapter {
         executable: &str,
         grants: super::Grants,
     ) -> anyhow::Result<Self> {
-        let cwd = Path::new(&config.root_dir).canonicalize()?;
-        let path = Path::new(executable);
-        let program = if path.is_absolute() {
-            path.to_path_buf()
-        } else {
-            cwd.join(path)
-        }
-        .canonicalize()
-        .map_err(|_| anyhow::anyhow!("VM_SERVICE_EXECUTABLE must name an installed VM worker"))?;
-        let data = Path::new(&config.data_dir);
-        // DATA_DIR keeps its existing host-cwd semantics; the worker receives
-        // an absolute path so its installation cwd cannot retarget storage.
-        let data = if data.is_absolute() {
-            data.to_path_buf()
-        } else {
-            std::env::current_dir()?.join(data)
-        };
-        let mut environment = BTreeMap::new();
-        // Needed to find operator-installed QEMU utilities. Never pass the
-        // provider/admin environment or the host credential store.
-        if let Ok(path) = std::env::var("PATH") {
-            environment.insert("PATH".into(), path);
-        }
-        #[cfg(windows)]
-        for key in ["SystemRoot", "TEMP", "TMP"] {
-            if let Ok(value) = std::env::var(key) {
-                environment.insert(key.into(), value);
-            }
-        }
-        let spec = LaunchSpec {
-            program,
-            args: vec!["--stdio".into()],
-            cwd,
-            owner: "vm".into(),
-            service: "vm".into(),
-            operations: super::TOOL_NAMES.iter().map(|op| (*op).into()).collect(),
-            controls: vec!["autostart".into(), "web_info".into()],
-            environment,
-        };
-        spec.validate()?;
-        let initialization = json!({"data_dir":data.to_string_lossy(), "arch":config.vm_arch, "socket_mode":config.vm_socket_mode, "cpu_cores":config.vm_cpu_cores, "ram_mb":config.vm_ram_mb, "disk_size":config.vm_disk_size, "web_token":uuid::Uuid::new_v4().simple().to_string()});
+        let (spec, initialization) = launch_configuration(config, executable)?;
+        let data_dir = initialization["data_dir"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Missing VM data directory"))?
+            .to_owned();
         let database = db.clone();
         Ok(Self {
             spec,
+            data_dir,
             initialization,
             client: OnceCell::new(),
             web: OnceCell::new(),
@@ -87,6 +101,15 @@ impl VmProcessAdapter {
             .get()
             .filter(|client| client.available())
             .ok_or_else(|| anyhow::anyhow!("VM worker unavailable; bind a new instance"))
+    }
+    pub(super) async fn capture(&self, user: &str, name: &str) -> anyhow::Result<Option<String>> {
+        let preferences = (self.preferences)(user)?;
+        serde_json::from_value(
+            self.client()?
+                .control("capture", json!({"name":name,"preferences":preferences}))
+                .await?,
+        )
+        .map_err(Into::into)
     }
     pub(super) async fn autostart(&self, grants: BTreeMap<String, String>) -> anyhow::Result<()> {
         tokio::time::timeout(

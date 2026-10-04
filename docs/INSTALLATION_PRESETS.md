@@ -129,9 +129,11 @@ its UI/noVNC assets and licenses; a core-only installation does not need to copy
 a VM UI directory. Missing/disabled/unready VM packages contribute no page.
 
 Update host and worker from the same checkout and refresh dashboard assets with
-`--update-dashboard`; older workers lack the required `web_info` control. The
-`praxis vm` CLI and automatic screenshot delivery still require the native
-compatibility backend. The default native build retains its VM dashboard without
+`--update-dashboard`; older workers lack the required `capture` control or `--cli`
+entry point. `./praxis vm --help`, `./praxis vm status` and screenshot delivery now
+work through the installed worker with a core-only host. See the complete
+[operator commands and screenshot settings](VM_PLUGIN.md#operator-cli-and-screenshots).
+The default native build retains its VM dashboard without
 setting `VM_SERVICE_EXECUTABLE`. See [web contributions](PLUGIN_WEB_CONTRIBUTIONS.md)
 and [protocol and lifecycle](PLUGIN_PROCESS_PROTOCOL.md).
 

@@ -134,9 +134,10 @@ are now explicit per-VM grants; see [VM setup and migration](docs/VM_PLUGIN.md).
 For VM tools and the VM dashboard with QEMU outside the Praxis binary, install
 `praxis-vm-service` and set `VM_SERVICE_EXECUTABLE` to its installed path. This
 also works with `--no-default-features`. Follow [worker installation](docs/INSTALLATION_PRESETS.md#install-the-headless-vm-worker).
-The worker now supplies its VM page, administration API and VNC/noVNC assets.
-The `praxis vm` CLI and automatic screenshot delivery still use the native backend.
-See [web contributions](docs/PLUGIN_WEB_CONTRIBUTIONS.md).
+The worker supplies its VM page, administration API, VNC/noVNC assets, CLI commands
+and screenshots. `praxis vm --help` and `praxis vm status` work with either backend,
+including a core-only build. See [VM CLI and screenshot setup](docs/VM_PLUGIN.md#operator-cli-and-screenshots)
+and [web contributions](docs/PLUGIN_WEB_CONTRIBUTIONS.md).
 
 Python script plugins require `python3`. Configure their declared credentials and
 servers through Secrets and the plugin's settings; copying a manifest does not
@@ -596,8 +597,10 @@ into optional packages. Its target is a small runtime with three builtin
 tools and native service bindings. The VM engine now lives in an optional Rust
 package and an independently installed worker. The VM package contributes its
 API, VNC/noVNC assets and dashboard page through a generic authenticated host
-proxy, including in a build without VM support. Independent VM CLI/ownership,
-the optional whole dashboard and generic process manifests remain planned work.
+proxy, including in a build without VM support. The package also owns `praxis vm`
+commands and screenshot capture; the host forwards arguments and delivery through
+the selected binding. Per-user guest ownership and upgrade/recovery policy, the
+optional whole dashboard and generic process manifests remain planned work.
 
 The [shared execution boundary](docs/PLUGIN_RUNTIME.md) is the first implemented
 step: tool owners are checked consistently across discovery, workflow preflight

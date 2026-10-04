@@ -24,7 +24,7 @@ pub async fn send_screenshot_to_web(
     caption: Option<&str>,
     vm_name: &str,
 ) -> anyhow::Result<String> {
-    let data_dir = crate::runtime::vm::runtime(plugins).ok_or_else(|| anyhow::anyhow!("VM feature unavailable"))?.data_dir().to_owned();
+    let data_dir = std::path::Path::new(crate::runtime::vm::runtime(plugins).ok_or_else(|| anyhow::anyhow!("VM feature unavailable"))?.data_dir()).to_path_buf();
     let screenshot_path =
         match crate::tools::vm_tools::save_screenshot_to_disk(plugins, user_id, vm_name).await {
             Some(path) => path,
@@ -39,10 +39,8 @@ pub async fn send_screenshot_to_web(
     });
 
     // Also stream to web dashboard so the chat UI can display it inline
-    let url_path = screenshot_path
-        .strip_prefix(&data_dir)
-        .unwrap_or(&screenshot_path)
-        .trim_start_matches('/');
+    let canonical_data = data_dir.canonicalize()?;
+    let url_path = std::path::Path::new(&screenshot_path).strip_prefix(&canonical_data)?.to_string_lossy().replace('\\', "/");
     let stream_payload = serde_json::json!({
         "path": format!("/api/screenshots/{}", url_path),
         "caption": caption.unwrap_or("VM Screenshot"),

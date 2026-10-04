@@ -12,6 +12,7 @@ praxis-plugin-api = { path = "../praxis-plugin-api" }
 async-trait = "0.1"
 anyhow = "1"
 serde_json = "1"
+serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["macros", "rt", "io-std"] }
 
 [dev-dependencies]

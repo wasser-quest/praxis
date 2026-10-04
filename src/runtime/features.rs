@@ -200,7 +200,10 @@ impl ServiceHandle {
     pub(crate) fn web_aliases(&self) -> Vec<super::web::WebAlias> { self.0.web_aliases.clone() }
     /// UI requests share drain/cancellation with model calls without acquiring
     /// a model invocation's workspace, user storage or secret grants.
-    pub(crate) fn web_lease(&self) -> anyhow::Result<Lease> { self.lease(self.0.forced.child_token()) }
+    pub(crate) fn web_lease(&self) -> anyhow::Result<Lease> { self.host_lease() }
+    /// Host delivery/operator calls share the service lifetime without issuing
+    /// model workspace authority or credential grants.
+    pub(crate) fn host_lease(&self) -> anyhow::Result<Lease> { self.lease(self.0.forced.child_token()) }
     pub fn enabled(&self) -> bool {
         self.0.state.lock().is_ok_and(|state| state.enabled) && self.0.service.available()
     }
