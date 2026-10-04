@@ -153,7 +153,23 @@ with `PRAXIS_REAL_QEMU_ISO=/path/to.iso cargo test -p praxis-vm-web --test web
 real_qemu -- --ignored`. Desktop-OS interaction (installed GUI, guest agent,
 clipboard) remains an operator smoke check.
 
-Next: make the whole dashboard optional in PR 4. Runtime-control and the remaining
+## PR 4 progress — optional dashboard
+
+- [x] `dashboard` Cargo feature (in `compatibility`/default). Without it the
+  dashboard module, `:1337` listener, TLS/self-signed cert generation and the
+  `axum-server`/`rcgen`/`hostname` dependencies are absent; `praxis run` logs
+  that the dashboard isn't installed and keeps gateway/CLI/workflows running.
+- [x] Host services (`src/services`): sessions/contexts/messages (incl. token,
+  generation-speed telemetry and chat-clear marker), fork, workflow graphs
+  (shared SM parser, active node, preview), execution events/receipts and
+  usage limits, agent-loop control. Dashboard routes are thin adapters.
+- [x] Core no longer imports `dashboard` (runtime tests use `runtime::events`).
+- [x] Builds checked: minimal, VM-only, dashboard-only and default.
+- [ ] Move remaining administration APIs (tools, secrets, pairings, templates,
+  profiles, memory, skills, cron) into services.
+- [ ] Package the frontend/static assets with the dashboard package and add
+  navigation slots for absent features.
+- [ ] Gateway-hosted headless API over the services. Runtime-control and the remaining
 feature/tool packages follow; POML/context/SM/IR verification stays in core.
 
 Existing setup guides remain applicable during migration:

@@ -9,7 +9,9 @@ through the plugin migration. There are two separate operations:
 | Install its public assets | `praxis install-preset compatibility --directory INSTALLATION` | Fills missing workflows, prompts, skills, dashboard files, shipped plugin folders and noVNC runtime files |
 | Update the dashboard | Add `--update-dashboard` | Replaces changed dashboard files with backups |
 | Grant VM tool access once | Add `--enable-vm-tools --data-dir DATA_DIRECTORY` | Enables the 25 VM plugin tool flags in the selected data directory |
-| Build without a linked VM engine | `cargo build --release --locked --no-default-features` | Excludes `praxis-vm` and the VM CLI; can use an installed VM worker |
+| Build without a linked VM engine | `cargo build --release --locked --no-default-features --features dashboard` | Excludes `praxis-vm` and the VM CLI; can use an installed VM worker |
+| Headless runtime | `cargo build --release --locked --no-default-features` | Excludes the dashboard (UI, `:1337` listener, TLS cert generation) and the VM engine; gateway, CLI, POML/SM workflows and receipts unchanged |
+| VM without dashboard | `cargo build --release --locked --no-default-features --features vm` | Native VM tools/CLI, no dashboard listener |
 
 The installer does not start services, run QEMU, call providers, read `.env` or
 unlock secrets. Without `--enable-vm-tools` it does not open/create a database or

@@ -561,6 +561,7 @@ async fn run_services(
     });
 
     // Dashboard (optional)
+    #[cfg(feature = "dashboard")]
     if enable_dashboard {
         let dashboard_db = db.clone();
         let dashboard_port = config.dashboard_port;
@@ -572,6 +573,14 @@ async fn run_services(
             }
         });
         tracing::info!("Dashboard starting on port {}", config.dashboard_port);
+    }
+
+    #[cfg(not(feature = "dashboard"))]
+    if enable_dashboard {
+        tracing::warn!(
+            "Dashboard requested but this build excludes the `dashboard` package; \
+             gateway, CLI and workflows continue without it"
+        );
     }
 
     // Discord (optional)

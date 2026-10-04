@@ -396,102 +396,13 @@ async fn router_state() -> Json<serde_json::Value> {
 async fn list_chat_sessions(
     State(state): State<Arc<DashboardState>>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let conn = state.db.conn();
-    let mut stmt = conn
-        .prepare(
-            "SELECT user_id, updated_at FROM contexts ORDER BY updated_at DESC LIMIT 500",
-        )
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let rows: Vec<(String, String)> = stmt
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    drop(stmt);
-
-    let mut sessions = Vec::new();
-    for (user_id, updated_at) in rows {
-        let username: Option<String> = conn
-            .query_row(
-                "SELECT data FROM contexts WHERE user_id = ?1 LIMIT 1",
-                rusqlite::params![user_id],
-                |row| row.get::<_, String>(0),
-            )
-            .ok()
-            .and_then(|data| {
-                serde_json::from_str::<crate::db::contexts::Context>(&data).ok()
-            })
-            .and_then(|ctx| ctx.username.filter(|u| !u.trim().is_empty()));
-        // Messages live under the session key or its forked `:::` sub-keys.
-        let prefix = format!("{user_id}:::");
-        let message_count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM messages WHERE user_id = ?1 OR substr(user_id, 1, length(?2)) = ?2",
-                rusqlite::params![user_id, prefix],
-                |row| row.get(0),
-            )
-            .unwrap_or(0);
-        let preview: Option<String> = conn
-            .query_row(
-                "SELECT content FROM messages WHERE user_id = ?1 AND role = 'user' AND content <> '' ORDER BY id ASC LIMIT 1",
-                rusqlite::params![user_id],
-                |row| row.get::<_, String>(0),
-            )
-            .ok()
-            .or_else(|| {
-                conn.query_row(
-                    "SELECT content FROM messages WHERE substr(user_id, 1, length(?1)) = ?1 AND role = 'user' AND content <> '' ORDER BY id ASC LIMIT 1",
-                    rusqlite::params![prefix],
-                    |row| row.get::<_, String>(0),
-                )
-                .ok()
-            })
-            .map(|text| {
-                let flat: String = text.trim().chars().take(120).collect();
-                flat
-            });
-        let title: Option<String> = conn.query_row(
-            "SELECT json_extract(data, '$.custom_data.session_title') FROM contexts WHERE user_id=?1",
-            rusqlite::params![user_id], |row| row.get(0),
-        ).ok().flatten();
-        sessions.push(serde_json::json!({
-            "user_id": user_id,
-            "session_title": title,
-            "username": username,
-            "updated_at": updated_at,
-            "message_count": message_count,
-            "preview": preview,
-        }));
-    }
-    Ok(Json(serde_json::json!({ "sessions": sessions })))
+    crate::services::sessions::chat_sessions(&state.db).map(Json).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 async fn list_contexts(
     State(state): State<Arc<DashboardState>>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let conn = state.db.conn();
-    let mut stmt = conn
-        .prepare("SELECT user_id, data, updated_at FROM contexts ORDER BY updated_at DESC")
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let contexts: Vec<serde_json::Value> = stmt
-        .query_map([], |row| {
-            let user_id: String = row.get(0)?;
-            let data: String = row.get(1)?;
-            let updated_at: String = row.get(2)?;
-            let mut data: serde_json::Value = serde_json::from_str(&data).map_err(|e| rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Text, Box::new(e)))?;
-            crate::db::contexts::normalize_legacy_keys(&mut data);
-            Ok(serde_json::json!({
-                "user_id": user_id,
-                "data": data,
-                "updated_at": updated_at,
-            }))
-        })
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    Ok(Json(serde_json::json!({ "contexts": contexts })))
+    crate::services::sessions::contexts(&state.db).map(Json).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 async fn get_context(
@@ -534,27 +445,17 @@ async fn fork_context_route(
     let new_user_id = body
         .get("new_user_id")
         .and_then(|v| v.as_str())
-        .ok_or(StatusCode::BAD_REQUEST)?
-        .to_string();
+        .ok_or(StatusCode::BAD_REQUEST)?;
     if new_user_id.is_empty() || new_user_id == parent_user_id {
         return Err(StatusCode::BAD_REQUEST);
     }
     let username = body.get("username").and_then(|v| v.as_str());
-
-    let ctx = state
-        .db
-        .fork_context(&parent_user_id, &new_user_id, username)
+    crate::services::sessions::fork(&state.db, &parent_user_id, new_user_id, username)
+        .map(Json)
         .map_err(|e| {
             tracing::error!(error = %e, "fork_context failed");
             StatusCode::INTERNAL_SERVER_ERROR
-        })?;
-
-    Ok(Json(serde_json::json!({
-        "success": true,
-        "user_id": ctx.user_id,
-        "username": ctx.username,
-        "parent_user_id": parent_user_id,
-    })))
+        })
 }
 
 /// Execute a `/context …` slash command. The body is `{user_id, line}`. The
@@ -590,68 +491,8 @@ async fn get_messages(
     Path(user_id): Path<String>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let budget = 500000usize;
     let chat_only = params.get("chat_only").map(|v| v == "1" || v == "true").unwrap_or(false);
-    tracing::debug!(user_id = %user_id, chat_only, "[MESSAGES] fetching messages");
-    let result = if chat_only {
-        // Chat view: hide rows up to the clear marker (kept in Messages tab).
-        let marker = state
-            .db
-            .load_context(&user_id)
-            .ok()
-            .and_then(|ctx| {
-                ctx.custom_data
-                    .get("chat_cleared_message_id")
-                    .and_then(|v| v.as_i64())
-            })
-            .unwrap_or(0);
-        state.db.get_chat_messages_after(&user_id, budget, marker)
-    } else {
-        state.db.get_chat_messages_with_token_budget(&user_id, budget)
-    };
-    match result {
-        Ok((messages, total_tokens)) => {
-            let msgs: Vec<serde_json::Value> = messages
-                .iter()
-                .map(|m| {
-                    let mut val = serde_json::json!({
-                        "id": m.id,
-                        "audio_mime": m.audio_mime,
-                        "role": m.role,
-                        "content": m.content,
-                        "tool_call_id": m.tool_call_id,
-                        "tool_name": m.tool_name,
-                        "prompt_tokens": m.prompt_tokens,
-                        "completion_tokens": m.completion_tokens,
-                        "total_tokens": m.total_tokens,
-                        "generation_ms": m.generation_ms,
-                    });
-                    if let Some(meta) = m.discord_meta.as_ref() {
-                        val["discord_meta"] = meta.clone();
-                    }
-                    if let Some(ref tool_calls) = m.tool_calls {
-                        val["tool_calls"] = serde_json::json!(tool_calls
-                            .iter()
-                            .map(|tc| {
-                                serde_json::json!({
-                                    "id": tc.id,
-                                    "name": tc.function.name,
-                                    "arguments": tc.function.arguments,
-                                })
-                            })
-                            .collect::<Vec<_>>());
-                    }
-                    val
-                })
-                .collect::<Vec<_>>();
-            Ok(Json(serde_json::json!({
-                "messages": msgs,
-                "total_tokens": total_tokens,
-                "message_count": messages.len(),
-            })))
-        }
-        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
-    }
+    crate::services::sessions::messages(&state.db, &user_id, chat_only).map(Json).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 /// Authenticated, on-demand replay. Never embed credentials or audio blobs in history.
@@ -690,14 +531,7 @@ async fn clear_chat_view(
     State(state): State<Arc<DashboardState>>,
     Path(user_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let max_id = state
-        .db
-        .max_message_id(&user_id)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let _ = state.db.merge_context(
-        &user_id,
-        serde_json::json!({ "custom_data": { "chat_cleared_message_id": max_id } }),
-    );
+    let max_id = crate::services::sessions::clear_chat_view(&state.db, &user_id).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     tracing::info!(user_id = %user_id, marker = max_id, "[MESSAGES] chat view cleared (rows kept)");
     Ok(Json(serde_json::json!({ "success": true, "cleared_before_id": max_id })))
 }
@@ -1450,53 +1284,22 @@ struct AgentInputRequest {
 async fn send_agent_input(
     Json(req): Json<AgentInputRequest>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let mut full_message = req.message.clone();
-    if let Some(ref atts) = req.attachments {
-        for a in atts {
-            full_message.push_str(&format!("\n[Attachment: {}]", a));
-        }
-    }
-    match crate::gateway::agent_loop::get_user_input_sender(&req.user_id).await {
-        Some(sender) => {
-            if let Err(e) = sender.send(full_message) {
-                return Ok(Json(serde_json::json!({
-                    "error": format!("Failed to send message: {}", e)
-                })));
-            }
-            Ok(Json(serde_json::json!({
-                "success": true,
-                "message": "Message sent"
-            })))
-        }
-        None => Ok(Json(serde_json::json!({
-            "error": "No active agent loop found for this user"
-        }))),
-    }
+    let full = crate::services::agent::with_attachments(
+        &req.message,
+        req.attachments.as_deref().unwrap_or_default(),
+    );
+    Ok(Json(crate::services::agent::send_input(&req.user_id, full).await))
 }
 
 async fn begin_agent(
     State(state): State<Arc<DashboardState>>,
     Json(req): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let user_id = req["user_id"].as_str().unwrap_or("default").to_string();
-    let message = req["message"].as_str().unwrap_or("").to_string();
-    let gateway_key = state.gateway_api_key.clone();
-
-    tokio::spawn(async move {
-        let client = reqwest::Client::new();
-        let url = "http://127.0.0.1:3537/v1/chat";
-        let body = serde_json::json!({
-            "user_id": user_id,
-            "message": message,
-        });
-        let _ = client
-            .post(url)
-            .bearer_auth(&gateway_key)
-            .json(&body)
-            .send()
-            .await;
-    });
-
+    crate::services::agent::dispatch_via_gateway(
+        state.gateway_api_key.clone(),
+        req["user_id"].as_str().unwrap_or("default").to_string(),
+        req["message"].as_str().unwrap_or("").to_string(),
+    );
     Ok(Json(serde_json::json!({
         "success": true,
         "message": "Agent dispatched to gateway"
@@ -1506,14 +1309,13 @@ async fn begin_agent(
 async fn get_agent_status(
     Path(user_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let has_loop = crate::gateway::agent_loop::get_user_input_sender(&user_id).await.is_some();
-    Ok(Json(serde_json::json!({ "active": has_loop })))
+    Ok(Json(serde_json::json!({ "active": crate::services::agent::active(&user_id).await })))
 }
 
 async fn stop_agent(
     Path(user_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    crate::gateway::agent_loop::stop_agent_loop(&user_id).await;
+    crate::services::agent::stop(&user_id).await;
     Ok(Json(serde_json::json!({ "success": true })))
 }
 
@@ -1855,22 +1657,13 @@ async fn chat_query(
     }
 
     // Check if agent loop is active
-    let has_loop = crate::gateway::agent_loop::get_user_input_sender(user_id).await.is_some();
-    if !has_loop {
+    if !crate::services::agent::active(user_id).await {
         // Auto-start agent loop via gateway API
-        let gateway_key = state.gateway_api_key.clone();
-        let uid = user_id.to_string();
-        let msg = message.to_string();
-        tokio::spawn(async move {
-            let client = reqwest::Client::new();
-            let body = serde_json::json!({"user_id": uid, "message": msg});
-            let _ = client
-                .post("http://127.0.0.1:3537/v1/chat")
-                .bearer_auth(&gateway_key)
-                .json(&body)
-                .send()
-                .await;
-        });
+        crate::services::agent::dispatch_via_gateway(
+            state.gateway_api_key.clone(),
+            user_id.to_string(),
+            message.to_string(),
+        );
         return Ok(Json(serde_json::json!({
             "success": true,
             "type": "agent_started",
