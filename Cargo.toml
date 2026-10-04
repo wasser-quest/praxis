@@ -5,7 +5,7 @@ edition = "2021"
 description = "AI Agent Platform — Praxis"
 
 [workspace]
-members = ["crates/praxis-vm"]
+members = ["crates/praxis-vm", "crates/praxis-plugin-api"]
 default-members = ["."]
 resolver = "2"
 
@@ -19,6 +19,7 @@ songbird = ["dep:songbird"]
 vosk = ["dep:vosk"]
 
 [dependencies]
+praxis-plugin-api = { path = "crates/praxis-plugin-api" }
 praxis-vm = { path = "crates/praxis-vm", optional = true }
 tokio = { version = "1", features = ["full"] }
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }

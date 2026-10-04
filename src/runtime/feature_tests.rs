@@ -52,6 +52,57 @@ impl NativeService for Fixture {
     }
 }
 
+#[tokio::test]
+async fn native_feature_unready_service_is_hidden_until_host_initialization_and_forced_stop_runs() {
+    use std::sync::atomic::AtomicBool;
+    struct Lifecycle {
+        ready: AtomicBool,
+        initialized: AtomicUsize,
+        forced: AtomicUsize,
+    }
+    #[async_trait::async_trait]
+    impl NativeService for Lifecycle {
+        fn available(&self) -> bool {
+            self.ready.load(Ordering::SeqCst)
+        }
+        async fn initialize(&self) -> anyhow::Result<()> {
+            self.initialized.fetch_add(1, Ordering::SeqCst);
+            self.ready.store(true, Ordering::SeqCst);
+            Ok(())
+        }
+        fn force_stop(&self) {
+            self.forced.fetch_add(1, Ordering::SeqCst);
+            self.ready.store(false, Ordering::SeqCst);
+        }
+        async fn invoke(&self, _: InvocationContext, _: &str, _: Value) -> anyhow::Result<Value> {
+            Ok(json!({}))
+        }
+        async fn shutdown(&self) -> anyhow::Result<()> {
+            std::future::pending().await
+        }
+    }
+    let mut registry = registry(false);
+    let service = Arc::new(Lifecycle {
+        ready: AtomicBool::new(false),
+        initialized: AtomicUsize::new(0),
+        forced: AtomicUsize::new(0),
+    });
+    registry
+        .register_service("fixture", "backend", 1, &["echo"], service.clone())
+        .unwrap();
+    let handle = registry.service_handle("fixture", "backend").unwrap();
+    assert!(!handle.enabled());
+    assert!(registry.tool_definitions().is_empty());
+    assert_eq!(service.initialized.load(Ordering::SeqCst), 0);
+    handle.initialize().await.unwrap();
+    assert!(handle.enabled());
+    assert_eq!(registry.tool_definitions().len(), 1);
+    assert!(!handle.disable(Duration::from_millis(10)).await.unwrap());
+    assert_eq!(service.forced.load(Ordering::SeqCst), 1);
+    assert!(!handle.enabled());
+    assert!(handle.initialize().await.is_err());
+}
+
 fn registry(contract: bool) -> PluginRegistry {
     let mut value = json!({"name":"fixture","version":"1","description":"native fixture","secrets":["declared"],"tools":[{
         "name":"feature_echo","description":"fixture operation",
@@ -340,9 +391,14 @@ async fn native_feature_deadline_and_failed_postcondition_never_grant_completion
             let result: Value = serde_json::from_str(&result).unwrap();
             assert_eq!(result["receipt"]["failure"], "timed_out");
             assert_eq!(result["receipt"]["verified"], false);
-            assert!(fixture.contexts.lock().unwrap()[0]
-                .cancellation()
-                .is_cancelled());
+            let contexts = fixture.contexts.lock().unwrap();
+            if let Some(context) = contexts.first() {
+                assert!(context.cancellation().is_cancelled());
+            } else {
+                // The contract can expire during checks after acquiring the
+                // shared lock, producing a failed receipt before the callback.
+                assert_eq!(fixture.calls.load(Ordering::SeqCst), 0);
+            }
         }
         // Other contract tests can hold the shared lock. Expiry before the
         // callback creates no receipt and no authority, which is correct too.

@@ -9,6 +9,7 @@ fn fixture() -> (tempfile::TempDir, Database, Config, PluginRegistry) {
     config.data_dir = dir.path().to_str().unwrap().into();
     config.root_dir = dir.path().to_str().unwrap().into();
     config.vm_enabled = false;
+    config.vm_service_executable = None;
     let plugin = serde_json::from_str(include_str!("../../plugins/vm/plugin.json")).unwrap();
     let mut registry = PluginRegistry::new();
     registry.try_register(plugin).unwrap();

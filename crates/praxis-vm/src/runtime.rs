@@ -3,7 +3,8 @@ use crate::{tools, VmConfig, VmManager};
 use serde_json::Value;
 use std::{collections::BTreeMap, sync::Arc};
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct VmSettings {
     pub data_dir: String,
     pub arch: String,
@@ -13,7 +14,8 @@ pub struct VmSettings {
     pub disk_size: String,
 }
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct VmPreferences {
     pub keyboard_layout: String,
     pub screenshot_enabled: bool,

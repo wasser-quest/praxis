@@ -9,7 +9,7 @@ through the plugin migration. There are two separate operations:
 | Install its public assets | `praxis install-preset compatibility --directory INSTALLATION` | Fills missing workflows, prompts, skills, dashboard files, shipped plugin folders and noVNC runtime files |
 | Update the dashboard | Add `--update-dashboard` | Replaces changed dashboard files with backups |
 | Grant VM tool access once | Add `--enable-vm-tools --data-dir DATA_DIRECTORY` | Enables the 25 VM plugin tool flags in the selected data directory |
-| Build without VM | `cargo build --release --locked --no-default-features` | Excludes `praxis-vm` and the VM CLI; other feature extractions remain future work |
+| Build without a linked VM engine | `cargo build --release --locked --no-default-features` | Excludes `praxis-vm` and the VM CLI; can use an installed VM worker |
 
 The installer does not start services, run QEMU, call providers, read `.env` or
 unlock secrets. Without `--enable-vm-tools` it does not open/create a database or
@@ -81,6 +81,51 @@ The VM retains `DATA_DIR/vm` and `DATA_DIR/shared`. Existing provider/admin
 credentials are no longer exported to every guest. Configure explicit grants if
 a guest needs a credential. See [VM package migration](VM_PLUGIN.md).
 
+## Install the headless VM worker
+
+To keep QEMU code outside the Praxis binary, build the worker and host separately.
+Install QEMU utilities on the same machine. From the source checkout:
+
+```bash
+cargo build --release --locked -p praxis-vm --bin praxis-vm-service
+cargo build --release --locked -p praxis --no-default-features
+PRAXIS_INSTALL=/absolute/path/to/installation
+./target/release/praxis install-preset compatibility \
+  --directory "$PRAXIS_INSTALL" --enable-vm-tools --data-dir /actual/path/to/data
+mkdir -p "$PRAXIS_INSTALL/plugins/vm/bin"
+install -m 755 ./target/release/praxis "$PRAXIS_INSTALL/praxis"
+install -m 755 ./target/release/praxis-vm-service \
+  "$PRAXIS_INSTALL/plugins/vm/bin/praxis-vm-service"
+```
+
+Keep existing data/workspace paths and add these to that installation's `.env`:
+
+```dotenv
+VM_ENABLED=true
+VM_SERVICE_EXECUTABLE=plugins/vm/bin/praxis-vm-service
+VM_MODE=shared
+```
+
+Then restart from the installation directory, for example:
+
+```bash
+cd "$PRAXIS_INSTALL"
+./praxis run --no-dashboard --no-discord
+```
+
+Use `VM_MODE=vm` if agent legacy shell/file aliases should use the guest. The
+installed manifest must be enabled and tool flags still apply. An absolute worker
+path also works, including with a separate `PLUGINS_DIR`. The preset installs
+public assets, not this executable: install/update the worker explicitly while
+Praxis is stopped. A missing/incompatible worker fails setup without fallback or
+automatic retry. A compatible worker can later be installed without a host rebuild.
+
+This transport supports tools and configured autostart. The VM dashboard/VNC
+bridge and `praxis vm` CLI still require the native compatibility build and do
+not use the worker yet. For the full previous VM UI experience, leave
+`VM_SERVICE_EXECUTABLE` unset and use the normal compatibility build. See
+[protocol and lifecycle](PLUGIN_PROCESS_PROTOCOL.md).
+
 ## Optional capabilities and headless use
 
 Verified Rust is intentionally opt-in:
@@ -97,6 +142,7 @@ dependency installation and the complete test prompt.
 To run without the dashboard/Discord, keep the same installed workflows and use
 `praxis run --no-dashboard --no-discord`. POML/context/SM/Decision IR/receipts stay
 in core. To exclude the VM implementation from a build, use
-`--no-default-features` and `VM_ENABLED=false`. This is a build without VM, not yet
+`--no-default-features` and `VM_ENABLED=false`, or install the worker above.
+This is a build without a linked VM engine, not yet
 the final minimal plugin-only runtime; dashboard, providers and remaining tools
 are extracted in subsequent plan steps.

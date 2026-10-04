@@ -257,7 +257,6 @@ async fn run() -> anyhow::Result<()> {
         return Ok(());
     }
     if let Cli::InstallPreset { preset: InstallationPreset::Compatibility, directory, data_dir, update_dashboard, enable_vm_tools } = &cli {
-        anyhow::ensure!(!enable_vm_tools || cfg!(feature = "vm"), "Enabling VM tools requires a binary built with --features vm or compatibility");
         let report = praxis::assets::install_compatibility(directory, *update_dashboard)?;
         println!("Compatibility assets in {}: {} created, {} preserved, {} updated.", directory.display(), report.created.len(), report.preserved.len(), report.updated.len());
         if let Some(backup) = report.backup_dir { println!("Previous dashboard files backed up to: {}", backup.display()); }
@@ -542,6 +541,7 @@ async fn run_services(
 
     // Feature registration does not enable tools or initialize guests by itself.
     praxis::runtime::vm::configure(&db, &config, &mut plugin_registry)?;
+    praxis::runtime::vm::initialize_service(&config, &plugin_registry).await?;
     if let Err(error) = praxis::runtime::vm::autostart(&config, &plugin_registry, &secrets).await {
         tracing::warn!(%error, "Configured VM autostart failed (non-fatal)");
     }

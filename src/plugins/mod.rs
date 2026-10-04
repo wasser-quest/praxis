@@ -211,7 +211,7 @@ impl PluginRegistry {
         for tool in &plugin.tools {
             if let PluginHandler::Service(adapter) = &tool.handler {
                 if adapter.service == id {
-                    candidate.require(adapter)?;
+                    candidate.validate_declaration(adapter)?;
                     matched = true;
                 }
             }

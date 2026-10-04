@@ -96,8 +96,9 @@ and cancellation. Persisted tool enable flags are checked live at dispatch, so
 pinning does not grant permission to use a disabled tool.
 
 This identifies declarations, not script contents or native executable bytes.
-The running gateway still loads its registry at startup; this is not hot reload,
-immutable package installation or sidecar service-handle publication.
+The running gateway still loads its registry at startup; this is not hot reload
+or immutable package installation. Explicit VM worker bindings now support the
+[process protocol](PLUGIN_PROCESS_PROTOCOL.md).
 
 ## Management and inference readiness
 
@@ -143,17 +144,17 @@ empty plugin registries and synthetic providers; it makes no paid inference call
 
 ## Compatibility and remaining work
 
-All current native tools are still present. This change does not yet reduce them
-to the three planned builtin file operations or make VM/dashboard installable
-packages. The shared dispatcher temporarily contains their native adapters.
+Most current native tools remain. The shared boundary does not yet reduce them
+to the three planned builtin file operations. VM supports an installed headless
+worker; VM/dashboard route and UI packaging remain incomplete. The shared dispatcher temporarily contains their native adapters.
 Agent VM redirection and chat host-file/terminal behavior remain distinct through
 an explicit dispatch mode, ready for the later execution-backend extraction.
 
 The worker and feature invocation APIs are in-process migration adapters for
 [PR 1](../plan/README.md). Core guard-aware navigation/context operations remain
 the authority behind future model-facing runtime-control wrappers.
-Sidecar IPC, installable service manifests,
-feature-process lifecycle and dependency removal remain subsequent work.
+The VM now has versioned IPC and process lifecycle. Generic process manifests,
+route/UI registration and the remaining dependency removal are subsequent work.
 Contracts/receipts retain their meanings; plugin processes remain operator-trusted.
 
 ## Verification

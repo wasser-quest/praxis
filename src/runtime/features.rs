@@ -49,6 +49,12 @@ pub trait NativeService: Send + Sync {
     /// Transitional, host-only access for native UI/CLI adapters. Model calls
     /// still go through invoke; independently hosted packages use IPC instead.
     fn as_any(&self) -> Option<&dyn std::any::Any> { None }
+    /// Registration is effect-free. Only startup may initialize a worker.
+    async fn initialize(&self) -> anyhow::Result<()> { Ok(()) }
+    fn available(&self) -> bool { true }
+    /// Synchronous signal used even when the shutdown budget is exhausted.
+    /// Implementations must only stop resources owned by this binding.
+    fn force_stop(&self) {}
     async fn invoke(
         &self,
         context: InvocationContext,
@@ -108,6 +114,7 @@ struct Binding {
     drained: Notify,
     forced: CancellationToken,
     shutdown: tokio::sync::Mutex<Option<bool>>,
+    initialization: tokio::sync::Mutex<Option<bool>>,
 }
 
 #[derive(Clone)]
@@ -162,6 +169,7 @@ impl ServiceHandle {
             drained: Notify::new(),
             forced: CancellationToken::new(),
             shutdown: tokio::sync::Mutex::new(None),
+            initialization: tokio::sync::Mutex::new(None),
         })))
     }
 
@@ -169,14 +177,44 @@ impl ServiceHandle {
         &self.0.descriptor
     }
     pub fn enabled(&self) -> bool {
-        self.0.state.lock().is_ok_and(|state| state.enabled)
+        self.0.state.lock().is_ok_and(|state| state.enabled) && self.0.service.available()
+    }
+    pub async fn initialize(&self) -> anyhow::Result<()> {
+        let mut initialized = self.0.initialization.lock().await;
+        anyhow::ensure!(
+            self.0.state.lock().is_ok_and(|state| state.enabled),
+            "Service binding is disabled"
+        );
+        if let Some(success) = *initialized {
+            anyhow::ensure!(
+                success && self.0.service.available(),
+                "Service initialization failed or instance stopped; bind a new instance"
+            );
+            return Ok(());
+        }
+        let success = matches!(
+            tokio::time::timeout(Duration::from_secs(6), self.0.service.initialize()).await,
+            Ok(Ok(()))
+        ) && self.0.state.lock().is_ok_and(|state| state.enabled)
+            && self.0.service.available();
+        *initialized = Some(success);
+        if !success {
+            self.close();
+            self.0.service.force_stop();
+            anyhow::bail!("Service initialization failed; check installed executable, settings and protocol version");
+        }
+        Ok(())
     }
     pub(crate) fn stop_token(&self) -> CancellationToken {
         self.0.forced.clone()
     }
     pub(crate) fn require(&self, adapter: &ServiceAdapter) -> anyhow::Result<()> {
-        validate_adapter(adapter)?;
+        self.validate_declaration(adapter)?;
         anyhow::ensure!(self.enabled(), "Native service is disabled");
+        Ok(())
+    }
+    pub(crate) fn validate_declaration(&self, adapter: &ServiceAdapter) -> anyhow::Result<()> {
+        validate_adapter(adapter)?;
         anyhow::ensure!(
             adapter.api_version == self.descriptor().api_version
                 && self.descriptor().operations.contains(&adapter.operation),
@@ -191,7 +229,7 @@ impl ServiceHandle {
             .state
             .lock()
             .map_err(|_| anyhow::anyhow!("Native service state unavailable"))?;
-        if !state.enabled {
+        if !state.enabled || !self.0.service.available() {
             return Err(InvocationError::Unavailable.into());
         }
         state.in_flight += 1;
@@ -237,6 +275,8 @@ impl ServiceHandle {
         let deadline = tokio::time::Instant::now() + grace;
         let Ok(mut stopped) = tokio::time::timeout_at(deadline, self.0.shutdown.lock()).await
         else {
+            self.0.forced.cancel();
+            self.0.service.force_stop();
             return Ok(false);
         };
         if let Some(result) = *stopped {
@@ -263,12 +303,14 @@ impl ServiceHandle {
         let clean = matches!(tokio::time::timeout_at(deadline, drain).await, Ok(Ok(())));
         if !clean {
             self.0.forced.cancel();
+            self.0.service.force_stop();
         }
         let cleaned = matches!(
             tokio::time::timeout_at(deadline, self.0.service.shutdown()).await,
             Ok(Ok(()))
         );
         let result = clean && cleaned;
+        if !cleaned { self.0.service.force_stop(); }
         *stopped = Some(result);
         Ok(result)
     }
