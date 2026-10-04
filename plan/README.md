@@ -173,8 +173,9 @@ clipboard) remains an operator smoke check.
   [dashboard packages](../docs/DASHBOARD_PACKAGES.md).
 - [x] Administration services + Host API `admin:read`/`admin:write`: tools,
   templates, workflow files, memory profiles, pairings, cron list, delegations.
-- [ ] Move remaining administration APIs (secrets, settings/providers,
-  profiles, skills, cron editing) into services.
+- [x] Secrets (masked, `secrets` scope), context profiles, skills, decision
+  profiles, router state, context/history writes in services + Host API.
+- [ ] Uploads/media, STT/TTS, chat audio, decision probe, feature page slots.
 - [ ] Package the frontend/static assets with the dashboard package and add
   navigation slots for absent features.
 - [ ] Convert the built-in dashboard into a package on Host API v1. Runtime-control and the remaining

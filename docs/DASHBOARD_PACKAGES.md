@@ -77,6 +77,18 @@ route requires a scope; undeclared scopes return 403.
 | `POST /admin/templates`, `PUT`/`DELETE /admin/templates/*name` | `admin:write` |
 | `PUT /admin/workflows/:name`, `PUT /admin/memory/:user` | `admin:write` |
 | `DELETE /admin/pairings/:user`, `POST`/`DELETE /admin/pending-pairings/:code` | `admin:write` |
+| `GET /admin/skills`, `/admin/router`, `/admin/profiles`, `/admin/decision-profiles(/:name)` | `admin:read` |
+| `POST /admin/profiles` `{name, source_user_id}`, `DELETE /admin/profiles/:name`, `POST /admin/profiles/:name/apply/:user` | `admin:write` |
+| `PUT /admin/decision-profiles/:name` | `admin:write` |
+| `GET /contexts/:user` | `sessions:read` |
+| `PUT`/`DELETE /contexts/:user` (context writes can change workflow and permissions) | `admin:write` |
+| `DELETE /messages/:user`, `POST /messages/:user/compact` | `sessions:write` |
+| `GET /secrets` (masked only), `PUT /secrets` | `secrets` |
+
+`PUT /secrets` keeps the built-in guards: empty `gateway_api_key` /
+`dashboard_admin_password` are ignored (no lockout), and with
+`master_password` the store is only re-encrypted if that password opens the
+existing store; provider keys reload the LLM router without restart.
 
 Admin writes go through `services::admin`, the same code the built-in
 dashboard now uses: template updates are rendered against a real context
@@ -100,7 +112,7 @@ the Host API grants, but they are not an OS sandbox.
 
 ## Not yet in v1
 
-Secrets, settings/providers, profiles, skills, cron editing, uploads/media,
-STT/TTS, and feature page slots (e.g. the VM page) are still only in the
-built-in dashboard. They move into services and
+Uploads/media, STT/TTS, chat audio, the decision probe, and feature page slots
+(e.g. the VM page) are still only in the built-in dashboard. Provider setup
+stays on the gateway client API (`/v1/...`). They move into services and
 Host API scopes next; the built-in dashboard then becomes a package itself.

@@ -103,7 +103,6 @@ fn router(_state: Arc<ApiState>) -> Router<Arc<ApiState>> {
         .route(&route("/info"), get(info))
         .route(&route("/sessions"), get(sessions))
         .route(&route("/contexts"), get(contexts))
-        .route(&route("/messages/:user"), get(messages))
         .route(&route("/messages/:user/clear-chat"), post(clear_chat))
         .route(&route("/sessions/:user/fork"), post(fork))
         .route(&route("/graphs/:user"), get(graph))
@@ -134,6 +133,20 @@ fn router(_state: Arc<ApiState>) -> Router<Arc<ApiState>> {
             post(admin_approve).delete(admin_delete_pending),
         )
         .route(&route("/admin/cron"), get(admin_cron))
+        .route(&route("/admin/skills"), get(admin_skills))
+        .route(&route("/admin/router"), get(admin_router))
+        .route(&route("/admin/profiles"), get(admin_profiles).post(admin_save_profile))
+        .route(&route("/admin/profiles/:name"), delete(admin_delete_profile))
+        .route(&route("/admin/profiles/:name/apply/:user"), post(admin_apply_profile))
+        .route(&route("/admin/decision-profiles"), get(admin_decisions))
+        .route(
+            &route("/admin/decision-profiles/:name"),
+            get(admin_decision).put(admin_save_decision),
+        )
+        .route(&route("/contexts/:user"), get(context).put(update_context).delete(delete_context))
+        .route(&route("/messages/:user"), get(messages).delete(clear_messages))
+        .route(&route("/messages/:user/compact"), post(compact))
+        .route(&route("/secrets"), get(secrets).put(update_secrets))
         .route(&route("/admin/delegations/:user"), get(admin_delegations))
 }
 
@@ -141,15 +154,18 @@ fn router(_state: Arc<ApiState>) -> Router<Arc<ApiState>> {
 fn required_scope(method: &axum::http::Method, path: &str) -> Option<&'static str> {
     let rest = path.strip_prefix(HOST_API_PREFIX)?;
     let first = rest.trim_start_matches('/').split('/').next().unwrap_or("");
+    let read = method == axum::http::Method::GET;
     Some(match first {
         "info" => "",
-        "sessions" if method == axum::http::Method::POST => "sessions:write",
-        "messages" if method == axum::http::Method::POST => "sessions:write",
+        "sessions" | "messages" if !read => "sessions:write",
+        // Context writes can change workflow, templates and permissions.
+        "contexts" if !read => "admin:write",
         "sessions" | "contexts" | "messages" | "graphs" | "execution" | "usage" => "sessions:read",
         "agent" => "agent",
         "events" => "events",
         "auth" => "auth",
-        "admin" if method == axum::http::Method::GET => "admin:read",
+        "secrets" => "secrets",
+        "admin" if read => "admin:read",
         "admin" => "admin:write",
         _ => return None,
     })
@@ -453,6 +469,86 @@ async fn admin_delegations(State(s): State<Arc<ApiState>>, Path(user): Path<Stri
     admin_ok(admin::delegations(&s.db, &user))
 }
 
+async fn admin_skills(State(s): State<Arc<ApiState>>) -> ApiResult {
+    admin_ok(admin::skills(&s.db, std::path::Path::new("skills")))
+}
+async fn admin_router() -> Json<Value> {
+    Json(match crate::gpu_router::state().await {
+        Some(state) => serde_json::to_value(&state).unwrap_or_else(|_| json!({"configured": false})),
+        None => json!({"configured": false}),
+    })
+}
+async fn admin_profiles(State(s): State<Arc<ApiState>>) -> ApiResult {
+    admin_ok(crate::services::profiles::list(&s.db))
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProfileSave {
+    name: String,
+    source_user_id: String,
+}
+async fn admin_save_profile(State(s): State<Arc<ApiState>>, Json(req): Json<ProfileSave>) -> ApiResult {
+    admin_ok(crate::services::profiles::save(&s.db, &req.name, &req.source_user_id))
+}
+async fn admin_delete_profile(State(s): State<Arc<ApiState>>, Path(name): Path<String>) -> ApiResult {
+    admin_ok(crate::services::profiles::delete(&s.db, &name))
+}
+async fn admin_apply_profile(
+    State(s): State<Arc<ApiState>>,
+    Path((name, user)): Path<(String, String)>,
+) -> ApiResult {
+    admin_ok(crate::services::profiles::apply(&s.db, &name, &user))
+}
+async fn admin_decisions() -> ApiResult {
+    admin_ok(admin::decision_profiles())
+}
+async fn admin_decision(Path(name): Path<String>) -> ApiResult {
+    admin_ok(admin::decision_profile(&name))
+}
+async fn admin_save_decision(Path(name): Path<String>, Json(req): Json<Content>) -> ApiResult {
+    done(admin::save_decision_profile(&name, &req.content))
+}
+async fn context(State(s): State<Arc<ApiState>>, Path(user): Path<String>) -> ApiResult {
+    let ctx = s.db.load_context(&user).map_err(internal)?;
+    serde_json::to_value(ctx).map(Json).map_err(|e| internal(e.into()))
+}
+async fn update_context(
+    State(s): State<Arc<ApiState>>,
+    Path(user): Path<String>,
+    Json(update): Json<Value>,
+) -> ApiResult {
+    let ctx = s
+        .db
+        .merge_context(&user, update)
+        .map_err(|e| fail(StatusCode::BAD_REQUEST, e))?;
+    serde_json::to_value(ctx).map(Json).map_err(|e| internal(e.into()))
+}
+async fn delete_context(State(s): State<Arc<ApiState>>, Path(user): Path<String>) -> ApiResult {
+    s.db.delete_context(&user).map_err(internal)?;
+    Ok(Json(json!({"success": true})))
+}
+async fn clear_messages(State(s): State<Arc<ApiState>>, Path(user): Path<String>) -> ApiResult {
+    s.db.clear_messages(&user).map_err(internal)?;
+    Ok(Json(json!({"success": true})))
+}
+/// Same compaction path as the dashboard and WebSocket `/compact`.
+async fn compact(Path(user): Path<String>) -> ApiResult {
+    let gateway = crate::gateway::state_ref()
+        .ok_or_else(|| fail(StatusCode::SERVICE_UNAVAILABLE, "Gateway not running"))?;
+    crate::gateway::ws_handler::compact_history(gateway, &user)
+        .await
+        .map(|summary| Json(json!({"success": true, "summary": summary})))
+        .map_err(internal)
+}
+async fn secrets() -> Json<crate::services::secrets::SecretsInfo> {
+    Json(crate::services::secrets::masked())
+}
+async fn update_secrets(Json(req): Json<crate::services::secrets::SecretsUpdate>) -> ApiResult {
+    crate::services::secrets::update(req)
+        .map(|message| Json(json!({"message": message})))
+        .map_err(admin_fail)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -499,8 +595,28 @@ mod tests {
             .unwrap();
         assert_eq!(post.status(), 403);
         assert_eq!(get("/nope", t).send().await.unwrap().status(), 404);
-        // Administration needs its own scopes.
+        // Administration and secrets need their own scopes.
         assert_eq!(get("/admin/tools", t).send().await.unwrap().status(), 403);
+        assert_eq!(get("/secrets", t).send().await.unwrap().status(), 403);
+        // Context and history writes are not covered by sessions:read.
+        let ctx = get("/contexts/u", t).send().await.unwrap();
+        assert_eq!(ctx.status(), 200);
+        for (method, path) in [
+            (reqwest::Method::PUT, "/contexts/u"),
+            (reqwest::Method::DELETE, "/contexts/u"),
+            (reqwest::Method::DELETE, "/messages/u"),
+            (reqwest::Method::POST, "/messages/u/compact"),
+        ] {
+            let status = http
+                .request(method, format!("{}{HOST_API_PREFIX}{path}", grant.url))
+                .bearer_auth(&grant.token)
+                .json(&json!({}))
+                .send()
+                .await
+                .unwrap()
+                .status();
+            assert_eq!(status, 403, "{path}");
+        }
         api.stop();
     }
 
@@ -518,7 +634,10 @@ mod tests {
             .send().await.unwrap().json().await.unwrap();
         assert!(tools["total"].as_u64().unwrap() > 0);
         assert!(tools["tools"].as_array().unwrap().iter().any(|t| t["source"] == "builtin"));
-        for path in ["/admin/pairings", "/admin/pending-pairings", "/admin/cron", "/admin/memory/u"] {
+        for path in [
+            "/admin/pairings", "/admin/pending-pairings", "/admin/cron", "/admin/memory/u",
+            "/admin/skills", "/admin/profiles", "/admin/router",
+        ] {
             let status = http.get(url(path)).bearer_auth(&grant.token).send().await.unwrap().status();
             assert_eq!(status, 200, "{path}");
         }
@@ -549,6 +668,43 @@ mod tests {
             .json(&json!({"content": "x"})).send().await.unwrap();
         assert_eq!(workflow.status(), 400);
         assert!(!std::path::Path::new(WORKFLOWS).join("bad.name.sm").exists());
+    }
+
+    #[tokio::test]
+    async fn secrets_scope_is_masked_and_keeps_lockout_guards() {
+        let _lock = crate::db::secrets::test_lock();
+        let original = crate::db::secrets::get_secrets();
+        let mut secrets = crate::db::secrets::Secrets::default();
+        secrets.openai_api_key = Some("sk-very-secret-value-123456".into());
+        secrets.gateway_api_key = Some("gateway-key-abcdef-123456".into());
+        crate::db::secrets::init_secrets(secrets);
+        let dir = tempfile::tempdir().unwrap();
+        let db = crate::db::Database::new(dir.path()).unwrap();
+        let api = HostApi::start(db, Arc::new(crate::plugins::PluginRegistry::new()), "d", &["secrets".into()], 3537)
+            .await
+            .unwrap();
+        let grant = api.grant().clone();
+        let http = reqwest::Client::new();
+        let url = format!("{}{HOST_API_PREFIX}/secrets", grant.url);
+        let body = http.get(&url).bearer_auth(&grant.token).send().await.unwrap().text().await.unwrap();
+        assert!(!body.contains("sk-very-secret-value"), "{body}");
+        assert!(!body.contains("gateway-key-abcdef"), "{body}");
+        let update: Value = http
+            .put(&url)
+            .bearer_auth(&grant.token)
+            .json(&json!({"gateway_api_key": "  "}))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert!(update["message"].as_str().unwrap().contains("gateway_api_key"), "{update}");
+        assert_eq!(
+            crate::db::secrets::get_secrets().gateway_api_key.as_deref(),
+            Some("gateway-key-abcdef-123456")
+        );
+        crate::db::secrets::init_secrets(original);
     }
 
     #[tokio::test]

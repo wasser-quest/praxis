@@ -26,6 +26,9 @@ pub const SCOPES: &[&str] = &[
     "admin:read",
     // Change those (validated by the host exactly like the built-in editor).
     "admin:write",
+    // Masked secret view and secret updates (master-password guarded).
+    // Values are never returned.
+    "secrets",
 ];
 
 pub fn valid_scope(scope: &str) -> bool {

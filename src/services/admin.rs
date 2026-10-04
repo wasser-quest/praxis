@@ -305,6 +305,46 @@ pub fn update_memory(db: &crate::db::Database, user_id: &str, update: MemoryUpda
     .map_err(|e| Failure::BadRequest(e.to_string()))
 }
 
+// ── Skills ───────────────────────────────────────────────────────────────
+
+pub fn skills(db: &crate::db::Database, dir: &Path) -> Outcome<Value> {
+    let mut registry = crate::skills::SkillRegistry::new();
+    if dir.exists() {
+        registry.load_from_dir(dir)?;
+    }
+    let skills: Vec<Value> = registry
+        .list()
+        .iter()
+        .map(|s| json!({"name": s.name, "description": s.description, "user_only": s.user_only}))
+        .collect();
+    let active = db
+        .load_context("default")
+        .ok()
+        .and_then(|c| c.settings.active_skill.clone());
+    Ok(json!({ "skills": skills, "active_skill": active }))
+}
+
+// ── Decision profiles (files under decisions/) ───────────────────────────
+
+const DECISIONS: &str = "decisions";
+
+pub fn decision_profiles() -> Outcome<Value> {
+    let list = crate::gateway::decision_profiles::list(Path::new(DECISIONS))
+        .map_err(|e| Failure::BadRequest(e.to_string()))?;
+    Ok(json!({ "profiles": list }))
+}
+pub fn decision_profile(name: &str) -> Outcome<Value> {
+    let path = crate::gateway::decision_profiles::resolve(Path::new(DECISIONS), name)
+        .map_err(|_| Failure::NotFound)?;
+    Ok(json!({ "name": name, "content": std::fs::read_to_string(path)? }))
+}
+/// Validated by the decision-profile parser before an atomic write.
+pub fn save_decision_profile(name: &str, content: &str) -> Outcome<()> {
+    crate::gateway::decision_profiles::save(Path::new(DECISIONS), name, content)
+        .map(|_| ())
+        .map_err(|e| Failure::BadRequest(e.to_string()))
+}
+
 // ── Pairings, cron, delegations ──────────────────────────────────────────
 
 fn query(db: &crate::db::Database, sql: &str, row: impl Fn(&rusqlite::Row) -> rusqlite::Result<Value>) -> Outcome<Vec<Value>> {
