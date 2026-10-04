@@ -204,6 +204,7 @@ pub async fn start(db: crate::db::Database, config: crate::config::Config) -> an
     if let Some(error) = inference::readiness(&state).error {
         tracing::warn!(%error, "Management ready; inference needs operator setup");
     }
+    let feature_services = state.plugins.clone();
     let app = routes(state);
 
     let addr = format!("0.0.0.0:{}", config.gateway_port);
@@ -216,6 +217,7 @@ pub async fn start(db: crate::db::Database, config: crate::config::Config) -> an
     crate::tools::execute_terminal::register_maintenance(&mut services)?;
     let result = axum::serve(listener, app).await;
     services.shutdown(std::time::Duration::from_secs(2)).await;
+    feature_services.shutdown_services(std::time::Duration::from_secs(2)).await;
     result?;
 
     Ok(())

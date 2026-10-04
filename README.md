@@ -501,6 +501,9 @@ and catalog synchronization are now core services, with independently owned
 retention, cron and shell workers. Each task pins its plugin declarations and
 action receipts record the registry revision. Live tool disable flags still
 apply. Provider clients initialize lazily so management works before LLM setup.
+Native feature adapters can now bind service-backed tools with host-issued task
+identity, workspace, cancellation, deadline and scoped storage. Contracts and
+receipts stay in core. See [native invocation API v1](docs/NATIVE_FEATURE_SERVICES.md).
 
 **POML, contexts and state machines remain in core.** Local workflows can run
 without feature plugins or the dashboard. Full POML rendering requires Node and

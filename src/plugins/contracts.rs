@@ -94,6 +94,7 @@ pub(crate) fn identifier(value: &str) -> bool {
 }
 fn validate_handler(handler: &PluginHandler) -> anyhow::Result<()> {
     match handler {
+        PluginHandler::Service(adapter) => crate::runtime::features::validate_adapter(adapter)?,
         PluginHandler::Verification(_) | PluginHandler::SourceEdit(_) => {}
         PluginHandler::Script { path, interpreter } => anyhow::ensure!(
             !path.is_empty()
@@ -134,6 +135,13 @@ fn validate_checks(checks: &[CheckContract], required: bool) -> anyhow::Result<(
     Ok(())
 }
 pub(crate) fn validate_tool(plugin: &str, tool: &PluginTool) -> anyhow::Result<()> {
+    if let PluginHandler::Service(adapter) = &tool.handler {
+        anyhow::ensure!(
+            identifier(plugin) && identifier(&tool.name),
+            "Native service names must be identifiers"
+        );
+        crate::runtime::features::validate_adapter(adapter)?;
+    }
     let Some(contract) = &tool.contract else {
         anyhow::ensure!(
             !matches!(
@@ -189,7 +197,9 @@ pub(crate) fn validate_tool(plugin: &str, tool: &PluginTool) -> anyhow::Result<(
         anyhow::ensure!(
             !matches!(
                 &cleanup.handler,
-                PluginHandler::Verification(_) | PluginHandler::SourceEdit(_)
+                PluginHandler::Verification(_)
+                    | PluginHandler::SourceEdit(_)
+                    | PluginHandler::Service(_)
             ),
             "Native adapters cannot perform compensation"
         );
@@ -402,8 +412,25 @@ pub(crate) async fn execute(
     context: Option<&Value>,
     secrets: Option<&HashMap<String, String>>,
 ) -> anyhow::Result<String> {
+    execute_with_service(plugin, tool, user, call, args, context, secrets, None).await
+}
+
+pub(crate) async fn execute_with_service(
+    plugin: &Plugin,
+    tool: &PluginTool,
+    user: &str,
+    call: &str,
+    args: &Value,
+    context: Option<&Value>,
+    secrets: Option<&HashMap<String, String>>,
+    service: Option<&crate::runtime::features::ServiceInvocation>,
+) -> anyhow::Result<String> {
     validate_tool(&plugin.name, tool)?;
     validate_input(&tool.parameters, args)?;
+    anyhow::ensure!(
+        !matches!(&tool.handler, PluginHandler::Service(_)) || service.is_some(),
+        "Native service requires a host-issued invocation context"
+    );
     let contract = tool
         .contract
         .as_ref()
@@ -415,7 +442,19 @@ pub(crate) async fn execute(
         .ok_or_else(|| anyhow::anyhow!("Capability requires an active task"))?;
     anyhow::ensure!(!cancel.is_cancelled(), "Task cancelled");
     let root = action_contracts::action_root(user)?;
-    let _operation = tokio::select! { biased; _ = cancel.cancelled() => anyhow::bail!("Task cancelled"), lock = crate::tools::apply_patch::FILE_OPERATIONS.lock() => lock };
+    let admission_deadline = async {
+        if let Some(service) = service {
+            tokio::time::sleep_until(service.context.deadline()).await;
+        } else {
+            std::future::pending::<()>().await;
+        }
+    };
+    let _operation = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => anyhow::bail!("Task cancelled"),
+        _ = admission_deadline => anyhow::bail!("Native service invocation timed out before execution"),
+        lock = crate::tools::apply_patch::FILE_OPERATIONS.lock() => lock,
+    };
     let workspace = crate::tools::apply_patch::journal::ready(&root)?;
     if contract.effect.mutates() {
         task_control::invalidate_workspace(&root)?;
@@ -440,6 +479,9 @@ pub(crate) async fn execute(
             &mut receipt,
         )
         .await?;
+        if let Some(service) = service {
+            service.ready().map_err(|error| crate::runtime::features::failure(&error))?;
+        }
         if contract.effect.mutates() {
             if let Some(workspace) = &workspace {
                 workspace
@@ -450,7 +492,7 @@ pub(crate) async fn execute(
         receipt.workspace_revision = crate::tools::apply_patch::journal::workspace_revision(&root)
             .map_err(|_| "workspace_error")?;
         receipt.attempted = true;
-        result = handler(&tool.handler, args, context, &scoped, &root).await?;
+        result = handler(&tool.handler, args, context, &scoped, &root, service).await?;
         let evidence = conditions(
             &contract.postconditions,
             "postcondition",
@@ -491,7 +533,7 @@ pub(crate) async fn execute(
                 // /stop cancels the requested action, not already-needed cleanup.
                 let cleanup_token = CancellationToken::new();
                 let compensation = async {
-                    handler(&cleanup.handler, &payload, context, &scoped, &root).await?;
+                    handler(&cleanup.handler, &payload, context, &scoped, &root, None).await?;
                     conditions(
                         &cleanup.postconditions,
                         "compensation",
@@ -569,8 +611,14 @@ async fn handler(
     context: Option<&Value>,
     secrets: &HashMap<String, String>,
     root: &Path,
+    service: Option<&crate::runtime::features::ServiceInvocation>,
 ) -> Result<Value, Failure> {
     match handler {
+        PluginHandler::Service(_) => service
+            .ok_or("handler_failed")?
+            .invoke(args)
+            .await
+            .map_err(|error| crate::runtime::features::failure(&error)),
         // The action's configured postconditions are the operation. Execute them
         // exactly once in the shared lifecycle; only their fresh receipts prove
         // success. This acknowledgement carries no verification authority.

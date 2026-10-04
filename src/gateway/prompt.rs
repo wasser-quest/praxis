@@ -208,6 +208,9 @@ pub fn prepare_runtime(
         ctx.turn = turn;
     }
     let workspace = state.config.workspace_root()?;
+    if super::task_control::cancellation(user_id).is_some() {
+        super::task_control::pin_workspace(user_id, &workspace)?;
+    }
     let root = Path::new(&state.config.root_dir);
     let candidate = super::workflow_actions::plan(root, &ctx, input, &state.plugins, channel_id)?;
     let workflow = crate::sm::load_file_in(&root.join("contexts"), workflow_name(&candidate))

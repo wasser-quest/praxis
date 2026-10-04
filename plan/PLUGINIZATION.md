@@ -2,11 +2,13 @@
 
 Status: migration started; the roadmap baseline is merged main `a037f21`.
 The [first implementation slice](../docs/PLUGIN_RUNTIME.md) adds shared tool
-ownership and dispatch. The [progress checklist](README.md) tracks PR 1's
-remaining work. A native background-service host and core event/template services
+ownership and dispatch. The [progress checklist](README.md) records PR 1's
+completed native foundation. A native background-service host and core event/template services
 are now implemented, along with task registry snapshots, receipt revision
-evidence and provider-independent management with lazy clients.
-Manifest v2, feature-service tool hosting, route/UI
+evidence and provider-independent management with lazy clients. Native feature
+invocation API v1 adds host-issued identity/workspace, scoped storage and
+credentials, deadline/cancellation handling and contracted service-backed tools.
+Manifest v2, independently installable feature services, route/UI
 registration and minimal startup below remain implementation targets.
 
 ## 1. Decision and scope
@@ -42,9 +44,9 @@ explicit minimal distribution without starting optional features.
 ## 2. What exists and what must change
 
 Today's `src/plugins/mod.rs` loads tool manifests with builtin, HTTP, script,
-verification and source-edit handlers. Plugins can declare action contracts,
+verification, source-edit and host-bound native service handlers. Plugins can declare action contracts,
 context defaults, secrets and enabled state. This is a useful starting point,
-but it does not register providers, long-running services, routes, UI pages or
+but manifests alone do not register providers, service processes, routes, UI pages or
 workflow/template packages. A manifest referring to a Rust builtin still leaves
 that implementation compiled into Praxis.
 
@@ -279,9 +281,10 @@ an already committed operation.
   dispatcher; preserve charge-on-attempt, cancellation, output archival and
   existing guard checks. Discovery lists permitted enabled tools; it cannot
   install, enable or grant permissions.
-- Introduce the smallest service/context-handle API needed by a VM adapter and
-  a host-control adapter for runtime-control wrappers. Validate versions and
-  dependencies before provider requests or effects.
+- Introduce the smallest service/context-handle API needed by a VM adapter.
+  Keep the existing guarded core navigation/context APIs authoritative; expose
+  their scoped host-control adapter when packaging the wrappers in PR 5.
+  Validate native versions and required bindings before provider requests or effects.
 - Separate runtime events, template/catalog sync and retention from dashboard,
   cron and shell imports. Defer provider initialization: plugin administration
   and health must work with no configured inference provider.
@@ -445,6 +448,7 @@ aliases have a migration path, and both positive and absent/disabled cases pass.
 Measure these gates per package instead of treating a renamed module or JSON
 manifest as finished pluginization.
 
-The next implementation is PR 1 followed immediately by the VM extraction.
+PR 1's native foundation is implemented and verified. The next implementation
+is PR 2: the headless VM adapter extraction.
 Keep Decision IR and verified execution as shared runtime semantics throughout;
 this architecture reorganizes their capabilities rather than replacing them.

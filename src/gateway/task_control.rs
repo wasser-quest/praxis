@@ -10,6 +10,8 @@ use std::{
 use tokio_util::sync::CancellationToken;
 
 struct TaskState {
+    id: String,
+    workspace: Mutex<Option<std::path::PathBuf>>,
     registry: Mutex<Option<RegistryPin>>,
     verification: Mutex<super::action_contracts::VerificationState>,
     token: CancellationToken,
@@ -36,9 +38,12 @@ pub fn begin(user: &str) -> anyhow::Result<TaskGuard> {
             "A task is already running for this user; wait, send agent input, or stop it first"
         ),
         Entry::Vacant(entry) => {
+            let id = uuid::Uuid::new_v4().to_string();
             let state = Arc::new(TaskState {
+                verification: Mutex::new(super::action_contracts::VerificationState::for_task(&id)),
+                id,
+                workspace: Mutex::new(None),
                 registry: Mutex::new(None),
-                verification: Mutex::new(super::action_contracts::VerificationState::default()),
                 token: CancellationToken::new(),
                 tools: Mutex::new(HashSet::new()),
                 show_thinking: std::sync::atomic::AtomicBool::new(false),
@@ -53,6 +58,40 @@ pub fn begin(user: &str) -> anyhow::Result<TaskGuard> {
             })
         }
     }
+}
+
+pub fn task_id(user: &str) -> Option<String> {
+    TASKS.get(user).map(|task| task.id.clone())
+}
+
+/// Runtime configuration supplies this root, including for legacy workflows.
+/// settings.path and model operands cannot retarget a running feature call.
+pub fn pin_workspace(user: &str, root: &std::path::Path) -> anyhow::Result<()> {
+    let task = TASKS
+        .get(user)
+        .ok_or_else(|| anyhow::anyhow!("Workspace pinning requires an active task"))?;
+    anyhow::ensure!(!task.token.is_cancelled(), "Task cancelled");
+    let root = root.canonicalize()?;
+    anyhow::ensure!(root.is_dir(), "Task workspace must be a directory");
+    let mut pinned = task
+        .workspace
+        .lock()
+        .map_err(|_| anyhow::anyhow!("Workspace lock unavailable"))?;
+    if let Some(existing) = &*pinned {
+        anyhow::ensure!(
+            existing == &root,
+            "Workspace root is pinned for this task; start a new task before changing it"
+        );
+    } else {
+        *pinned = Some(root);
+    }
+    Ok(())
+}
+
+pub fn workspace(user: &str) -> Option<std::path::PathBuf> {
+    TASKS
+        .get(user)
+        .and_then(|task| task.workspace.lock().ok().and_then(|root| root.clone()))
 }
 
 /// Capture immutable declarations before routing, discovery or inference.

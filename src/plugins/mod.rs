@@ -57,6 +57,9 @@ pub enum PluginHandler {
     /// Scoped source replacement with the durable native patch journal.
     #[serde(rename = "source_edit")]
     SourceEdit(SourceEditAdapter),
+    /// Owner-scoped native feature binding, resolved by the host at startup.
+    #[serde(rename = "service")]
+    Service(ServiceAdapter),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -67,15 +70,26 @@ pub struct VerificationAdapter {}
 #[serde(deny_unknown_fields)]
 pub struct SourceEditAdapter {}
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ServiceAdapter {
+    pub service: String,
+    pub operation: String,
+    pub api_version: u32,
+    pub timeout_secs: u64,
+}
+
 #[derive(Clone)]
 pub struct PluginRegistry {
     plugins: HashMap<String, Plugin>,
+    services: HashMap<String, crate::runtime::features::ServiceHandle>,
 }
 
 impl PluginRegistry {
     pub fn new() -> Self {
         Self {
             plugins: HashMap::new(),
+            services: HashMap::new(),
         }
     }
 
@@ -95,9 +109,18 @@ impl PluginRegistry {
             }
         }
         let declarations = canonical(serde_json::to_value(&self.plugins)?);
+        let mut services: Vec<_> = self
+            .services
+            .values()
+            .map(|handle| handle.descriptor())
+            .collect();
+        services.sort_by(|a, b| (&a.owner, &a.id).cmp(&(&b.owner, &b.id)));
         let bytes = serde_json::to_vec(&(
             "praxis.registry.v1", env!("CARGO_PKG_VERSION"),
-            crate::runtime::services::SERVICE_API_VERSION, declarations,
+            crate::runtime::services::SERVICE_API_VERSION,
+            crate::runtime::features::INVOCATION_API_VERSION,
+            declarations,
+            services,
         ))?;
         Ok(format!("{:x}", Sha256::digest(bytes)))
     }
@@ -111,7 +134,7 @@ impl PluginRegistry {
     pub fn try_register(&mut self, plugin: Plugin) -> anyhow::Result<()> {
         anyhow::ensure!(!self.plugins.contains_key(&plugin.name), "Plugin owner_conflict: duplicate package '{}'", plugin.name);
         for tool in &plugin.tools { contracts::validate_tool(&plugin.name, tool)?; }
-        let mut candidate = Self { plugins: self.plugins.clone() };
+        let mut candidate = self.clone();
         candidate.register(plugin);
         crate::tools::catalog::validate(&candidate)?;
         self.plugins = candidate.plugins;
@@ -137,6 +160,17 @@ impl PluginRegistry {
     }
 
     pub fn tool_definitions(&self) -> Vec<crate::gateway::llm::provider::ToolDefinition> {
+        self.declared_tool_definitions()
+            .into_iter()
+            .filter(|definition| self.require_service(&definition.function.name).is_ok())
+            .collect()
+    }
+
+    /// Declarations for setup validation, including unbound optional services.
+    /// Discovery/inference must use tool_definitions instead.
+    pub(crate) fn declared_tool_definitions(
+        &self,
+    ) -> Vec<crate::gateway::llm::provider::ToolDefinition> {
         self.enabled_tools()
             .iter()
             .map(|t| crate::gateway::llm::provider::ToolDefinition {
@@ -148,6 +182,82 @@ impl PluginRegistry {
                 },
             })
             .collect()
+    }
+
+    pub fn register_service(
+        &mut self,
+        owner: &str,
+        id: &str,
+        api_version: u32,
+        operations: &[&str],
+        service: std::sync::Arc<dyn crate::runtime::features::NativeService>,
+    ) -> anyhow::Result<()> {
+        let plugin = self
+            .get(owner)
+            .ok_or_else(|| anyhow::anyhow!("Native service owner is not loaded"))?;
+        let key = format!("{owner}/{id}");
+        anyhow::ensure!(
+            !self.services.contains_key(&key),
+            "Native service owner conflict"
+        );
+        let candidate = crate::runtime::features::ServiceHandle::new(
+            owner,
+            id,
+            api_version,
+            operations,
+            service,
+        )?;
+        let mut matched = false;
+        for tool in &plugin.tools {
+            if let PluginHandler::Service(adapter) = &tool.handler {
+                if adapter.service == id {
+                    candidate.require(adapter)?;
+                    matched = true;
+                }
+            }
+        }
+        anyhow::ensure!(matched, "Native service is not declared by its owner");
+        self.services.insert(key, candidate);
+        Ok(())
+    }
+
+    pub fn service_handle(
+        &self,
+        owner: &str,
+        id: &str,
+    ) -> Option<crate::runtime::features::ServiceHandle> {
+        self.services.get(&format!("{owner}/{id}")).cloned()
+    }
+
+    pub(crate) fn require_service(&self, name: &str) -> anyhow::Result<()> {
+        let crate::tools::catalog::ToolOwner::Plugin { plugin, tool } =
+            crate::tools::catalog::owner(self, name)?
+        else {
+            return Ok(());
+        };
+        if let PluginHandler::Service(adapter) = &tool.handler {
+            self.service_handle(&plugin.name, &adapter.service)
+                .ok_or_else(|| anyhow::anyhow!("Native service binding is missing"))?
+                .require(adapter)?;
+        }
+        Ok(())
+    }
+
+    pub async fn shutdown_services(&self, grace: std::time::Duration) {
+        let deadline = tokio::time::Instant::now() + grace;
+        for handle in self.services.values() {
+            handle.close();
+        }
+        for handle in self.services.values() {
+            if !matches!(
+                handle
+                    .disable(deadline.saturating_duration_since(tokio::time::Instant::now()))
+                    .await,
+                Ok(true)
+            ) {
+                tracing::warn!(owner=%handle.descriptor().owner, service=%handle.descriptor().id, "Native feature shutdown was forced or cleanup incomplete");
+            }
+        }
     }
 
     pub fn context_defaults(&self) -> HashMap<String, serde_json::Value> {
@@ -220,6 +330,10 @@ impl PluginRegistry {
             crate::tools::catalog::owner(self, name)? else {
                 anyhow::bail!("Capability cannot shadow a built-in tool");
             };
+        anyhow::ensure!(
+            !matches!(&tool.handler, PluginHandler::Service(_)),
+            "Native services require a host-issued invocation context"
+        );
         if tool.contract.is_some() {
             anyhow::ensure!(
                 self.manages_contract(name),
@@ -228,6 +342,100 @@ impl PluginRegistry {
             contracts::execute(plugin, tool, user, call, args, context, secrets).await
         } else {
             self.execute_tool(name, args, context, secrets).await
+        }
+    }
+
+    /// Shared ingress supplies the authenticated database scope. Model operands
+    /// cannot choose owner, task, session, registry revision or workspace root.
+    pub async fn execute_tool_with_host(
+        &self,
+        db: &crate::db::Database,
+        user: &str,
+        call: &str,
+        name: &str,
+        args: &serde_json::Value,
+        context: Option<&serde_json::Value>,
+        secrets: Option<&HashMap<String, String>>,
+    ) -> anyhow::Result<String> {
+        crate::gateway::task_control::check_registry(user, self)?;
+        let crate::tools::catalog::ToolOwner::Plugin { plugin, tool } =
+            crate::tools::catalog::owner(self, name)?
+        else {
+            anyhow::bail!("Capability cannot shadow a built-in tool");
+        };
+        let PluginHandler::Service(adapter) = &tool.handler else {
+            return self
+                .execute_tool_for_task(user, call, name, args, context, secrets)
+                .await;
+        };
+        contracts::validate_tool(&plugin.name, tool)?;
+        self.require_service(name)?;
+        let definitions = self.declared_tool_definitions();
+        crate::gateway::agent_loop::validate_tool_params(name, args, &definitions)
+            .map_err(anyhow::Error::msg)?;
+        anyhow::ensure!(
+            args.is_object() && serde_json::to_vec(args)?.len() <= 1024 * 1024,
+            "Native service input must be a bounded object"
+        );
+        let scoped = plugin
+            .secrets
+            .iter()
+            .filter_map(|key| {
+                secrets
+                    .and_then(|values| values.get(key))
+                    .map(|value| (key.clone(), value.clone()))
+            })
+            .collect();
+        let timeout = adapter.timeout_secs.min(
+            tool.contract
+                .as_ref()
+                .map(|contract| contract.timeout_secs)
+                .unwrap_or(adapter.timeout_secs),
+        );
+        let writable = tool.contract.as_ref().is_none_or(|contract| {
+            matches!(
+                contract.effect,
+                contracts::EffectClass::WorkspaceWrite | contracts::EffectClass::ExternalWrite
+            )
+        });
+        let handle = self
+            .service_handle(&plugin.name, &adapter.service)
+            .ok_or_else(|| anyhow::anyhow!("Native service binding is missing"))?;
+        let invocation = crate::runtime::features::ServiceInvocation {
+            context: crate::runtime::features::InvocationContext::issue(
+                db,
+                user,
+                call,
+                &plugin.name,
+                name,
+                scoped,
+                std::time::Duration::from_secs(timeout),
+                writable,
+                handle.stop_token(),
+            )?,
+            handle,
+            operation: adapter.operation.clone(),
+        };
+        if tool.contract.is_some() {
+            contracts::execute_with_service(
+                plugin,
+                tool,
+                user,
+                call,
+                args,
+                context,
+                secrets,
+                Some(&invocation),
+            )
+            .await
+        } else {
+            crate::gateway::action_contracts::before_tool(user, name)?;
+            let result = invocation.invoke(args).await?;
+            // Native outputs cannot forge a top-level host receipt.
+            Ok(
+                serde_json::json!({"service":invocation.handle.descriptor(),"result":result})
+                    .to_string(),
+            )
         }
     }
 
@@ -244,6 +452,9 @@ impl PluginRegistry {
             };
         anyhow::ensure!(tool.contract.is_none(), "Contracted tools require task-owned execution");
         match &tool.handler {
+            PluginHandler::Service(_) => {
+                anyhow::bail!("Native services require a host-issued invocation context")
+            }
             PluginHandler::Verification(_) | PluginHandler::SourceEdit(_) => {
                 anyhow::bail!("Native verification requires an action contract")
             }

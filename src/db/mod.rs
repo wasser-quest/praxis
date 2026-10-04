@@ -10,6 +10,7 @@ pub mod memory_profiles;
 pub mod messages;
 pub mod pairings;
 pub mod secrets;
+pub(crate) mod service_storage;
 pub mod templates;
 pub mod tools;
 pub mod tool_outputs;
@@ -128,6 +129,12 @@ impl Database {
             let tx = conn.unchecked_transaction()?;
             tx.execute_batch(include_str!("../../migrations/015_execution_audit.sql"))?;
             tx.pragma_update(None, "user_version", 15)?;
+            tx.commit()?;
+        }
+        if version < 16 {
+            let tx = conn.unchecked_transaction()?;
+            tx.execute_batch(include_str!("../../migrations/016_service_storage.sql"))?;
+            tx.pragma_update(None, "user_version", 16)?;
             tx.commit()?;
         }
         Ok(())

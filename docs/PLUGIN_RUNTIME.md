@@ -66,6 +66,14 @@ the gateway binds its listener. A blocked or failing feature worker no longer
 holds up the core retention tick. The cron adapter preserves the existing job
 check behavior; this change does not implement new scheduled inference.
 
+Native feature tools can now bind an owner-scoped `NativeService` using
+invocation API v1. The shared dispatcher supplies host-issued identity, workspace,
+deadline, cancellation, declared credentials and persistent scoped storage.
+Contracted calls use the same core verification/receipt lifecycle. Missing
+required bindings fail workflow setup; disabled bindings disappear from discovery.
+See [native feature services](NATIVE_FEATURE_SERVICES.md) for the manifest,
+binding API, lifecycle and limits.
+
 ## Task registry revisions
 
 Before task routing, discovery or inference, Praxis captures an owned immutable
@@ -73,6 +81,9 @@ registry snapshot and its `praxis.registry.v1` SHA-256. Package order and JSON m
 insertion order do not change the hash. It covers resolved declarations: package
 identity/version, schemas, handlers, contracts, defaults, credential-grant names
 and manifest enable flags, with the native API/application version as a domain.
+Native service descriptors and host-issued binding generations are included;
+cloned registries share a generation, while replacement bindings require a new
+task. Live service enable flags do not change the revision.
 Context default collisions now resolve in package-name order rather than hash-map
 iteration order. Secret-store credential values are excluded.
 
@@ -138,8 +149,9 @@ packages. The shared dispatcher temporarily contains their native adapters.
 Agent VM redirection and chat host-file/terminal behavior remain distinct through
 an explicit dispatch mode, ready for the later execution-backend extraction.
 
-The worker API is an in-process migration adapter. Service-backed tool handles
-and a versioned invocation/context API remain in [PR 1](../plan/README.md).
+The worker and feature invocation APIs are in-process migration adapters for
+[PR 1](../plan/README.md). Core guard-aware navigation/context operations remain
+the authority behind future model-facing runtime-control wrappers.
 Sidecar IPC, installable service manifests,
 feature-process lifecycle and dependency removal remain subsequent work.
 Contracts/receipts retain their meanings; plugin processes remain operator-trusted.
@@ -162,7 +174,12 @@ registries through native/IR/direct execution, lazy client inventory, authentica
 management HTTP routes, WebSocket setup recovery, preserved completed graphs,
 workflow provider overrides, router swaps and invalid host settings.
 
-Validated without live model inference: 941 library tests, 15 CLI tests and seven
+`runtime::feature_tests` adds service binding/version checks, both ingress modes
+and IR lowering, scoped identity/credentials/storage, task/session invalidation,
+deadline/cancellation handling, receipt guards, output/error bounds and service
+drain/forced shutdown. See the [invocation guide](NATIVE_FEATURE_SERVICES.md).
+
+Validated without live model inference: 960 library tests, 15 CLI tests and seven
 selected integration tests passed. Three integration cases use real Cargo for
 project-root isolation and chat/agent IR execution; four use scripted models to
 check retry/history retention, WebSocket stop/retry, graph restart/navigation and

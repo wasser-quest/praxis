@@ -157,6 +157,12 @@ pub struct VerificationState {
     workspace_requirements: crate::workspace::Requirements,
 }
 impl VerificationState {
+    pub(crate) fn for_task(task_id: &str) -> Self {
+        Self {
+            task_id: task_id.into(),
+            ..Self::default()
+        }
+    }
     pub(crate) fn bind(
         &mut self,
         workflow: &str,
@@ -183,7 +189,9 @@ impl VerificationState {
         }
         sm.workspace.check(&root)?;
         if self.policy.is_none() {
-            self.task_id = uuid::Uuid::new_v4().to_string();
+            if self.task_id.is_empty() {
+                self.task_id = uuid::Uuid::new_v4().to_string();
+            }
             self.action_guards = sm.action_guards.clone();
             self.action_guard_triggers = sm.action_guard_triggers.clone();
             self.user_reply_guards = sm.user_reply_guards.clone();
@@ -468,6 +476,7 @@ pub fn bind(user: &str, workflow: &str, sm: &StateMachine, root: &Path) -> anyho
     if task_control::cancellation(user).is_none() {
         return Ok(());
     }
+    task_control::pin_workspace(user, root)?;
     task_control::with_verification(user, |ledger| ledger.bind(workflow, sm, root))
 }
 pub fn require(user: &str, target: &str) -> anyhow::Result<()> {
