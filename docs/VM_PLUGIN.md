@@ -1,4 +1,4 @@
-# Native VM package
+# VM package
 
 `crates/praxis-vm` owns QEMU/QMP/serial operations, the 25 VM tool implementations,
 screen capture and credential-directory preparation. It has no Praxis database,
@@ -10,7 +10,8 @@ authenticated invocation identity, user preferences and explicit credentials.
 `src/runtime/vm.rs` binds the implementation, selects the legacy execution backend
 and supplies the user's keyboard/screenshot settings. CLI commands are contributed
 by `src/runtime/vm/cli.rs`; the entry point registers them only in builds with VM.
-Creating/registering the backend does not create directories or start processes.
+Creating/registering the backend does not create guest directories or processes.
+The optional `praxis-vm-service` worker initializes separately at host startup.
 Guest names use 1–80 ASCII letters, digits, underscores, hyphens or dots; storage
 directory names and `.`/`..` are reserved.
 
@@ -31,7 +32,14 @@ Configured autostart still starts `praxis-vm`. A reachable existing guest is
 reattached via QMP; the host no longer kills arbitrary processes by matching a VM
 name. Cancelled, unfinished startup kills only its newly spawned child. Committed
 guests and their disks survive native-service drain/host shutdown. A build without
-VM plus `VM_ENABLED=true` fails with a setup error before VM initialization.
+VM plus `VM_ENABLED=true` requires an installed worker selected by
+`VM_SERVICE_EXECUTABLE`; otherwise it fails setup before VM initialization.
+
+For headless process hosting, build/install `praxis-vm-service` and set
+`VM_SERVICE_EXECUTABLE` to an absolute path or a path relative to `ROOT_DIR`.
+The same VM manifest/tools work with a core without the QEMU crate. Leaving
+this setting unset preserves the native backend. Follow
+[the installation commands](INSTALLATION_PRESETS.md#install-the-headless-vm-worker).
 
 ## Execution scope
 
@@ -80,11 +88,18 @@ credential grants; configured runtime autostart and native tools use the manifes
 
 ## Transitional boundary and next step
 
-This is an optional **native Rust package**. Installing its manifest alone cannot
-add QEMU code to a binary built without VM. Independent executable/IPC installation,
-VM ownership policy, lifecycle recovery and the VM routes/noVNC UI package are the
-next plan step. Current dashboard/delivery adapters obtain the explicitly bound
-instance through a host-only bridge; they cannot lazy-initialize a global manager.
+The engine supports an optional **native Rust package** and an independently
+installed **headless worker**. The [process protocol](PLUGIN_PROCESS_PROTOCOL.md)
+handles health, caller scope, deadlines, cancellation and worker crashes. Stopped
+instances are not restarted/replayed automatically; restart Praxis for a fresh
+binding. Installing a manifest alone still does not install an executable.
+
+VM ownership policy, routes/noVNC assets, the dashboard page and independent CLI
+are the next slice. Current dashboard/delivery adapters obtain the native bound
+instance through a host-only bridge; they are unavailable in process mode and
+cannot lazy-initialize a manager. Automatic screenshot delivery through that
+bridge remains native-only; worker tool results still retain screenshot paths.
+The process option serves headless tools and configured autostart.
 The legacy `/websockify` alias now uses the authenticated VNC adapter, and clients
 send the dashboard token. Refresh updated dashboard assets after upgrade.
 
@@ -92,6 +107,8 @@ send the dashboard token. Refresh updated dashboard assets after upgrade.
 
 ```bash
 cargo test -p praxis-vm --locked
+cargo test -p praxis-plugin-api --locked
+cargo test --lib --locked --no-default-features runtime::vm_process_tests
 cargo test --lib --locked runtime::vm_tests
 cargo test --lib --locked dashboard::routes::vm_tests
 cargo test --lib --locked --no-default-features runtime::vm_tests

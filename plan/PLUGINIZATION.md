@@ -11,7 +11,9 @@ credentials, deadline/cancellation handling and contracted service-backed tools.
 The headless VM adapter is now an optional native crate with explicit host
 configuration, native service ownership, guest-scoped results and credential
 grants. A compatibility installation preset preserves the shipped distribution.
-Manifest v2, independently installable IPC services, route/UI registration and
+The VM also supports an installed headless worker through process protocol v1,
+with handshake/health, caller scope, deadlines, cancellation and crash handling.
+Manifest v2, generic process declarations, route/UI registration and
 minimal startup below remain implementation targets.
 
 ## 1. Decision and scope
@@ -453,8 +455,9 @@ Measure these gates per package instead of treating a renamed module or JSON
 manifest as finished pluginization.
 
 PR 1's native foundation and PR 2's headless VM adapter are implemented.
-The next implementation is PR 3: independently packaged VM service, lifecycle
-and UI contributions. The compatibility preset is available ahead of PR 7;
+PR 3's headless process transport is implemented; its next slice moves VM
+routes/VNC and the dashboard page into package contributions. The compatibility
+preset is available ahead of PR 7;
 the final minimal distribution still requires the remaining extractions.
 Keep Decision IR and verified execution as shared runtime semantics throughout;
 this architecture reorganizes their capabilities rather than replacing them.

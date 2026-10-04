@@ -1,9 +1,10 @@
 # Native feature services: invocation API v1
 
 This is the in-process boundary for extracting VM and other native features.
-It does not make a Rust adapter independently installable. Script and HTTP
-plugins still work as before; sidecar IPC and immutable package installation
-remain later milestones in the [pluginization plan](../plan/PLUGINIZATION.md).
+It does not by itself make a Rust adapter independently installable. The VM now
+uses this host seam for an optional [installed process worker](PLUGIN_PROCESS_PROTOCOL.md).
+Script and HTTP plugins still work as before; generic process manifests and
+immutable installation remain later milestones in the [pluginization plan](../plan/PLUGINIZATION.md).
 
 ## Declaration and binding
 
@@ -140,6 +141,12 @@ feature deadline. Registry snapshots share the live handles, so an old snapshot
 cannot revive a disabled service. A fresh binding has a fresh generation in the
 registry revision; it requires a new task even with an unchanged manifest.
 
+Registration validates declarations without requiring an already running worker.
+Host startup calls `initialize()` before inference; `available()` controls live
+discovery/preflight. `force_stop()` signals owned resources synchronously when
+the shutdown budget expires. Initialization is one-shot per binding; a failed
+initialization or dead process requires a new binding, without lazy restart.
+
 ## Verification
 
 `runtime::feature_tests` covers registration, discovery/preflight, both ingress
@@ -147,7 +154,7 @@ modes and IR lowering, host identity/workspace/credential scope, task/session
 changes, durable owner/user storage and compare/exchange conflicts, cancellation,
 deadlines including a queued contract, receipt guards, declared compensation,
 output bounds, error redaction/display, live disable and drain/forced shutdown.
-These 19 tests use fixture
+These 20 tests use fixture
 services and local commands, without QEMU, a dashboard or model inference.
 
 ```bash

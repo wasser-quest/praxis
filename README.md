@@ -131,6 +131,11 @@ starts preserve disabled tool flags; rerunning `--enable-vm-tools` deliberately
 reenables all 25 VM tools. State/workflow tool allow-lists still apply. Credentials
 are now explicit per-VM grants; see [VM setup and migration](docs/VM_PLUGIN.md).
 
+For headless VM tools with QEMU outside the Praxis binary, install
+`praxis-vm-service` and set `VM_SERVICE_EXECUTABLE` to its installed path. This
+also works with `--no-default-features`. Follow [worker installation](docs/INSTALLATION_PRESETS.md#install-the-headless-vm-worker).
+The VM dashboard/VNC and VM CLI still use the native compatibility backend.
+
 Python script plugins require `python3`. Configure their declared credentials and
 servers through Secrets and the plugin's settings; copying a manifest does not
 install QEMU, provision ComfyUI, or log in to a provider. Verified Rust capabilities
@@ -245,6 +250,8 @@ RUST_LOG=info
 
 # VM (optional)
 VM_ENABLED=true              # Enable QEMU VM support
+# Optional headless worker; omit for the native VM dashboard/CLI:
+# VM_SERVICE_EXECUTABLE=plugins/vm/bin/praxis-vm-service
 VM_MODE=shared               # shared = host tools + guests; vm = guest backend for agent file/shell aliases
 VM_CPU_CORES=2
 VM_RAM_MB=4096
@@ -339,7 +346,8 @@ einen leeren Store an (`MASTER_KEY_FILE`, `SECRETS_DIR`).
 ## VM Mode
 
 The optional `vm` package provides 25 QEMU tools. Build with `compatibility` or
-`vm`, install the package assets, set `VM_ENABLED=true`, and enable the required
+`vm`, or install its headless worker for a core without QEMU. Install the assets,
+set `VM_ENABLED=true`, and enable the required
 tool flags. The workflow also controls which tools the model can use. Common tools:
 
 | Tool | Description |
@@ -584,7 +592,8 @@ into optional packages. Its target is a small runtime with three builtin
 `file_ops` tools. See the [delivery checklist](plan/README.md) and
 [architecture overview](docs/PLUGIN_FIRST_PLAN.md). Current plugins install
 tools and native service bindings. The VM engine now lives in an optional Rust
-package; independently installable service/UI packaging remains planned work.
+package and an independently installed headless worker. VM route/UI contributions
+and generic process manifests remain planned work.
 
 The [shared execution boundary](docs/PLUGIN_RUNTIME.md) is the first implemented
 step: tool owners are checked consistently across discovery, workflow preflight
@@ -596,7 +605,9 @@ apply. Provider clients initialize lazily so management works before LLM setup.
 Native feature adapters can now bind service-backed tools with host-issued task
 identity, workspace, cancellation, deadline and scoped storage. Contracts and
 receipts stay in core. See [native invocation API v1](docs/NATIVE_FEATURE_SERVICES.md) and
-[the native VM package](docs/VM_PLUGIN.md).
+[the VM package](docs/VM_PLUGIN.md). Its [process protocol](docs/PLUGIN_PROCESS_PROTOCOL.md)
+adds versioned handshakes, bounded calls, cancellation and live crash detection;
+failed instances cannot silently replay actions or fall back to host execution.
 
 **POML, contexts and state machines remain in core.** Local workflows can run
 without feature plugins or the dashboard. Full POML rendering requires Node and

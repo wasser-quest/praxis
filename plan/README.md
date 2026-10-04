@@ -51,8 +51,9 @@ The native worker API and feature invocation API v1 now support service-backed
 tool calls without UI or providers. Host-issued scope includes persistent storage,
 task identity, workspace, credentials, cancellation and deadlines; the existing
 core guard APIs remain the authority for later runtime-control wrappers. See
-[the native service guide](../docs/NATIVE_FEATURE_SERVICES.md). The proposed v2
-IPC packages are later work. Registry pins cover resolved declarations and native
+[the native service guide](../docs/NATIVE_FEATURE_SERVICES.md). Generic v2 process
+manifests remain later work; the VM worker now uses protocol v1. Registry pins
+cover resolved declarations and native
 binding generations, not immutable package/script bytes; atomic package
 publication is later work.
 
@@ -87,6 +88,32 @@ tests passed. The integrations use real POML/Cargo and synthetic provider
 responses; no live model inference was used. The compiled preset CLI was checked
 for fresh install, upgrade/backups, complete plugin helpers, separate `DATA_DIR`
 and preservation of disabled tools. The no-VM dependency tree excludes `praxis-vm`.
+
+## PR 3 progress — headless process slice
+
+- [x] Versioned local pipe protocol and reusable host/worker API crate.
+- [x] Installed `praxis-vm-service` for all 25 tools, without a QEMU dependency in the host.
+- [x] Explicit host initialization, declaration handshake, health and live availability.
+- [x] Host-issued identity/preferences, scoped guest credentials and unchanged receipt authority.
+- [x] Bounded calls, cooperative cancellation, owned-child cleanup and crash detection.
+- [x] No automatic replay, native fallback or reactivation of a stopped binding.
+- [x] Installation/upgrade instructions; existing native compatibility stays the default.
+- [ ] Package-owned VM routes, authenticated VNC sessions and noVNC assets.
+- [ ] VM dashboard page and screenshot delivery over the process boundary.
+- [ ] Independent CLI contributions and complete VM ownership/upgrade recovery policy.
+
+See [process hosting](../docs/PLUGIN_PROCESS_PROTOCOL.md). The full PR 3 checkbox
+remains open until route/UI combinations pass their acceptance checks. Generic v2
+process declarations and immutable package publication are still future work.
+
+Verification: 978 library tests with the native VM engine and 971 without it,
+16 CLI tests in each build, 9 protocol tests, 12 VM package tests and 9 selected
+integration tests passed. The integrations use real POML/Cargo and synthetic
+providers, covering IR/normal coding, graph navigation, language learning,
+rollback/completion and retry/WebSocket behavior. The compiled no-VM CLI installed
+the preset/VM flags, handshook an actual installed worker, and served management
+without provider credentials; missing-QEMU autostart remained non-fatal. The
+no-VM host dependency tree excludes `praxis-vm`. No live inference was used.
 
 Existing setup guides remain applicable during migration:
 

@@ -10,6 +10,9 @@ pub mod vm;
 mod vm_tests;
 
 #[cfg(test)]
+mod vm_process_tests;
+
+#[cfg(test)]
 mod tests;
 
 #[cfg(test)]

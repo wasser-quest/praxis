@@ -1,9 +1,11 @@
-//! Native VM feature registration. POML/SM/IR never depend on this package.
+//! VM feature registration. The optional installed worker needs no QEMU imports
+//! in the host. POML/SM/IR never depend on this package.
 use crate::{config::Config, db::Database, plugins::PluginRegistry};
 use std::sync::Arc;
 
 #[cfg(feature = "vm")]
 pub mod cli;
+mod process;
 
 pub const TOOL_NAMES: &[&str] = &[
     "vm_start",
@@ -119,51 +121,71 @@ pub fn configure(
         }
         return Ok(());
     }
+    use crate::plugins::{PluginHandler, ServiceAdapter};
+    let mut plugin = plugins.get("vm").cloned().ok_or_else(|| {
+        anyhow::anyhow!(
+            "VM plugin missing: run praxis install-preset compatibility for this installation"
+        )
+    })?;
+    anyhow::ensure!(
+        plugin.enabled,
+        "VM plugin is disabled; disable VM_ENABLED or enable the installed VM package"
+    );
+    anyhow::ensure!(
+        plugin.tools.len() == TOOL_NAMES.len(),
+        "VM manifest must declare all 25 native tools"
+    );
+    let mut names = std::collections::HashSet::new();
+    for tool in &plugin.tools {
+        anyhow::ensure!(
+            is_vm_tool(&tool.name) && names.insert(tool.name.as_str()),
+            "Invalid VM tool declaration"
+        );
+        anyhow::ensure!(
+            matches!(&tool.handler, PluginHandler::Service(ServiceAdapter { service, operation, api_version: 1, .. }) if service == "vm" && operation == &tool.name),
+            "VM tools require the native vm service binding"
+        );
+    }
+    anyhow::ensure!(
+        matches!(config.vm_mode.as_str(), "shared" | "vm"),
+        "VM_MODE must be shared or vm"
+    );
+    anyhow::ensure!(
+        matches!(config.vm_arch.as_str(), "x86_64" | "aarch64" | "arm64"),
+        "Invalid VM architecture"
+    );
+    anyhow::ensure!(
+        matches!(config.vm_socket_mode.as_str(), "unix" | "tcp"),
+        "Invalid VM socket mode"
+    );
+    let grants = parse_grants(&plugin)?;
+    plugin.context.insert(
+        "execution_backend".into(),
+        serde_json::json!(if config.vm_mode == "vm" {
+            "guest"
+        } else {
+            "host"
+        }),
+    );
+    if let Some(executable) = config.vm_service_executable.as_deref() {
+        let adapter = process::VmProcessAdapter::new(db, config, executable, grants)?;
+        plugins.register(plugin);
+        plugins.register_service(
+            "vm",
+            "vm",
+            crate::runtime::features::INVOCATION_API_VERSION,
+            TOOL_NAMES,
+            Arc::new(adapter),
+        )?;
+        return Ok(());
+    }
     #[cfg(not(feature = "vm"))]
     {
-        let _ = db;
-        anyhow::bail!("VM_ENABLED requires a binary built with --features vm (or compatibility)");
+        let _ = (db, grants);
+        anyhow::bail!("VM_ENABLED requires VM_SERVICE_EXECUTABLE pointing to an installed worker, or a binary built with --features vm (or compatibility)");
     }
     #[cfg(feature = "vm")]
     {
-        use crate::plugins::{PluginHandler, ServiceAdapter};
-        let mut plugin = plugins.get("vm").cloned().ok_or_else(|| {
-            anyhow::anyhow!(
-                "VM plugin missing: run praxis install-preset compatibility for this installation"
-            )
-        })?;
-        anyhow::ensure!(
-            plugin.enabled,
-            "VM plugin is disabled; disable VM_ENABLED or enable the installed VM package"
-        );
-        anyhow::ensure!(
-            plugin.tools.len() == TOOL_NAMES.len(),
-            "VM manifest must declare all 25 native tools"
-        );
-        let mut names = std::collections::HashSet::new();
-        for tool in &plugin.tools {
-            anyhow::ensure!(
-                is_vm_tool(&tool.name) && names.insert(tool.name.as_str()),
-                "Invalid VM tool declaration"
-            );
-            anyhow::ensure!(
-                matches!(&tool.handler, PluginHandler::Service(ServiceAdapter { service, operation, api_version: 1, .. }) if service == "vm" && operation == &tool.name),
-                "VM tools require the native vm service binding"
-            );
-        }
-        anyhow::ensure!(
-            matches!(config.vm_mode.as_str(), "shared" | "vm"),
-            "VM_MODE must be shared or vm"
-        );
-        let grants = parse_grants(&plugin)?;
-        plugin.context.insert(
-            "execution_backend".into(),
-            serde_json::json!(if config.vm_mode == "vm" {
-                "guest"
-            } else {
-                "host"
-            }),
-        );
         let settings = praxis_vm::runtime::VmSettings {
             data_dir: config.data_dir.clone(),
             arch: config.vm_arch.clone(),
@@ -199,10 +221,8 @@ pub fn configure(
     }
 }
 
-#[cfg(feature = "vm")]
 type Grants = std::collections::BTreeMap<String, std::collections::BTreeMap<String, String>>;
 
-#[cfg(feature = "vm")]
 fn parse_grants(plugin: &crate::plugins::Plugin) -> anyhow::Result<Grants> {
     let grants: Grants = serde_json::from_value(
         plugin
@@ -212,18 +232,64 @@ fn parse_grants(plugin: &crate::plugins::Plugin) -> anyhow::Result<Grants> {
             .unwrap_or_else(|| serde_json::json!({})),
     )?;
     for (name, values) in &grants {
-        praxis_vm::validate_vm_name(name)?;
-        let keys = values
-            .keys()
-            .map(|key| (key.clone(), String::new()))
-            .collect();
-        praxis_vm::secrets_inject::validate_grants(&keys)?;
+        validate_vm_name(name)?;
+        anyhow::ensure!(
+            values.keys().all(|key| !key.is_empty()
+                && key.len() <= 128
+                && key
+                    .bytes()
+                    .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
+                && !key.as_bytes()[0].is_ascii_digit()),
+            "Invalid VM credential name"
+        );
         anyhow::ensure!(
             values.values().all(|key| plugin.secrets.contains(key)),
             "VM credential grant references an undeclared plugin secret"
         );
     }
     Ok(grants)
+}
+
+// Host preflight must validate guest selection even in a QEMU-free build.
+fn validate_vm_name(name: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        !name.is_empty()
+            && name.len() <= 80
+            && name
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"_.-".contains(&b))
+            && !matches!(name, "." | ".." | "isos" | "disks" | "shared" | "secrets"),
+        "Invalid VM name"
+    );
+    Ok(())
+}
+fn target_vm<'a>(operation: &str, args: &'a serde_json::Value) -> anyhow::Result<&'a str> {
+    let key = if operation == "vm_install" {
+        "vm_name"
+    } else {
+        "name"
+    };
+    let name = match args.get(key) {
+        Some(value) => value
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("VM name must be a string"))?,
+        None => "praxis-vm",
+    };
+    validate_vm_name(name)?;
+    Ok(name)
+}
+
+/// Explicit host startup, before inference; registration and tool calls never
+/// start a missing/stopped worker or replay a prior action.
+pub async fn initialize_service(config: &Config, plugins: &PluginRegistry) -> anyhow::Result<()> {
+    if config.vm_enabled {
+        plugins
+            .service_handle("vm", "vm")
+            .ok_or_else(|| anyhow::anyhow!("VM service binding missing"))?
+            .initialize()
+            .await?;
+    }
+    Ok(())
 }
 
 #[cfg(feature = "vm")]
@@ -278,6 +344,31 @@ pub async fn autostart(
 ) -> anyhow::Result<()> {
     if !config.vm_enabled {
         return Ok(());
+    }
+    if config.vm_service_executable.is_some() {
+        let handle = plugins
+            .service_handle("vm", "vm")
+            .ok_or_else(|| anyhow::anyhow!("VM feature is unavailable"))?;
+        let adapter = handle
+            .service_as::<process::VmProcessAdapter>()
+            .ok_or_else(|| anyhow::anyhow!("VM worker is unavailable"))?;
+        let plugin = plugins
+            .get("vm")
+            .ok_or_else(|| anyhow::anyhow!("VM package missing"))?;
+        let names = parse_grants(plugin)?;
+        let mut grants = std::collections::BTreeMap::new();
+        if let Some(keys) = names.get("praxis-vm") {
+            for (file, key) in keys {
+                grants.insert(
+                    file.clone(),
+                    secrets
+                        .plugin_secret(key)
+                        .ok_or_else(|| anyhow::anyhow!("VM credential is unavailable"))?
+                        .to_owned(),
+                );
+            }
+        }
+        return adapter.autostart(grants).await;
     }
     #[cfg(feature = "vm")]
     {

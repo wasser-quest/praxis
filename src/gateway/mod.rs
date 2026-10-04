@@ -198,6 +198,7 @@ pub async fn start(db: crate::db::Database, config: crate::config::Config) -> an
     let plugins_dir = std::env::var("PLUGINS_DIR").unwrap_or_else(|_| "./plugins".to_string());
     let mut plugins = crate::plugins::load_all_plugins(std::path::Path::new(&plugins_dir));
     crate::runtime::vm::configure(&db, &config, &mut plugins)?;
+    crate::runtime::vm::initialize_service(&config, &plugins).await?;
     if let Err(error) = crate::runtime::vm::autostart(&config, &plugins, &secrets).await {
         tracing::warn!(%error, "Configured VM autostart failed (non-fatal)");
     }

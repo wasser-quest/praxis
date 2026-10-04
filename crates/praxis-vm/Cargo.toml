@@ -6,6 +6,8 @@ description = "Optional QEMU VM backend for Praxis"
 license = "MIT"
 
 [dependencies]
+praxis-plugin-api = { path = "../praxis-plugin-api" }
+async-trait = "0.1"
 anyhow = "1"
 tokio = { version = "1", features = ["fs", "io-util", "net", "process", "sync", "time"] }
 serde = { version = "1", features = ["derive"] }
@@ -19,3 +21,7 @@ regex = "1"
 [dev-dependencies]
 tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util"] }
+
+[[bin]]
+name = "praxis-vm-service"
+path = "src/bin/service.rs"
