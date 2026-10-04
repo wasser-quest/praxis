@@ -177,3 +177,68 @@ Tests use a local QMP fixture and a controlled child-process stub, including
 reattachment and cancelled-startup cleanup. They do not boot a real guest or use
 live model inference. A real QEMU guest, OS installation and interactive noVNC
 keyboard/mouse remain operator smoke checks.
+
+## Guest ownership and recovery
+
+Every guest has a persisted record at `DATA_DIR/vm/<name>/guest.json`, written
+atomically (temp file, fsync, rename). It stores the owner, explicit shares,
+the full guest configuration (disk path, QMP/serial sockets or ports, VNC port,
+shared folders), the last known QEMU pid, any in-progress lifecycle operation
+and a bounded history of interrupted operations. Records sit beside the disk,
+so disabling, upgrading or replacing the VM package never discards them.
+
+### Access policy
+
+| Principal | Use (input, shell, screenshots, VNC, files, clipboard, snapshot create/list) | Manage (stop, reboot, CD, shared folders, reinstall, snapshot restore/delete, sharing) |
+|---|---|---|
+| Owner | yes | yes |
+| Explicitly shared user | yes | no |
+| `*` share (all authenticated users) | yes | no |
+| Operator (dashboard token, autostart) | yes | yes, plus ownership transfer |
+| Anyone else | denied | denied |
+
+- Tools: the authenticated task user is the principal. Calls on another
+  user's guest return `outcome: "denied"` before any QMP/serial effect. Only
+  `vm_start`/`vm_install` may claim an unused name, and only after input
+  validation; other operations on unknown guests are denied without creating
+  storage.
+- HTTP routes and VNC: the host proxy sets `x-praxis-principal`
+  (`operator` or `user:<id>`) on freshly built upstream requests; a browser
+  cannot forward its own. The package rejects requests without it (fail
+  closed). VNC is authorized before any TCP connection to QEMU.
+- Screenshots: the `capture` control requires the host-resolved `user` and
+  checks Use access; listing (`GET /api/plugins/vm`, `/api/plugins/vm/guests`)
+  is filtered, and sharers do not see owner or share lists.
+- Sharing: `POST /api/plugins/vm/share {name,user,grant}` (owner/operator) and
+  `POST /api/plugins/vm/owner {name,owner}` (operator only). The worker exposes
+  the same as `guests`/`share`/`transfer` controls.
+
+### Migration of existing guests
+
+On first start after upgrade, recovery adopts each guest directory that has a
+`disk.qcow2` but no record: owner `admin`, shared with `*`. This keeps the
+historical single-tenant behaviour (every user could use the default
+`praxis-vm`) while making it visible. Operators narrow it by removing the `*`
+share or transferring ownership. A user cannot claim a legacy guest by starting
+it. A newly autostarted default guest is created the same way. Unreadable or
+unsupported records are left untouched and the guest is skipped.
+
+### Restart, disable and upgrade recovery
+
+When the worker (or native binding) initializes it runs recovery before serving
+tools or routes:
+
+1. Adopt legacy guests as above.
+2. Convert any `pending` lifecycle operation into an `interrupted` entry
+   (`"interrupted; guest effects not compensated"`). Nothing is replayed.
+3. Reattach to still-running QEMU through the persisted endpoints; the QMP
+   `query-name` must match the guest name.
+
+Recovery never spawns QEMU, kills a process or deletes a disk. Later starts
+reuse the recorded disk and endpoints rather than re-deriving ports. Disabling
+or upgrading the package drains sessions but leaves guests running and disks in
+place. There is no implicit deletion path; removing a guest's data remains an
+explicit operator action on `DATA_DIR/vm/<name>`.
+
+A failed first `vm_start` still leaves the claimed record so the owner can
+retry; the operator can transfer or remove it.

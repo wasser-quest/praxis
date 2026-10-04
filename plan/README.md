@@ -103,7 +103,15 @@ and preservation of disabled tools. The no-VM dependency tree excludes `praxis-v
 - [x] HTTP/VNC sessions participate in service drain/forced disconnect; guests/disks survive.
 - [x] Screenshot delivery and image-context loading with native or process backend.
 - [x] Package-owned VM CLI parsing/execution, with a core-only forwarding entry point.
-- [ ] Complete VM ownership/upgrade recovery policy.
+- [x] Persisted guest records (owner, shares, endpoints, pending/interrupted ops).
+- [x] Ownership enforced for tools, HTTP routes, VNC, screenshots and listing,
+  including explicit and `*` shares; host-asserted principal header, fail closed.
+- [x] Restart/upgrade recovery: legacy adoption, interrupted-operation records,
+  verified QMP reattach via persisted endpoints; no spawn/kill/delete.
+- [x] Real QEMU verification (opt-in test, TCG, Alpine ISO): boot, PNG screenshots,
+  keyboard, absolute mouse, VNC RFB handshake, ownership denials, worker
+  restart with the guest still running, verified reattach and disk preservation.
+  This found and fixed a missing absolute pointer device (`usb-tablet`).
 
 See [process hosting](../docs/PLUGIN_PROCESS_PROTOCOL.md). The full PR 3 checkbox
 remains open for guest ownership and full upgrade/recovery policy. Generic v2
@@ -136,8 +144,16 @@ and installed worker passed CLI help/status, QMP-to-PNG delivery, VM API/UI/asse
 and legacy-alias smoke checks without provider credentials. Its dependency tree
 excludes all three VM crates. No live model inference or real guest boot was used.
 
-Next: finish PR 3's guest ownership/upgrade policy, then
-make the whole dashboard optional in PR 4. Runtime-control and the remaining
+The ownership/recovery slice is described in
+[the VM guide](../docs/VM_PLUGIN.md#guest-ownership-and-recovery). It passed
+the VM package tests (store, route ownership/sharing, VNC denial, restart
+reattach through a persisted non-default QMP port) and the host `vm` library
+tests, including process-worker and native dispatch. The real-QEMU check runs
+with `PRAXIS_REAL_QEMU_ISO=/path/to.iso cargo test -p praxis-vm-web --test web
+real_qemu -- --ignored`. Desktop-OS interaction (installed GUI, guest agent,
+clipboard) remains an operator smoke check.
+
+Next: make the whole dashboard optional in PR 4. Runtime-control and the remaining
 feature/tool packages follow; POML/context/SM/IR verification stays in core.
 
 Existing setup guides remain applicable during migration:

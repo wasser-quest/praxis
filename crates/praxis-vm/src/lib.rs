@@ -1,4 +1,5 @@
 pub mod cli;
+pub mod guests;
 pub mod qmp;
 pub mod runtime;
 pub mod secrets_inject;
@@ -273,6 +274,28 @@ impl VmConfig {
         }
         self.socket_mode = mode.into();
         Ok(())
+    }
+
+    /// Keep a guest's recorded disk and connection endpoints across restarts
+    /// and package upgrades. Socket paths are reused only for the same mode.
+    pub fn reuse_endpoints(&mut self, saved: &VmConfig) {
+        self.disk_path = saved.disk_path.clone();
+        self.vnc_port = saved.vnc_port;
+        self.qmp_port = saved.qmp_port;
+        self.serial_port = saved.serial_port;
+        if saved.socket_mode == self.socket_mode {
+            self.qmp_socket_path = saved.qmp_socket_path.clone();
+            self.serial_socket_path = saved.serial_socket_path.clone();
+        }
+        for folder in &saved.shared_folders {
+            if !self
+                .shared_folders
+                .iter()
+                .any(|f| f.mount_tag == folder.mount_tag)
+            {
+                self.shared_folders.push(folder.clone());
+            }
+        }
     }
 
     pub fn qmp_connect_addr(&self) -> String {
@@ -1620,6 +1643,14 @@ impl VmManager {
         anyhow::bail!("Could not read clipboard from VM")
     }
 
+    /// Live configuration and process id of an attached guest, for persistence.
+    pub async fn instance_state(&self, name: &str) -> Option<(VmConfig, Option<u32>, VmStatus)> {
+        let instances = self.instances.read().await;
+        instances
+            .get(name)
+            .map(|vm| (vm.config.clone(), vm.pid, vm.status.clone()))
+    }
+
     /// List all VMs
     pub async fn list_vms(&self) -> Vec<serde_json::Value> {
         let instances = self.instances.read().await;
@@ -1808,6 +1839,14 @@ impl VmManager {
         // VNC with explicit VGA device
         let vnc_display = format!(":{}", config.vnc_port - 5900);
         args.extend(["-vnc".to_string(), vnc_display]);
+        // Absolute pointer for vm_mouse move_absolute/click and noVNC; without
+        // it QEMU rejects `input-send-event` abs events (found by real-QEMU test).
+        args.extend([
+            "-device".to_string(),
+            "qemu-xhci,id=xhci".to_string(),
+            "-device".to_string(),
+            "usb-tablet,bus=xhci.0".to_string(),
+        ]);
 
         // QMP: Unix socket or TCP based on config
         if config.socket_mode == "unix" {

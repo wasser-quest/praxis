@@ -4,6 +4,10 @@ use serde::{Deserialize, Serialize};
 
 pub const WEB_API_VERSION: u32 = 1;
 pub const PRIVATE_HEADER: &str = "x-praxis-plugin-key";
+/// Host-authenticated principal for private web calls: `operator` for
+/// dashboard/operator tokens or `user:<id>`. Only the host proxy sets it; the
+/// proxy builds fresh upstream requests, so a browser cannot forward one.
+pub const PRINCIPAL_HEADER: &str = "x-praxis-principal";
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]

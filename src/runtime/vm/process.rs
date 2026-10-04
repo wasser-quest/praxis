@@ -49,7 +49,9 @@ pub(super) fn launch_configuration(
         owner: "vm".into(),
         service: "vm".into(),
         operations: super::TOOL_NAMES.iter().map(|op| (*op).into()).collect(),
-        controls: vec!["autostart".into(), "web_info".into(), "capture".into()],
+        controls: ["autostart", "web_info", "capture", "recover", "guests", "share", "transfer"]
+            .map(String::from)
+            .to_vec(),
         environment,
     };
     spec.validate()?;
@@ -106,7 +108,7 @@ impl VmProcessAdapter {
         let preferences = (self.preferences)(user)?;
         serde_json::from_value(
             self.client()?
-                .control("capture", json!({"name":name,"preferences":preferences}))
+                .control("capture", json!({"name":name,"user":user,"preferences":preferences}))
                 .await?,
         )
         .map_err(Into::into)

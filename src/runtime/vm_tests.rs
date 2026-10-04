@@ -40,7 +40,7 @@ async fn vm_web_binding_initializes_without_creating_guest_storage() {
     super::vm::initialize_service(&config, &registry).await.unwrap();
     let endpoint = handle.web_endpoint().unwrap();
     let response = reqwest::Client::new().get(format!("http://127.0.0.1:{}/api/plugins/vm", endpoint.info.port))
-        .header(praxis_plugin_api::web::PRIVATE_HEADER, &endpoint.key).send().await.unwrap();
+        .header(praxis_plugin_api::web::PRIVATE_HEADER, &endpoint.key).header(praxis_plugin_api::web::PRINCIPAL_HEADER, "operator").send().await.unwrap();
     assert_eq!(response.status(), 200);
     assert!(!dir.path().join("vm").exists());
     assert!(!dir.path().join("shared").exists());
@@ -182,7 +182,8 @@ async fn vm_native_dispatch_is_guest_scoped_and_cannot_satisfy_host_receipts() {
         .execute(&call)
         .await;
     assert!(result.contains("guest"), "{result}");
-    assert!(result.contains("failed"), "{result}");
+    // Unknown guests are denied by ownership before any guest effect.
+    assert!(result.contains("denied"), "{result}");
     assert!(result.contains("not found"), "{result}");
     assert!(!result.contains(r#""verified":true"#), "{result}");
     assert!(!dir.path().join("vm").exists());

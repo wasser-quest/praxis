@@ -24,7 +24,7 @@ mode = (root / "worker.mode").read_text()
 manifest = json.loads((root / "plugins/vm/plugin.json").read_text())
 write({"type": "ready", "version": 99 if mode == "bad_version" else 1,
        "owner": "vm", "service": "vm", "nonce": hello["nonce"],
-       "operations": [t["name"] for t in manifest["tools"]], "controls": ["autostart", "web_info", "capture"]})
+       "operations": [t["name"] for t in manifest["tools"]], "controls": ["autostart", "web_info", "capture", "recover", "guests", "share", "transfer"]})
 (root / "worker.ready").touch()
 while True:
     request = read()
