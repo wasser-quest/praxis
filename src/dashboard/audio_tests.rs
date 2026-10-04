@@ -8,7 +8,7 @@ async fn audio_endpoint_requires_auth_and_serves_only_the_requested_sessions_byt
     db.save_context(&db.load_context("alice").unwrap()).unwrap();
     let id = db.add_message("alice", &Message::assistant("reply".into())).unwrap();
     db.save_message_audio("alice", id, "audio/wav", b"fixture-wav").unwrap();
-    let state = Arc::new(DashboardState {
+    let state = Arc::new(DashboardState { plugins: Arc::new(crate::plugins::PluginRegistry::new()),
         db: db.clone(),
         gateway_api_key: "synthetic-audio-test-key".into(),
         admin_password: "unused".into(),
@@ -63,7 +63,7 @@ async fn vosk_remote_dashboard_wav_uses_context_url_without_elevenlabs_key_or_lo
     db.merge_context("vosk-dashboard", serde_json::json!({
         "settings.voice_stt_type": "vosk", "settings.voice_vosk_url": vosk_url,
     })).unwrap();
-    let state = Arc::new(DashboardState {
+    let state = Arc::new(DashboardState { plugins: Arc::new(crate::plugins::PluginRegistry::new()),
         db, gateway_api_key: "synthetic-test-key".into(), admin_password: "unused".into(),
     });
     let app = Router::new().route("/stt", axum::routing::post(dashboard_stt)).with_state(state);

@@ -64,9 +64,12 @@ Forward port `3537` separately if you also need the gateway API or a remote TUI.
 
 ```bash
 # Clone and build
-git clone https://github.com/wasser-boo/praxis.git
+git clone https://github.com/wasser-quest/praxis.git
 cd praxis
-cargo build --release --locked
+cargo build --release --locked --features compatibility
+
+# Install the complete bundled distribution (preserves existing files)
+./target/release/praxis install-preset compatibility --directory "$PWD"
 
 # Interactive setup
 ./target/release/praxis onboard --interactive
@@ -76,6 +79,73 @@ cargo build --release --locked
 # Dashboard: http://localhost:1337
 # Gateway API: http://localhost:3537
 ```
+
+### Keep the functionality from before pluginization
+
+Use the **`compatibility`** build and installation preset. It includes the optional
+native VM backend and installs the shipped tool plugins, their helper scripts,
+noVNC runtime files, dashboard assets, templates, workflows and skills. The normal
+build selects `compatibility` by default. Dashboard, providers, Discord and the
+remaining native tools are still compiled into Praxis at this stage; they do not
+require separate plugin installation commands.
+
+For an existing installation, build the updated source, stop the running Praxis
+service, then run the following from the source checkout. Replace the installation
+path with the directory containing your existing `.env`, `templates/` and `data/`:
+
+```bash
+cargo build --release --locked --features compatibility
+PRAXIS_INSTALL=/absolute/path/to/existing/installation
+./target/release/praxis install-preset compatibility \
+  --directory "$PRAXIS_INSTALL" --update-dashboard
+install -m 755 ./target/release/praxis "$PRAXIS_INSTALL/praxis"
+cd "$PRAXIS_INSTALL"
+./praxis run
+```
+
+Restart your service instead of the final command if you use systemd, Docker or
+another process manager. Refresh the browser after updating dashboard assets.
+Existing `.env`, secrets, data, tool flags, prompts and plugin manifests are
+preserved; replaced dashboard files are backed up. The preset fills missing files,
+so it preserves custom or previously disabled manifests. It does not update an
+existing customized plugin's implementation or enable its external backend.
+
+**If you use VMs**, install QEMU on the Praxis host and explicitly grant model
+access to the VM tools once:
+
+```bash
+./praxis install-preset compatibility --directory "$PWD" --enable-vm-tools
+# With a custom DATA_DIR, also pass --data-dir /actual/path/to/data
+```
+
+Keep or add these settings to the installation's `.env`, then restart Praxis:
+
+```dotenv
+VM_ENABLED=true
+VM_MODE=shared
+```
+
+The `vm` package manifest must be enabled in `plugins/vm/plugin.json`. Existing
+VM disks and shared folders stay in `DATA_DIR/vm` and `DATA_DIR/shared`. Subsequent
+starts preserve disabled tool flags; rerunning `--enable-vm-tools` deliberately
+reenables all 25 VM tools. State/workflow tool allow-lists still apply. Credentials
+are now explicit per-VM grants; see [VM setup and migration](docs/VM_PLUGIN.md).
+
+Python script plugins require `python3`. Configure their declared credentials and
+servers through Secrets and the plugin's settings; copying a manifest does not
+install QEMU, provision ComfyUI, or log in to a provider. Verified Rust capabilities
+remain an explicit opt-in:
+
+```bash
+./praxis plugin install ./examples/plugins/verified-rust
+# Restart, select a verified workflow, and set WORKSPACE_DIR to the prepared project.
+```
+
+POML rendering still requires Node and your configured `POML_CLI`. Existing renderer
+installations continue to work. The preset does not download the renderer; see
+[POML setup](docs/POML_WORKFLOWS.md). POML, context handling, SM transitions,
+Decision IR and receipts remain core functions. See [the complete compatibility
+guide](docs/INSTALLATION_PRESETS.md) for custom directories and a build without VM.
 
 ### Repair missing onboarding files
 
@@ -175,7 +245,7 @@ RUST_LOG=info
 
 # VM (optional)
 VM_ENABLED=true              # Enable QEMU VM support
-VM_MODE=shared               # shared = VM + host tools | vm = VM only (no host access)
+VM_MODE=shared               # shared = host tools + guests; vm = guest backend for agent file/shell aliases
 VM_CPU_CORES=2
 VM_RAM_MB=4096
 VM_DISK_SIZE=40G
@@ -268,7 +338,9 @@ einen leeren Store an (`MASTER_KEY_FILE`, `SECRETS_DIR`).
 
 ## VM Mode
 
-When `VM_ENABLED=true`, the LLM gets access to QEMU VM tools:
+The optional `vm` package provides 25 QEMU tools. Build with `compatibility` or
+`vm`, install the package assets, set `VM_ENABLED=true`, and enable the required
+tool flags. The workflow also controls which tools the model can use. Common tools:
 
 | Tool | Description |
 |------|-------------|
@@ -277,19 +349,19 @@ When `VM_ENABLED=true`, the LLM gets access to QEMU VM tools:
 | `vm_shell` | Execute shell command in VM |
 | `vm_keys` | Send keyboard input (supports special keys, ctrl+, F-keys) |
 | `vm_mouse` | Mouse control (move, click, double-click, drag, scroll) |
-| `vm_screenshot` | Capture VM display as base64 image |
+| `vm_screenshot` | Capture VM display and save an image artifact |
 | `vm_file_transfer` | Transfer files to/from VM via shared folder |
 | `vm_snapshot` | Create VM snapshot |
 | `vm_shared_folder` | Add shared host↔VM folder |
 
 ### VM_MODE=shared vs vm
 
-- **shared**: LLM can use VM tools AND host tools (execute_terminal, read_file, write_file, edit_file)
-- **vm**: LLM can ONLY use VM tools. Host tools are redirected to the VM. The LLM has no access to the host system.
+- **shared**: Enabled VM tools operate on guests; legacy file/shell tools operate on the host.
+- **vm**: In agent mode, `execute_terminal`, `read_file`, `write_file` and `edit_file` use the registered guest backend. Chat retains its host behavior. Verified Rust capabilities still operate on the pinned host workspace when the workflow allows them. VM mode is an execution-backend choice; shared folders and tool allow-lists determine the available host access. A disabled VM binding fails guest calls instead of falling back to host execution.
 
 ### Auto-Screenshot
 
-After each VM tool call, a screenshot is automatically taken and injected into the LLM context. The LLM sees what's on the VM screen in real-time.
+After a successful VM tool call, the optional VM service can capture the screen. The agent uses the returned image artifact in its next context. Disabling the package removes this hook; unavailable screenshots are not reported as successful captures.
 
 Context settings to control this:
 ```json
@@ -300,26 +372,45 @@ Context settings to control this:
 
 ### Secrets in VM
 
-Secrets are injected into the VM as **individual files** under `/run/secrets/` (mounted via 9p). They are NOT environment variables — the LLM cannot `echo $SECRET`.
+The VM package starts with **no credential grants**. Declare the required secret
+names and a per-guest mapping in `plugins/vm/plugin.json`, then configure the
+secret value through the dashboard and restart. Example manifest fields:
 
-Applications in the VM can load them:
-```bash
-# Mount secrets (done automatically at VM boot)
-mount -t 9p -o trans=virtio,version=9p2000.L praxis-secrets /run/secrets
-
-# Load specific secret
-export OPENAI_API_KEY=$(cat /run/secrets/OPENAI_API_KEY)
-
-# Load all secrets
-source /run/secrets/praxis-loader.sh
-
-# Load specific secrets only
-source /run/secrets/praxis-loader.sh OPENAI_API_KEY ANTHROPIC_API_KEY
+```json
+{
+  "secrets": ["vm_git_token"],
+  "context": {
+    "credential_grants": {
+      "praxis-vm": { "VM_GIT_TOKEN": "vm_git_token" }
+    }
+  }
+}
 ```
+
+Only that guest's explicitly granted files are exposed by the read-only
+`praxis-secrets` 9p share. Inside a Linux guest, mount it and read the needed file:
+
+```bash
+sudo mkdir -p /run/secrets
+sudo mount -t 9p -o trans=virtio,version=9p2000.L praxis-secrets /run/secrets
+cat /run/secrets/VM_GIT_TOKEN
+```
+
+The old blanket injector and environment loader are removed. Preparing a guest
+start removes obsolete credential files, including old provider/admin exports;
+disks and ordinary shared files are preserved. See [VM credential grants](docs/VM_PLUGIN.md#credential-grants).
 
 ### Shared Folders
 
-Files in `{DATA_DIR}/shared/` are automatically mounted at `/mnt/shared` in the VM. Use `vm_shared_folder` to add more.
+The host exports `{DATA_DIR}/shared/` through the `praxis-shared` 9p share. Mount
+it at `/mnt/shared` in the guest (or configure its guest startup to do so):
+
+```bash
+sudo mkdir -p /mnt/shared
+sudo mount -t 9p -o trans=virtio,version=9p2000.L praxis-shared /mnt/shared
+```
+
+Use `vm_shared_folder` to configure additional shares.
 
 ## Dashboard
 
@@ -492,7 +583,8 @@ the full dashboard, then moves the remaining tools, providers and workflows
 into optional packages. Its target is a small runtime with three builtin
 `file_ops` tools. See the [delivery checklist](plan/README.md) and
 [architecture overview](docs/PLUGIN_FIRST_PLAN.md). Current plugins install
-tools; service/UI packaging and minimal startup are planned work.
+tools and native service bindings. The VM engine now lives in an optional Rust
+package; independently installable service/UI packaging remains planned work.
 
 The [shared execution boundary](docs/PLUGIN_RUNTIME.md) is the first implemented
 step: tool owners are checked consistently across discovery, workflow preflight
@@ -503,7 +595,8 @@ action receipts record the registry revision. Live tool disable flags still
 apply. Provider clients initialize lazily so management works before LLM setup.
 Native feature adapters can now bind service-backed tools with host-issued task
 identity, workspace, cancellation, deadline and scoped storage. Contracts and
-receipts stay in core. See [native invocation API v1](docs/NATIVE_FEATURE_SERVICES.md).
+receipts stay in core. See [native invocation API v1](docs/NATIVE_FEATURE_SERVICES.md) and
+[the native VM package](docs/VM_PLUGIN.md).
 
 **POML, contexts and state machines remain in core.** Local workflows can run
 without feature plugins or the dashboard. Full POML rendering requires Node and

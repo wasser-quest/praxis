@@ -53,8 +53,11 @@ plugins. Node and `POML_CLI` are still required for full POML syntax. Local
 an unavailable plugin capability fails setup. Core events/template sync and
 independent retention now support the headless path. Management starts without
 an inference provider, clients initialize lazily and tasks pin registry
-declarations. Service-backed feature handles remain the next foundation item. See
-[plugin-free workflows](CORE_WORKFLOWS.md) for the tested behavior and commands.
+declarations. Service-backed feature handles and native invocation API v1 are
+implemented. The first feature extraction is the optional native VM crate;
+independent IPC hosting and VM UI packaging are next. See
+[VM migration](VM_PLUGIN.md), [compatibility installation](INSTALLATION_PRESETS.md)
+and [plugin-free workflows](CORE_WORKFLOWS.md) for the behavior and commands.
 
 Existing [verified coding roles](VERIFIED_CODING_ROLES.md),
 [Decision IR](DECISION_IR.md), and [language-learning flow](LANGUAGE_LEARNING_FLOW.md)

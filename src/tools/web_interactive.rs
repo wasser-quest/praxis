@@ -19,13 +19,14 @@ pub struct PendingWebQuestion {
 
 /// Send a VM screenshot to the web chat UI via event broadcast
 pub async fn send_screenshot_to_web(
+    plugins: &crate::plugins::PluginRegistry,
     user_id: &str,
     caption: Option<&str>,
     vm_name: &str,
 ) -> anyhow::Result<String> {
-    let data_dir = std::env::var("DATA_DIR").unwrap_or_else(|_| "./data".to_string());
+    let data_dir = crate::runtime::vm::runtime(plugins).ok_or_else(|| anyhow::anyhow!("VM feature unavailable"))?.data_dir().to_owned();
     let screenshot_path =
-        match crate::tools::vm_tools::save_screenshot_to_disk(vm_name, &data_dir).await {
+        match crate::tools::vm_tools::save_screenshot_to_disk(plugins, user_id, vm_name).await {
             Some(path) => path,
             None => return Ok("No screenshot available. Is the VM running?".to_string()),
         };
@@ -57,13 +58,13 @@ pub async fn send_screenshot_to_web(
 
 /// Send a screenshot with feedback text to the web UI
 pub async fn screenshot_with_feedback_web(
+    plugins: &crate::plugins::PluginRegistry,
     user_id: &str,
     feedback: &str,
     vm_name: &str,
 ) -> anyhow::Result<String> {
-    let data_dir = std::env::var("DATA_DIR").unwrap_or_else(|_| "./data".to_string());
     let screenshot_path =
-        match crate::tools::vm_tools::save_screenshot_to_disk(vm_name, &data_dir).await {
+        match crate::tools::vm_tools::save_screenshot_to_disk(plugins, user_id, vm_name).await {
             Some(path) => path,
             None => {
                 crate::event_channel::broadcast_channel_message(user_id, "web", feedback);

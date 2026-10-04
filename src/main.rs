@@ -44,6 +44,21 @@ enum Cli {
         #[arg(long)]
         overwrite: bool,
     },
+    /// Install the bundled distribution without overwriting operator configuration
+    InstallPreset {
+        #[arg(value_enum)]
+        preset: InstallationPreset,
+        #[arg(long, default_value = ".")]
+        directory: PathBuf,
+        /// Existing DATA_DIR; relative paths resolve from --directory
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+        #[arg(long)]
+        update_dashboard: bool,
+        /// Explicitly enable all VM model tools; does not set VM_ENABLED/start QEMU
+        #[arg(long)]
+        enable_vm_tools: bool,
+    },
     /// Recover interrupted host file patches offline, preserving conflicting files
     RecoverPatches {
         #[arg(long, default_value = ".")]
@@ -69,10 +84,11 @@ enum Cli {
         #[command(subcommand)]
         action: PluginAction,
     },
-    /// Manage QEMU virtual machines
+    /// Manage QEMU virtual machines (optional native package)
+    #[cfg(feature = "vm")]
     Vm {
         #[command(subcommand)]
-        action: VmAction,
+        action: praxis::runtime::vm::cli::VmAction,
     },
     /// Create a backup of all Praxis data
     Backup {
@@ -106,6 +122,9 @@ enum Cli {
         gateway_key: Option<String>,
     },
 }
+
+#[derive(Clone, clap::ValueEnum)]
+enum InstallationPreset { Compatibility }
 
 #[derive(clap::Subcommand)]
 enum ServiceAction {
@@ -166,138 +185,6 @@ enum PluginAction {
     List,
 }
 
-#[derive(clap::Subcommand)]
-enum VmAction {
-    /// Start a VM
-    Start {
-        /// VM name
-        #[arg(long, default_value = "praxis-vm")]
-        name: String,
-        /// CPU cores
-        #[arg(long, default_value = "2")]
-        cpu: u32,
-        /// RAM in MB
-        #[arg(long, default_value = "4096")]
-        ram: u32,
-        /// Disk size
-        #[arg(long, default_value = "40G")]
-        disk: String,
-        /// ISO path or name (searches installation_disks by name, or uses as direct path)
-        #[arg(long)]
-        iso: Option<String>,
-    },
-    /// Stop a running VM
-    Stop {
-        #[arg(long, default_value = "praxis-vm")]
-        name: String,
-        /// Force kill
-        #[arg(long)]
-        force: bool,
-    },
-    /// Show VM status
-    Status,
-    /// Gracefully shutdown VM
-    Shutdown {
-        #[arg(long, default_value = "praxis-vm")]
-        name: String,
-    },
-    /// Take a screenshot
-    Screenshot {
-        #[arg(long, default_value = "praxis-vm")]
-        name: String,
-        /// Output file path
-        #[arg(long, short)]
-        output: Option<String>,
-    },
-    /// Insert/remove ISO CD
-    Cd {
-        #[arg(long, default_value = "praxis-vm")]
-        name: String,
-        /// ISO path (omit to eject)
-        iso: Option<String>,
-    },
-    /// Create a disk image
-    Disk {
-        #[command(subcommand)]
-        action: DiskAction,
-    },
-    /// List available installation ISOs
-    ListIsos,
-    /// Add an ISO path to the installation disks registry
-    AddIso {
-        /// ISO file path
-        path: String,
-        /// Display name (optional, derived from filename if omitted)
-        #[arg(long)]
-        name: Option<String>,
-    },
-    /// Remove an ISO from the installation disks registry
-    RemoveIso {
-        /// ISO name or path
-        name_or_path: String,
-    },
-    /// List snapshots
-    Snapshots {
-        #[arg(long, default_value = "praxis-vm")]
-        name: String,
-    },
-    /// Create a snapshot
-    Snapshot {
-        /// Snapshot name
-        snapshot_name: String,
-        #[arg(long, default_value = "praxis-vm")]
-        name: String,
-    },
-    /// Run a shell command in the VM
-    Shell {
-        /// Command to execute
-        command: Vec<String>,
-        #[arg(long, default_value = "praxis-vm")]
-        name: String,
-        /// Timeout in seconds
-        #[arg(long, default_value = "30")]
-        timeout: u64,
-    },
-}
-
-#[derive(clap::Subcommand)]
-enum DiskAction {
-    /// Create a new disk image
-    Create {
-        /// Disk path
-        path: String,
-        /// Disk size (e.g. 40G, 100G)
-        #[arg(long, default_value = "40G")]
-        size: String,
-        /// Disk format (qcow2, raw, vdi, vmdk)
-        #[arg(long, default_value = "qcow2")]
-        format: String,
-    },
-    /// List all VM disks
-    List,
-    /// Show disk info
-    Info {
-        /// Disk path
-        path: String,
-    },
-    /// Resize a disk image
-    Resize {
-        /// Disk path
-        path: String,
-        /// New size (e.g. 100G)
-        size: String,
-    },
-    /// Convert disk format
-    Convert {
-        /// Source disk path
-        source: String,
-        /// Target disk path
-        target: String,
-        /// Target format (qcow2, raw, vdi, vmdk)
-        #[arg(long)]
-        format: String,
-    },
-}
 
 fn initialize_tls_provider() {
     // Dependencies enable both ring and aws-lc-rs, making Rustls autodetection
@@ -367,6 +254,23 @@ async fn run() -> anyhow::Result<()> {
         println!("Assets in {}: {} created, {} preserved, {} updated.", directory.display(), report.created.len(), report.preserved.len(), report.updated.len());
         if let Some(backup) = &report.backup_dir { println!("Previous files backed up to: {}", backup.display()); }
         println!("Configuration, secrets, databases and service state were not changed.");
+        return Ok(());
+    }
+    if let Cli::InstallPreset { preset: InstallationPreset::Compatibility, directory, data_dir, update_dashboard, enable_vm_tools } = &cli {
+        anyhow::ensure!(!enable_vm_tools || cfg!(feature = "vm"), "Enabling VM tools requires a binary built with --features vm or compatibility");
+        let report = praxis::assets::install_compatibility(directory, *update_dashboard)?;
+        println!("Compatibility assets in {}: {} created, {} preserved, {} updated.", directory.display(), report.created.len(), report.preserved.len(), report.updated.len());
+        if let Some(backup) = report.backup_dir { println!("Previous dashboard files backed up to: {}", backup.display()); }
+        if *enable_vm_tools {
+            let data = data_dir.clone().map(|path| if path.is_absolute() { path } else { directory.join(path) }).unwrap_or_else(|| directory.join("data"));
+            let db = praxis::db::Database::new(&data)?;
+            praxis::db::tools::init_default_tools(&db)?;
+            praxis::db::tools::enable_vm_compatibility(&db)?;
+            println!("Enabled 25 VM tool flags in {}. VM_ENABLED remains an explicit operator setting.", data.display());
+        } else {
+            println!("Tool flags and data were preserved. Use --enable-vm-tools only if you want VM model access.");
+        }
+        println!("Existing prompts, manifests, .env and credentials were preserved. Restart Praxis to load installed packages.");
         return Ok(());
     }
     if let Cli::Skill { directory, data_dir, action } = &cli {
@@ -457,7 +361,8 @@ async fn run() -> anyhow::Result<()> {
         Cli::Onboard { interactive: false } => {
             anyhow::bail!("Onboard requires --interactive flag");
         }
-        Cli::Vm { action } => return handle_vm_action(action).await,
+        #[cfg(feature = "vm")]
+        Cli::Vm { action } => return praxis::runtime::vm::cli::run(action).await,
         Cli::Backup {
             output,
             no_disks,
@@ -466,6 +371,7 @@ async fn run() -> anyhow::Result<()> {
         Cli::Restore { file, yes } => return handle_restore(&file, yes).await,
         Cli::Chat { .. } => unreachable!(),
         Cli::RepairAssets { .. } => unreachable!(),
+        Cli::InstallPreset { .. } => unreachable!(),
         Cli::RecoverPatches { .. } => unreachable!(),
         Cli::Service { .. } => unreachable!(),
         Cli::Plugin { .. } => unreachable!(),
@@ -600,7 +506,7 @@ async fn run_services(
 
     // Create placeholder secrets for plugins
     let plugins_dir = std::env::var("PLUGINS_DIR").unwrap_or_else(|_| "./plugins".to_string());
-    let plugin_registry = praxis::plugins::load_all_plugins(std::path::Path::new(&plugins_dir));
+    let mut plugin_registry = praxis::plugins::load_all_plugins(std::path::Path::new(&plugins_dir));
     for key in plugin_registry.collect_secrets() {
         if !secrets.custom.contains_key(&key) && secrets.plugin_secret(&key).is_none() {
             tracing::info!(key = %key, "Creating placeholder secret for plugin");
@@ -634,62 +540,19 @@ async fn run_services(
     // Management starts with incomplete provider setup. Actual chat/agent entry
     // validates its routed provider before changing workflow state or history.
 
-    // Enable VM tools if VM=true in config
-    if config.vm_enabled {
-        tracing::info!("VM mode enabled — activating VM tools");
-        for tool_name in &[
-            "vm_start",
-            "vm_stop",
-            "vm_shell",
-            "vm_keys",
-            "vm_screenshot",
-            "vm_file_transfer",
-            "vm_snapshot",
-            "vm_shared_folder",
-            "vm_mouse",
-            "vm_look_screenshot",
-            "vm_install",
-        ] {
-            let _ = praxis::db::tools::set_enabled(&db, tool_name, true);
-        }
-        praxis::tools::vm_tools::init_vm_manager(&config.data_dir);
-        let _ = std::fs::create_dir_all(format!("{}/shared", config.data_dir));
-        tracing::info!(
-            "VM tools enabled, shared folder at {}/shared, mode: {}",
-            config.data_dir,
-            config.vm_mode
-        );
-        // Auto-start default VM
-        let vm_manager = praxis::tools::vm_tools::get_vm_manager().await;
-        if let Some(manager) = vm_manager {
-            let vm_name = "praxis-vm";
-            let mut vm_config = praxis::vm::VmConfig::default_for_name(
-                vm_name,
-                &config.data_dir,
-                1,
-                &config.vm_arch,
-            );
-            vm_config.cpu_cores = config.vm_cpu_cores;
-            vm_config.ram_mb = config.vm_ram_mb;
-            vm_config.disk_size = config.vm_disk_size.clone();
-            vm_config.shared_folders.push(praxis::vm::SharedFolder {
-                host_path: format!("{}/shared", config.data_dir),
-                mount_tag: "praxis-shared".to_string(),
-                mount_point: "/mnt/shared".to_string(),
-                readonly: false,
-            });
-            match manager.start_vm(vm_config).await {
-                Ok(msg) => tracing::info!("{}", msg),
-                Err(e) => tracing::warn!("Auto-start VM failed (non-fatal): {}", e),
-            }
-        }
+    // Feature registration does not enable tools or initialize guests by itself.
+    praxis::runtime::vm::configure(&db, &config, &mut plugin_registry)?;
+    if let Err(error) = praxis::runtime::vm::autostart(&config, &plugin_registry, &secrets).await {
+        tracing::warn!(%error, "Configured VM autostart failed (non-fatal)");
     }
+    let feature_plugins = std::sync::Arc::new(plugin_registry);
 
     // Gateway
     let gateway_db = db.clone();
     let gateway_config = config.clone();
+    let gateway_plugins = (*feature_plugins).clone();
     let gateway_handle = tokio::spawn(async move {
-        if let Err(e) = praxis::gateway::start(gateway_db, gateway_config).await {
+        if let Err(e) = praxis::gateway::start_with_plugins(gateway_db, gateway_config, gateway_plugins).await {
             tracing::error!("Gateway error: {}", e);
         }
     });
@@ -698,8 +561,9 @@ async fn run_services(
     if enable_dashboard {
         let dashboard_db = db.clone();
         let dashboard_port = config.dashboard_port;
+        let dashboard_plugins = feature_plugins.clone();
         tokio::spawn(async move {
-            let server = praxis::dashboard::DashboardServer::new(dashboard_port, config.dashboard_tls, dashboard_db, &config.data_dir);
+            let server = praxis::dashboard::DashboardServer::new(dashboard_port, config.dashboard_tls, dashboard_db, &config.data_dir).with_plugins(dashboard_plugins);
             if let Err(e) = server.start().await {
                 tracing::error!("Dashboard error: {}", e);
             }
@@ -1022,363 +886,6 @@ fn copy_dir_recursive(src: &Path, dest: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn handle_vm_action(action: VmAction) -> anyhow::Result<()> {
-    load_dotenv();
-    let config = praxis::config::Config::from_env();
-    if !config.vm_enabled {
-        anyhow::bail!("VM not enabled. Set VM_ENABLED=true in .env");
-    }
-    let manager = praxis::tools::vm_tools::init_vm_manager(&config.data_dir);
-
-    match action {
-        VmAction::Start {
-            name,
-            cpu,
-            ram,
-            disk,
-            iso,
-        } => {
-            // Resolve ISO: check if it's a name in installation_disks or a direct path
-            let resolved_iso = iso.map(|ref iso_val| {
-                if std::path::Path::new(iso_val).exists() {
-                    iso_val.clone()
-                } else {
-                    // Search by name in installation_disks
-                    let isos = manager.list_isos();
-                    if let Some(found) = isos.iter().find(|i| {
-                        i.get("name")
-                            .and_then(|v| v.as_str())
-                            .map(|n| n.to_lowercase().contains(&iso_val.to_lowercase()))
-                            .unwrap_or(false)
-                    }) {
-                        found
-                            .get("path")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or(iso_val)
-                            .to_string()
-                    } else {
-                        // Search in iso_dir
-                        let iso_dir = format!("{}/vm/isos", config.data_dir);
-                        let candidates: Vec<String> = std::fs::read_dir(&iso_dir)
-                            .ok()
-                            .into_iter()
-                            .flatten()
-                            .filter_map(|e| e.ok())
-                            .filter(|e| {
-                                e.file_name()
-                                    .to_string_lossy()
-                                    .to_lowercase()
-                                    .contains(&iso_val.to_lowercase())
-                            })
-                            .map(|e| e.path().to_string_lossy().to_string())
-                            .collect();
-                        candidates
-                            .first()
-                            .cloned()
-                            .unwrap_or_else(|| iso_val.clone())
-                    }
-                }
-            });
-
-            let mut vm_config =
-                praxis::vm::VmConfig::default_for_name(&name, &config.data_dir, 1, &config.vm_arch);
-            vm_config.cpu_cores = cpu;
-            vm_config.ram_mb = ram;
-            vm_config.disk_size = disk;
-            vm_config.iso_path = resolved_iso;
-            if let Some(ref iso_path) = vm_config.iso_path {
-                if std::path::Path::new(iso_path).exists() {
-                    println!("Booting from ISO: {}", iso_path);
-                } else {
-                    eprintln!("Warning: ISO not found at '{}'", iso_path);
-                }
-            }
-            vm_config.shared_folders.push(praxis::vm::SharedFolder {
-                host_path: format!("{}/shared", config.data_dir),
-                mount_tag: "praxis-shared".to_string(),
-                mount_point: "/mnt/shared".to_string(),
-                readonly: false,
-            });
-            match manager.start_vm(vm_config).await {
-                Ok(msg) => println!("{}", msg),
-                Err(e) => eprintln!("Error: {}", e),
-            }
-        }
-        VmAction::Stop { name, force } => {
-            if force {
-                println!("Force stopping VM '{}'...", name);
-            }
-            match manager.stop_vm(&name).await {
-                Ok(msg) => println!("{}", msg),
-                Err(e) => eprintln!("Error: {}", e),
-            }
-        }
-        VmAction::Status => {
-            let vms = manager.list_vms().await;
-            if vms.is_empty() {
-                println!("No VMs running.");
-            } else {
-                for vm in &vms {
-                    println!(
-                        "  {} [{}] PID: {} VNC: {}",
-                        vm["name"],
-                        vm["status"],
-                        vm["pid"].as_i64().unwrap_or(0),
-                        vm["vnc_port"].as_i64().unwrap_or(0),
-                    );
-                }
-            }
-        }
-        VmAction::Shutdown { name } => match manager.stop_vm(&name).await {
-            Ok(msg) => println!("{}", msg),
-            Err(e) => eprintln!("Error: {}", e),
-        },
-        VmAction::Screenshot { name, output } => match manager.screenshot(&name).await {
-            Ok(data_url) => {
-                if let Some(path) = output {
-                    if let Some(b64) = data_url.strip_prefix("data:image/ppm;base64,") {
-                        use base64::Engine;
-                        if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(b64) {
-                            std::fs::write(&path, bytes)?;
-                            println!("Screenshot saved to {}", path);
-                        }
-                    }
-                } else {
-                    println!("Screenshot captured ({} bytes base64)", data_url.len());
-                }
-            }
-            Err(e) => eprintln!("Error: {}", e),
-        },
-        VmAction::Cd { name, iso } => match iso {
-            Some(path) => {
-                println!("Inserting CD '{}' into VM '{}'...", path, name);
-                let vm_info = manager.get_vm_info(&name).await?;
-                let qmp_port = vm_info["qmp_port"].as_u64().unwrap_or(44400) as u16;
-                let qmp_addr = format!("127.0.0.1:{}", qmp_port);
-                match praxis::vm::qmp::QmpClient::connect(&qmp_addr).await {
-                    Ok(mut client) => {
-                        let _ = client.negotiate().await;
-                        println!("CD inserted: {}", path);
-                        println!("Note: Reboot VM to boot from CD if needed.");
-                    }
-                    Err(e) => eprintln!("Cannot connect to VM QMP: {}", e),
-                }
-            }
-            None => {
-                println!("Ejecting CD from VM '{}'...", name);
-            }
-        },
-        VmAction::Disk { action } => {
-            handle_disk_action(action, &config.data_dir).await?;
-        }
-        VmAction::ListIsos => {
-            let isos = manager.list_isos();
-            if isos.is_empty() {
-                println!("No installation ISOs configured.");
-                println!("Add ISOs with: praxis vm add-iso /path/to/file.iso");
-                println!("Or place ISOs in: {}/vm/isos/", config.data_dir);
-            } else {
-                println!("Available installation ISOs:");
-                for iso in &isos {
-                    let name = iso.get("name").and_then(|v| v.as_str()).unwrap_or("?");
-                    let path = iso.get("path").and_then(|v| v.as_str()).unwrap_or("?");
-                    let exists = iso.get("exists").and_then(|v| v.as_bool()).unwrap_or(false);
-                    let source = iso.get("source").and_then(|v| v.as_str()).unwrap_or("?");
-                    let status = if exists { "OK" } else { "NOT FOUND" };
-                    let size = iso
-                        .get("size_bytes")
-                        .and_then(|v| v.as_u64())
-                        .map(|s| {
-                            if s > 1_073_741_824 {
-                                format!("{:.1} GB", s as f64 / 1_073_741_824.0)
-                            } else if s > 1_048_576 {
-                                format!("{:.1} MB", s as f64 / 1_048_576.0)
-                            } else {
-                                format!("{} B", s)
-                            }
-                        })
-                        .unwrap_or_default();
-                    println!("  [{}] {} {} ({}) [{}]", status, name, size, path, source);
-                }
-            }
-        }
-        VmAction::AddIso { path, name } => {
-            let iso_name = name.unwrap_or_else(|| {
-                std::path::Path::new(&path)
-                    .file_stem()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .to_string()
-            });
-            manager.add_installation_disk(&iso_name, &path)?;
-            println!("Added ISO: {} -> {}", iso_name, path);
-            if !std::path::Path::new(&path).exists() {
-                println!("Warning: file not found at '{}'", path);
-            }
-        }
-        VmAction::RemoveIso { name_or_path } => {
-            manager.remove_installation_disk(&name_or_path)?;
-            println!("Removed: {}", name_or_path);
-        }
-        VmAction::Snapshots { name } => {
-            println!("Snapshots for VM '{}':", name);
-            // List snapshot files
-            let vm_dir = format!("{}/vm/{}", config.data_dir, name);
-            let snap_dir = format!("{}/snapshots", vm_dir);
-            if std::path::Path::new(&snap_dir).exists() {
-                for entry in std::fs::read_dir(&snap_dir)? {
-                    let entry = entry?;
-                    println!("  {}", entry.file_name().to_string_lossy());
-                }
-            } else {
-                println!("  No snapshots found.");
-            }
-        }
-        VmAction::Snapshot {
-            snapshot_name,
-            name,
-        } => match manager.create_snapshot(&name, &snapshot_name).await {
-            Ok(msg) => println!("{}", msg),
-            Err(e) => eprintln!("Error: {}", e),
-        },
-        VmAction::Shell {
-            command,
-            name,
-            timeout,
-        } => {
-            let cmd = command.join(" ");
-            match manager.shell_exec(&name, &cmd, timeout).await {
-                Ok(output) => println!("{}", output),
-                Err(e) => eprintln!("Error: {}", e),
-            }
-        }
-    }
-
-    Ok(())
-}
-
-async fn handle_disk_action(action: DiskAction, data_dir: &str) -> anyhow::Result<()> {
-    match action {
-        DiskAction::Create { path, size, format } => {
-            let output = tokio::process::Command::new("qemu-img")
-                .args(["create", "-f", &format, &path, &size])
-                .output()
-                .await?;
-            if output.status.success() {
-                println!("Disk created: {} ({}, {})", path, size, format);
-            } else {
-                eprintln!("Error: {}", String::from_utf8_lossy(&output.stderr));
-            }
-        }
-        DiskAction::List => {
-            let vm_dir = format!("{}/vm", data_dir);
-            println!("VM Disks:");
-            let mut found = false;
-            // Scan all VM directories for disk images
-            if let Ok(entries) = std::fs::read_dir(&vm_dir) {
-                for entry in entries.flatten() {
-                    let vm_path = entry.path();
-                    if !vm_path.is_dir() {
-                        continue;
-                    }
-                    let vm_name = vm_path
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .to_string();
-                    if vm_name == "isos" || vm_name == "shared" {
-                        continue;
-                    }
-                    if let Ok(files) = std::fs::read_dir(&vm_path) {
-                        for file in files.flatten() {
-                            let fpath = file.path();
-                            let fname = fpath.file_name().unwrap_or_default().to_string_lossy();
-                            if fname.ends_with(".qcow2")
-                                || fname.ends_with(".img")
-                                || fname.ends_with(".raw")
-                            {
-                                let size = fpath.metadata().map(|m| m.len()).unwrap_or(0);
-                                let size_str = if size > 1_073_741_824 {
-                                    format!("{:.1} GB", size as f64 / 1_073_741_824.0)
-                                } else if size > 1_048_576 {
-                                    format!("{:.1} MB", size as f64 / 1_048_576.0)
-                                } else {
-                                    format!("{} B", size)
-                                };
-                                println!("  [{}] {} ({})", vm_name, fname, size_str);
-                                found = true;
-                            }
-                        }
-                    }
-                }
-            }
-            // Also scan disks/ directory
-            let disks_dir = format!("{}/vm/disks", data_dir);
-            if let Ok(entries) = std::fs::read_dir(&disks_dir) {
-                for entry in entries.flatten() {
-                    let fpath = entry.path();
-                    let fname = fpath.file_name().unwrap_or_default().to_string_lossy();
-                    if fname.ends_with(".qcow2") || fname.ends_with(".img") {
-                        let size = fpath.metadata().map(|m| m.len()).unwrap_or(0);
-                        let size_str = if size > 1_073_741_824 {
-                            format!("{:.1} GB", size as f64 / 1_073_741_824.0)
-                        } else if size > 1_048_576 {
-                            format!("{:.1} MB", size as f64 / 1_048_576.0)
-                        } else {
-                            format!("{} B", size)
-                        };
-                        println!("  [disks] {} ({})", fname, size_str);
-                        found = true;
-                    }
-                }
-            }
-            if !found {
-                println!(
-                    "  No disks found. Create one with: praxis vm disk create <path> --size 40G"
-                );
-            }
-        }
-        DiskAction::Info { path } => {
-            let output = tokio::process::Command::new("qemu-img")
-                .args(["info", &path])
-                .output()
-                .await?;
-            if output.status.success() {
-                println!("{}", String::from_utf8_lossy(&output.stdout));
-            } else {
-                eprintln!("Error: {}", String::from_utf8_lossy(&output.stderr));
-            }
-        }
-        DiskAction::Resize { path, size } => {
-            let output = tokio::process::Command::new("qemu-img")
-                .args(["resize", &path, &size])
-                .output()
-                .await?;
-            if output.status.success() {
-                println!("Disk resized: {} -> {}", path, size);
-            } else {
-                eprintln!("Error: {}", String::from_utf8_lossy(&output.stderr));
-            }
-        }
-        DiskAction::Convert {
-            source,
-            target,
-            format,
-        } => {
-            println!("Converting {} -> {} ({})", source, target, format);
-            let output = tokio::process::Command::new("qemu-img")
-                .args(["convert", "-f", "qcow2", "-O", &format, &source, &target])
-                .output()
-                .await?;
-            if output.status.success() {
-                println!("Disk converted: {} -> {}", source, target);
-            } else {
-                eprintln!("Error: {}", String::from_utf8_lossy(&output.stderr));
-            }
-        }
-    }
-    Ok(())
-}
 
 async fn handle_backup(
     output: Option<String>,
@@ -1633,6 +1140,14 @@ mod tests {
             _ => panic!("Expected RepairAssets"),
         }
         assert!(matches!(Cli::try_parse_from(["praxis", "repair-assets"]).unwrap(), Cli::RepairAssets { update_dashboard: false, .. }));
+    }
+
+    #[test]
+    fn test_cli_parsing_compatibility_preset_with_explicit_vm_flags() {
+        let cli = Cli::try_parse_from(["praxis", "install-preset", "compatibility", "--directory", "/install", "--data-dir", "state", "--enable-vm-tools", "--update-dashboard"]).unwrap();
+        assert!(matches!(cli, Cli::InstallPreset { preset: InstallationPreset::Compatibility, directory, data_dir: Some(data), enable_vm_tools: true, update_dashboard: true } if directory == PathBuf::from("/install") && data == PathBuf::from("state")));
+        assert!(Cli::try_parse_from(["praxis", "install-preset", "unknown"]).is_err());
+        assert!(Cli::try_parse_from(["praxis", "install-preset", "compatibility", "--password", "ignored"]).is_err());
     }
 
     #[test]

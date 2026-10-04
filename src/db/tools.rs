@@ -36,7 +36,17 @@ fn save_plugin_tools(db: &Database, tools: &HashMap<String, bool>) -> anyhow::Re
 }
 
 pub fn get_plugin_tool_enabled(db: &Database, name: &str) -> bool {
-    load_plugin_tools(db).ok().and_then(|m| m.get(name).copied()).unwrap_or(true)
+    plugin_tool_enabled(db, name).unwrap_or(false)
+}
+
+/// Native VM ownership moved to a plugin. Keep old operator choices until an
+/// explicit plugin flag overrides them, without enabling tools on startup.
+pub fn plugin_tool_enabled(db: &Database, name: &str) -> anyhow::Result<bool> {
+    if let Some(enabled) = load_plugin_tools(db)?.get(name) { return Ok(*enabled); }
+    if crate::runtime::vm::is_vm_tool(name) {
+        return Ok(load_tools(db)?.iter().find(|t| t.name == name).is_some_and(|t| t.is_enabled));
+    }
+    Ok(true)
 }
 
 pub fn set_plugin_tool_enabled(db: &Database, name: &str, enabled: bool) -> anyhow::Result<()> {
@@ -47,6 +57,13 @@ pub fn set_plugin_tool_enabled(db: &Database, name: &str, enabled: bool) -> anyh
 
 pub fn list_plugin_tools(db: &Database) -> anyhow::Result<HashMap<String, bool>> {
     load_plugin_tools(db)
+}
+
+/// An operator-invoked compatibility install, never a startup side effect.
+pub fn enable_vm_compatibility(db: &Database) -> anyhow::Result<()> {
+    let mut flags = load_plugin_tools(db)?;
+    for name in crate::runtime::vm::TOOL_NAMES { flags.insert((*name).into(), true); }
+    save_plugin_tools(db, &flags)
 }
 
 fn load_tools(db: &Database) -> anyhow::Result<Vec<Tool>> {

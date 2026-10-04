@@ -11,15 +11,18 @@ pub struct DashboardServer {
     tls: bool,
     db: crate::db::Database,
     data_dir: String,
+    plugins: std::sync::Arc<crate::plugins::PluginRegistry>,
 }
 
 impl DashboardServer {
     pub fn new(port: u16, tls: bool, db: crate::db::Database, data_dir: &str) -> Self {
-        Self { port, tls, db, data_dir: data_dir.to_string() }
+        Self { port, tls, db, data_dir: data_dir.to_string(), plugins: std::sync::Arc::new(crate::plugins::PluginRegistry::new()) }
     }
 
+    pub fn with_plugins(mut self, plugins: std::sync::Arc<crate::plugins::PluginRegistry>) -> Self { self.plugins = plugins; self }
+
     pub async fn start(&self) -> anyhow::Result<()> {
-        let app = routes::routes(self.db.clone());
+        let app = routes::routes_with_plugins(self.db.clone(), self.plugins.clone());
         let addr = format!("0.0.0.0:{}", self.port);
 
         if self.tls {

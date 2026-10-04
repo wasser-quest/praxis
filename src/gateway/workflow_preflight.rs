@@ -203,6 +203,15 @@ pub fn validate(
         );
         for name in crate::tools::registry::activated_tool_names(&candidate.settings) {
             service(db, plugins, workflow, state, &name)?;
+            if candidate.mode == "agent" && crate::runtime::vm::guest_backend(plugins) {
+                let guest = match name.as_str() {
+                    "execute_terminal" | "edit_file" => Some("vm_shell"),
+                    "write_file" => Some("vm_file_transfer"),
+                    "read_file" => Some("vm_file_read"),
+                    _ => None,
+                };
+                if let Some(guest) = guest { service(db, plugins, workflow, state, guest)?; }
+            }
         }
         if mapping.is_empty() {
             continue;

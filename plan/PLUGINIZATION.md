@@ -8,8 +8,11 @@ are now implemented, along with task registry snapshots, receipt revision
 evidence and provider-independent management with lazy clients. Native feature
 invocation API v1 adds host-issued identity/workspace, scoped storage and
 credentials, deadline/cancellation handling and contracted service-backed tools.
-Manifest v2, independently installable feature services, route/UI
-registration and minimal startup below remain implementation targets.
+The headless VM adapter is now an optional native crate with explicit host
+configuration, native service ownership, guest-scoped results and credential
+grants. A compatibility installation preset preserves the shipped distribution.
+Manifest v2, independently installable IPC services, route/UI registration and
+minimal startup below remain implementation targets.
 
 ## 1. Decision and scope
 
@@ -71,8 +74,9 @@ workers, routes, assets, imports or mandatory heavy dependencies.
 The first slice now routes chat/agent/IR execution through `tool_dispatch.rs`
 and uses `tools/catalog.rs` for owner validation. WebSocket tasks already enter
 through these message paths. Explicit native names replace the blanket `vm_`
-reservation. Native feature adapters and defaults remain until extraction;
-this is a shared execution seam, not completed VM or minimal-runtime packaging.
+reservation. The VM adapter now binds the optional `praxis-vm` crate through that
+seam; dashboard/delivery bridges still remain for PR 3. This is native feature
+extraction, not completed independent IPC or minimal-runtime packaging.
 
 `src/runtime/events.rs` now owns the user stream; the dashboard stream module is
 a compatibility re-export. `src/runtime/templates.rs` owns resolution/catalog
@@ -448,7 +452,9 @@ aliases have a migration path, and both positive and absent/disabled cases pass.
 Measure these gates per package instead of treating a renamed module or JSON
 manifest as finished pluginization.
 
-PR 1's native foundation is implemented and verified. The next implementation
-is PR 2: the headless VM adapter extraction.
+PR 1's native foundation and PR 2's headless VM adapter are implemented.
+The next implementation is PR 3: independently packaged VM service, lifecycle
+and UI contributions. The compatibility preset is available ahead of PR 7;
+the final minimal distribution still requires the remaining extractions.
 Keep Decision IR and verified execution as shared runtime semantics throughout;
 this architecture reorganizes their capabilities rather than replacing them.

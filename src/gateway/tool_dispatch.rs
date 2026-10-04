@@ -153,21 +153,17 @@ async fn dispatch(
             .await
             .unwrap_or_else(|e| format!("Error: {}", e)),
         "execute_terminal" => {
-            // If VM_MODE=vm, redirect to VM
-            let vm_mode = std::env::var("VM_MODE").unwrap_or_else(|_| "shared".to_string());
-            let vm_enabled = std::env::var("VM_ENABLED")
-                .map(|v| v == "true" || v == "1")
-                .unwrap_or(false);
-            if mode == DispatchMode::Agent && vm_enabled && vm_mode == "vm" {
+            // Execute on the backend selected by the host at registration.
+            if mode == DispatchMode::Agent && crate::runtime::vm::guest_backend(plugins) {
                 let command = args["command"].as_str().unwrap_or("");
-                match crate::tools::vm_tools::dispatch_vm_tool(
+                match invoke_guest(plugins, db, user_id, &tc.id,
                     "vm_shell",
                     &serde_json::json!({"command": command}),
                 )
                 .await
                 {
-                    Some(result) => result,
-                    None => "Error: VM not running. Start a VM first with vm_start.".to_string(),
+                    Ok(result) => result,
+                    Err(error) => format!("Error: {error}"),
                 }
             } else {
                 let command = args["command"].as_str().unwrap_or("");
@@ -233,21 +229,17 @@ async fn dispatch(
             Err(e) => format!("Error: {}", e),
         },
         "write_file" => {
-            let vm_mode = std::env::var("VM_MODE").unwrap_or_else(|_| "shared".to_string());
-            let vm_enabled = std::env::var("VM_ENABLED")
-                .map(|v| v == "true" || v == "1")
-                .unwrap_or(false);
-            if mode == DispatchMode::Agent && vm_enabled && vm_mode == "vm" {
+            if mode == DispatchMode::Agent && crate::runtime::vm::guest_backend(plugins) {
                 let path = args["path"].as_str().unwrap_or("");
                 let content = args["content"].as_str().unwrap_or("");
-                match crate::tools::vm_tools::dispatch_vm_tool(
+                match invoke_guest(plugins, db, user_id, &tc.id,
                     "vm_file_transfer",
                     &serde_json::json!({"path": path, "content": content, "direction": "to_vm"}),
                 )
                 .await
                 {
-                    Some(result) => result,
-                    None => "Error: VM not running. Start a VM first with vm_start.".to_string(),
+                    Ok(result) => result,
+                    Err(error) => format!("Error: {error}"),
                 }
             } else {
                 let path = args["path"].as_str().unwrap_or("");
@@ -259,11 +251,7 @@ async fn dispatch(
             } // end else (shared mode)
         }
         "edit_file" => {
-            let vm_mode = std::env::var("VM_MODE").unwrap_or_else(|_| "shared".to_string());
-            let vm_enabled = std::env::var("VM_ENABLED")
-                .map(|v| v == "true" || v == "1")
-                .unwrap_or(false);
-            if mode == DispatchMode::Agent && vm_enabled && vm_mode == "vm" {
+            if mode == DispatchMode::Agent && crate::runtime::vm::guest_backend(plugins) {
                 let path = args["path"].as_str().unwrap_or("");
                 let old_text = args["old_text"]
                     .as_str()
@@ -279,14 +267,14 @@ async fn dispatch(
                     new_text.replace('/', "\\/"),
                     path
                 );
-                match crate::tools::vm_tools::dispatch_vm_tool(
+                match invoke_guest(plugins, db, user_id, &tc.id,
                     "vm_shell",
                     &serde_json::json!({"command": cmd}),
                 )
                 .await
                 {
-                    Some(result) => result,
-                    None => "Error: VM not running. Start a VM first with vm_start.".to_string(),
+                    Ok(result) => result,
+                    Err(error) => format!("Error: {error}"),
                 }
             } else {
                 let path = args["path"].as_str().unwrap_or("");
@@ -305,20 +293,16 @@ async fn dispatch(
             } // end else (shared mode)
         }
         "read_file" => {
-            let vm_mode = std::env::var("VM_MODE").unwrap_or_else(|_| "shared".to_string());
-            let vm_enabled = std::env::var("VM_ENABLED")
-                .map(|v| v == "true" || v == "1")
-                .unwrap_or(false);
-            if mode == DispatchMode::Agent && vm_enabled && vm_mode == "vm" {
+            if mode == DispatchMode::Agent && crate::runtime::vm::guest_backend(plugins) {
                 let path = args["path"].as_str().unwrap_or("");
-                match crate::tools::vm_tools::dispatch_vm_tool(
+                match invoke_guest(plugins, db, user_id, &tc.id,
                     "vm_file_read",
                     &serde_json::json!({"path": path}),
                 )
                 .await
                 {
-                    Some(result) => result,
-                    None => "Error: VM not running. Start a VM first with vm_start.".to_string(),
+                    Ok(result) => result,
+                    Err(error) => format!("Error: {error}"),
                 }
             } else {
                 let path = args["path"].as_str().unwrap_or("");
@@ -622,7 +606,7 @@ async fn dispatch(
             let vm_name = args["vm_name"].as_str().unwrap_or("praxis-vm");
             if channel_id == "web" || channel_id.is_empty() {
                 match crate::tools::web_interactive::send_screenshot_to_web(
-                    user_id, caption, vm_name,
+                    plugins, user_id, caption, vm_name,
                 )
                 .await
                 {
@@ -631,7 +615,7 @@ async fn dispatch(
                 }
             } else {
                 match crate::tools::discord_interactive::send_screenshot_to_discord(
-                    channel_id, caption, vm_name,
+                    plugins, user_id, channel_id, caption, vm_name,
                 )
                 .await
                 {
@@ -867,16 +851,15 @@ async fn dispatch(
             .await
             .unwrap_or_else(|e| format!("Error: {}", e)),
         _ => {
-            // Only explicitly registered native VM tools reach this adapter.
-            // Plugin-owned vm_* names were dispatched above.
-            if tc.function.name.starts_with("vm_") {
-                if let Some(result) =
-                    crate::tools::vm_tools::dispatch_vm_tool(&tc.function.name, &args).await
-                {
-                    return result;
-                }
-            }
             format!("Error: No native adapter for '{}'", tc.function.name)
         }
     }
+}
+
+
+async fn invoke_guest(plugins: &crate::plugins::PluginRegistry, db: &crate::db::Database, user: &str, call: &str, name: &str, args: &serde_json::Value) -> anyhow::Result<String> {
+    let owner = crate::tools::catalog::owner(plugins, name)?;
+    crate::tools::catalog::require_enabled(db, &owner, name)?;
+    let secrets = plugins.secrets_for_tool(name, &crate::db::secrets::get_secrets());
+    plugins.execute_tool_with_host(db, user, call, name, args, None, Some(&secrets)).await
 }

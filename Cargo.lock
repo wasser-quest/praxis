@@ -3701,6 +3701,7 @@ dependencies = [
  "minimp3",
  "once_cell",
  "png",
+ "praxis-vm",
  "rand 0.8.6",
  "ratatui",
  "rcgen",
@@ -3735,6 +3736,22 @@ dependencies = [
  "whisper-rs",
  "wiremock",
  "zeroize",
+]
+
+[[package]]
+name = "praxis-vm"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "chrono",
+ "png",
+ "regex",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

@@ -1,0 +1,925 @@
+{
+  "name": "vm",
+  "version": "0.1.0",
+  "description": "Optional native QEMU service. Enable VM_ENABLED and build the vm feature.",
+  "enabled": true,
+  "secrets": [],
+  "context": {
+    "credential_grants": {}
+  },
+  "tools": [
+    {
+      "name": "vm_start",
+      "description": "Start a QEMU VM. Creates a new VM if none exists. The VM runs a full Linux environment you control.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "default": "praxis-vm",
+            "description": "VM name"
+          },
+          "cpu_cores": {
+            "type": "integer",
+            "default": 2
+          },
+          "ram_mb": {
+            "type": "integer",
+            "default": 4096
+          },
+          "disk_size": {
+            "type": "string",
+            "default": "40G"
+          },
+          "iso_path": {
+            "type": "string",
+            "description": "Path to ISO for OS installation"
+          },
+          "arch": {
+            "type": "string",
+            "enum": [
+              "x86_64",
+              "aarch64"
+            ],
+            "default": "x86_64"
+          },
+          "keyboard_layout": {
+            "type": "string",
+            "enum": [
+              "us",
+              "de",
+              "fr",
+              "es",
+              "it",
+              "gb"
+            ],
+            "default": "us",
+            "description": "Keyboard layout for the VM (us, de, fr, es, it, gb)"
+          },
+          "firmware": {
+            "type": "string",
+            "enum": [
+              "bios",
+              "uefi"
+            ],
+            "default": "bios",
+            "description": "Boot firmware: 'bios' (legacy) or 'uefi' (OVMF). Use 'uefi' for modern OSes that require EFI boot."
+          }
+        }
+      },
+      "handler": {
+        "type": "service",
+        "service": "vm",
+        "operation": "vm_start",
+        "api_version": 1,
+        "timeout_secs": 300
+      }
+    },
+    {
+      "name": "vm_stop",
+      "description": "Stop a running VM",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "default": "praxis-vm"
+          },
+          "force": {
+            "type": "boolean",
+            "default": false,
+            "description": "Force kill instead of graceful shutdown"
+          }
+        }
+      },
+      "handler": {
+        "type": "service",
+        "service": "vm",
+        "operation": "vm_stop",
+        "api_version": 1,
+        "timeout_secs": 300
+      }
+    },
+    {
+      "name": "vm_shell",
+      "description": "vm_shell",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "type": "string",
+            "description": "Shell command to execute. Bash syntax. Examples: 'ls -la /etc', 'cat /etc/os-release', 'systemctl status sshd', 'python3 -c \"print(1+1)\"'."
+          },
+          "cwd": {
+            "type": "string",
+            "description": "Working directory. Defaults to /root. Example: '/var/log'."
+          },
+          "stdin": {
+            "type": "string",
+            "description": "Optional text piped to the command's stdin. Useful for `tee`, `sort`, `python -`, etc."
+          },
+          "env": {
+            "type": "object",
+            "description": "Extra environment variables for this command, e.g. {\"DEBIAN_FRONTEND\":\"noninteractive\"}.",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "timeout_secs": {
+            "type": "integer",
+            "default": 30,
+            "minimum": 1,
+            "maximum": 1800,
+            "description": "Hard timeout in seconds. Raise for slow commands like `xbps-install` or `make`."
+          },
+          "name": {
+            "type": "string",
+            "default": "praxis-vm",
+            "description": "VM name."
+          }
+        },
+        "required": [
+          "command"
+        ]
+      },
+      "handler": {
+        "type": "service",
+        "service": "vm",
+        "operation": "vm_shell",
+        "api_version": 1,
+        "timeout_secs": 300
+      }
+    },
+    {
+      "name": "vm_keys",
+      "description": "Send keyboard input to the VM. Supports:\n- Text: 'root', 'ls -la', 'hello world'\n- Special keys: 'enter', 'esc', 'tab', 'backspace', 'space', 'delete', 'insert', 'home', 'end', 'pageup', 'pagedown'\n- Arrow keys: 'arrow_up', 'arrow_down', 'arrow_left', 'arrow_right'\n- Function keys: 'f1'-'f24'\n- Modifiers: 'ctrl', 'alt', 'shift', 'super'/'meta'/'win'\n- Numpad: 'kp0'-'kp9', 'kp_enter', 'kp_plus', 'kp_minus', 'kp_multiply', 'kp_divide', 'kp_dot'\n- Symbols: - = [ ] \\ ; ' ` , . / and shifted: ! @ # $ % ^ & * ( ) _ + { } | : \" ~ < > ?\n- Modifier combos: 'ctrl+a', 'alt+tab', 'ctrl+alt+delete'\n- Macros (repeat): '(key)count' - e.g. '(arrowdown)5' presses down 5 times, '(enter)3' presses enter 3 times, '(tab)2' presses tab twice\n- Newlines '\\n' are converted to enter key\n- Use keyboard_layout parameter to set VM keyboard layout (us, de, fr, es, it, gb)",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "keys": {
+            "type": "string",
+            "description": "Text, special key, or macro. Examples: 'root\\n', '(arrowdown)5', 'ctrl+c', 'enter'"
+          },
+          "name": {
+            "type": "string",
+            "default": "praxis-vm"
+          },
+          "keyboard_layout": {
+            "type": "string",
+            "enum": [
+              "us",
+              "de",
+              "fr",
+              "es",
+              "it",
+              "gb"
+            ],
+            "default": "us",
+            "description": "Keyboard layout for this input"
+          }
+        },
+        "required": [
+          "keys"
+        ]
+      },
+      "handler": {
+        "type": "service",
+        "service": "vm",
+        "operation": "vm_keys",
+        "api_version": 1,
+        "timeout_secs": 300
+      }
+    },
+    {
+      "name": "vm_input",
+      "description": "High-level VM input tool for easy navigation. Vim-like shortcuts:\n- Navigation: up/k, down/j, left/h, right/l (with count)\n- Pages: pageup/pgup, pagedown/pgdn, home, end\n- Tab: tab, shifttab/backtab\n- Actions: enter/confirm/select, esc/cancel/back, space/toggle, backspace/delete\n- Type: type (text), typeenter (text+enter), num (number+enter)\n- Function keys: f1-f12\n- Ctrl: ctrl_c (interrupt), ctrl_z, ctrl_a, ctrl_l (clear)\n- Wait: wait (ms parameter)\n- Bash: bash (command) - Execute command directly via serial, returns output\n- File: write_file (path, content) - Write file directly to VM\n- Status: system_status - Check keymap, locale, network, disk, memory, services\n- Service: restart_service (service) - Restart a Void Linux service\n- Use keyboard_layout parameter to set VM keyboard layout (us, de, fr, es, it, gb)\nExamples: {action:'bash', command:'ls -la'}, {action:'write_file', path:'/tmp/test.txt', content:'hello'}, {action:'system_status'}",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "Action: up/down/left/right, tab/shifttab, enter/confirm, esc/cancel, space/toggle, type, typeenter, num, f1-f12, ctrl_c, wait"
+          },
+          "text": {
+            "type": "string",
+            "description": "Text for type/typeenter/num actions"
+          },
+          "count": {
+            "type": "integer",
+            "default": 1,
+            "description": "Repeat count for navigation"
+          },
+          "ms": {
+            "type": "integer",
+            "default": 1000,
+            "description": "Wait time in ms for wait action"
+          },
+          "enter": {
+            "type": "boolean",
+            "default": false,
+            "description": "Press enter after type"
+          },
+          "name": {
+            "type": "string",
+            "default": "praxis-vm"
+          },
+          "keyboard_layout": {
+            "type": "string",
+            "enum": [
+              "us",
+              "de",
+              "fr",
+              "es",
+              "it",
+              "gb"
+            ],
+            "default": "us",
+            "description": "Keyboard layout for this input"
+          }
+        },
+        "required": [
+          "action"
+        ]
+      },
+      "handler": {
+        "type": "service",
+        "service": "vm",
+        "operation": "vm_input",
+        "api_version": 1,
+        "timeout_secs": 300
+      }
+    },
+    {
+      "name": "vm_screenshot",
+      "description": "Take a screenshot of the VM display. Returns base64-encoded image. Use this to see what's on the VM screen (GUI, TUI apps, etc).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "default": "praxis-vm"
+          }
+        }
+      },
+      "handler": {
+        "type": "service",
+        "service": "vm",
+        "operation": "vm_screenshot",
+        "api_version": 1,
+        "timeout_secs": 300
+      }
+    },
+    {
+      "name": "vm_file_transfer",
+      "description": "Transfer a file to/from the VM. Use direction='to_vm' to upload or 'from_vm' to download. Content is base64 encoded.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "File path in VM"
+          },
+          "content": {
+            "type": "string",
+            "description": "File content (base64 for binary, plain text for text)"
+          },
+          "direction": {
+            "type": "string",
+            "enum": [
+              "to_vm",
+              "from_vm"
+            ],
+            "default": "to_vm"
+          },
+          "name": {
+            "type": "string",
+            "default": "praxis-vm"
+          }
+        },
+        "required": [
+          "path"
+        ]
+      },
+      "handler": {
+        "type": "service",
+        "service": "vm",
+        "operation": "vm_file_transfer",
+        "api_version": 1,
+        "timeout_secs": 300
+      }
+    },
+    {
+      "name": "vm_snapshot",
+      "description": "Create a VM snapshot for later restore. Great for saving state before risky operations.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "snapshot_name": {
+            "type": "string",
+            "description": "Name for the snapshot"
+          },
+          "name": {
+            "type": "string",
+            "default": "praxis-vm"
+          }
+        },
+        "required": [
+          "snapshot_name"
+        ]
+      },
+      "handler": {
+        "type": "service",
+        "service": "vm",
+        "operation": "vm_snapshot",
+        "api_version": 1,
+        "timeout_secs": 300
+      }
+    },
+    {
+      "name": "vm_shared_folder",
+      "description": "Add a shared folder between host and VM. Files in host_path will be accessible at mount_point inside the VM. Requires VM restart.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "host_path": {
+            "type": "string",
+            "description": "Path on the host machine"
+          },
+          "mount_point": {
+            "type": "string",
+            "description": "Mount path inside VM",
+            "default": "/mnt/shared"
+          },
+          "readonly": {
+            "type": "boolean",
+            "default": false
+          },
+          "name": {
+            "type": "string",
+            "default": "praxis-vm"
+          }
+        },
+        "required": [
+          "host_path"
+        ]
+      },
+      "handler": {
+        "type": "service",
+        "service": "vm",
+        "operation": "vm_shared_folder",
+        "api_version": 1,
+        "timeout_secs": 300
+      }
+    },
+    {
+      "name": "vm_mouse",
+      "description": "Control the mouse in the VM. Actions: move_absolute (x,y), move_relative (dx,dy), click (x,y,button), double_click, drag (x,y to dx,dy), scroll (vertical/horizontal). Button: 0=left, 1=middle, 2=right.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "move_absolute",
+              "move_relative",
+              "click",
+              "double_click",
+              "drag",
+              "scroll"
+            ]
+          },
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "dx": {
+            "type": "integer"
+          },
+          "dy": {
+            "type": "integer"
+          },
+          "button": {
+            "type": "integer",
+            "description": "0=left,1=middle,2=right",
+            "default": 0
+          },
+          "scroll_vertical": {
+            "type": "integer",
+            "description": "Positive=up, negative=down"
+          },
+          "scroll_horizontal": {
+            "type": "integer",
+            "description": "Positive=left, negative=right"
+          },
+          "name": {
+            "type": "string",
+            "default": "praxis-vm"
+          }
+        },
+        "required": [
+          "action"
+        ]
+      },
+      "handler": {
+        "type": "service",
+        "service": "vm",
+        "operation": "vm_mouse",
+        "api_version": 1,
+        "timeout_secs": 300
+      }
+    },
+    {
+      "name": "vm_look_screenshot",
+      "description": "Look at a saved VM screenshot. index: -1=latest, 0=oldest, N=specific screenshot number. Returns base64 image. Max 500 screenshots are kept (oldest auto-deleted).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer",
+            "description": "-1=latest, 0=oldest, N=specific",
+            "default": -1
+          },
+          "name": {
+            "type": "string",
+            "default": "praxis-vm"
+          }
+        }
+      },
+      "handler": {
+        "type": "service",
+        "service": "vm",
+        "operation": "vm_look_screenshot",
+        "api_version": 1,
+        "timeout_secs": 300
+      }
+    },
+    {
+      "name": "vm_process_list",
+      "description": "vm_process_list",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "filter": {
+            "type": "string",
+            "description": "Optional substring to grep for (matches against the full command line). Example: 'nginx', 'python'."
+          },
+          "sort_by": {
+            "type": "string",
+            "enum": [
+              "cpu",
+              "mem",
+              "pid"
+            ],
+            "default": "cpu",
+            "description": "Sort key. 'cpu' (default) shows hot processes first, 'mem' shows memory hogs, 'pid' is creation order."
+          },
+          "limit": {
+            "type": "integer",
+            "default": 30,
+            "minimum": 1,
+            "maximum": 200,
+            "description": "Maximum number of rows to return."
+          },
+          "name": {
+            "type": "string",
+            "default": "praxis-vm"
+          }
+        }
+      },
+      "handler": {
+        "type": "service",
+        "service": "vm",
+        "operation": "vm_process_list",
+        "api_version": 1,
+        "timeout_secs": 300
+      }
+    },
+    {
+      "name": "vm_file_read",
+      "description": "vm_file_read",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Absolute file path inside the VM, e.g. '/var/log/messages'."
+          },
+          "start_line": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Optional: 1-based first line to return. If omitted, starts at 1."
+          },
+          "line_count": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Optional: max number of lines to return from start_line. Combine with start_line to page through large files."
+          },
+          "max_bytes": {
+            "type": "integer",
+            "default": 65536,
+            "minimum": 256,
+            "maximum": 1048576,
+            "description": "Hard cap on returned size in bytes. Defaults to 64 KiB; the file is truncated and a `[truncated]` marker is appended."
+          },
+          "name": {
+            "type": "string",
+            "default": "praxis-vm"
+          }
+        },
+        "required": [
+          "path"
+        ]
+      },
+      "handler": {
+        "type": "service",
+        "service": "vm",
+        "operation": "vm_file_read",
+        "api_version": 1,
+        "timeout_secs": 300
+      }
+    },
+    {
+      "name": "vm_network_test",
+      "description": "vm_network_test",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "ping",
+              "tcp",
+              "curl",
+              "dns",
+              "interfaces",
+              "routes"
+            ],
+            "default": "interfaces"
+          },
+          "target": {
+            "type": "string",
+            "description": "Host (for ping/tcp/dns) or URL (for curl). Required for ping/tcp/curl/dns."
+          },
+          "port": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535,
+            "description": "TCP port for action='tcp'. E.g. 22, 80, 443."
+          },
+          "count": {
+            "type": "integer",
+            "default": 4,
+            "minimum": 1,
+            "maximum": 30,
+            "description": "Probe count for action='ping'."
+          },
+          "timeout_secs": {
+            "type": "integer",
+            "default": 10,
+            "minimum": 1,
+            "maximum": 120,
+            "description": "Per-action timeout."
+          },
+          "name": {
+            "type": "string",
+            "default": "praxis-vm"
+          }
+        }
+      },
+      "handler": {
+        "type": "service",
+        "service": "vm",
+        "operation": "vm_network_test",
+        "api_version": 1,
+        "timeout_secs": 300
+      }
+    },
+    {
+      "name": "vm_service_list",
+      "description": "List all services in the VM and their status (Void Linux runit). Shows running/stopped services.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "default": "praxis-vm"
+          }
+        }
+      },
+      "handler": {
+        "type": "service",
+        "service": "vm",
+        "operation": "vm_service_list",
+        "api_version": 1,
+        "timeout_secs": 300
+      }
+    },
+    {
+      "name": "vm_package_install",
+      "description": "vm_package_install",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "packages": {
+            "type": "string",
+            "description": "Space-separated package names. Example: 'git curl htop'."
+          },
+          "update_first": {
+            "type": "boolean",
+            "default": true,
+            "description": "Run `xbps-install -Suy` before the install. Set false if the index was just synced."
+          },
+          "assume_yes": {
+            "type": "boolean",
+            "default": true,
+            "description": "Pass -y so xbps doesn't prompt for confirmation."
+          },
+          "name": {
+            "type": "string",
+            "default": "praxis-vm"
+          }
+        },
+        "required": [
+          "packages"
+        ]
+      },
+      "handler": {
+        "type": "service",
+        "service": "vm",
+        "operation": "vm_package_install",
+        "api_version": 1,
+        "timeout_secs": 300
+      }
+    },
+    {
+      "name": "vm_snapshot_list",
+      "description": "List all snapshots for the VM. Shows snapshot names and creation info.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "default": "praxis-vm"
+          }
+        }
+      },
+      "handler": {
+        "type": "service",
+        "service": "vm",
+        "operation": "vm_snapshot_list",
+        "api_version": 1,
+        "timeout_secs": 300
+      }
+    },
+    {
+      "name": "vm_snapshot_restore",
+      "description": "Restore a VM snapshot. The VM will be reset to the state when the snapshot was created.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "snapshot_name": {
+            "type": "string",
+            "description": "Name of the snapshot to restore"
+          },
+          "name": {
+            "type": "string",
+            "default": "praxis-vm"
+          }
+        },
+        "required": [
+          "snapshot_name"
+        ]
+      },
+      "handler": {
+        "type": "service",
+        "service": "vm",
+        "operation": "vm_snapshot_restore",
+        "api_version": 1,
+        "timeout_secs": 300
+      }
+    },
+    {
+      "name": "vm_snapshot_delete",
+      "description": "Delete a VM snapshot.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "snapshot_name": {
+            "type": "string",
+            "description": "Name of the snapshot to delete"
+          },
+          "name": {
+            "type": "string",
+            "default": "praxis-vm"
+          }
+        },
+        "required": [
+          "snapshot_name"
+        ]
+      },
+      "handler": {
+        "type": "service",
+        "service": "vm",
+        "operation": "vm_snapshot_delete",
+        "api_version": 1,
+        "timeout_secs": 300
+      }
+    },
+    {
+      "name": "vm_wait_for_text",
+      "description": "vm_wait_for_text",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "Text or regex to look for on screen."
+          },
+          "case_sensitive": {
+            "type": "boolean",
+            "default": false,
+            "description": "If false (default), case is ignored."
+          },
+          "regex": {
+            "type": "boolean",
+            "default": false,
+            "description": "If true, treat `text` as a regular expression instead of a literal substring."
+          },
+          "timeout_secs": {
+            "type": "integer",
+            "default": 60,
+            "minimum": 1,
+            "maximum": 1800,
+            "description": "Total wait time before giving up."
+          },
+          "interval_secs": {
+            "type": "integer",
+            "default": 5,
+            "minimum": 1,
+            "maximum": 120,
+            "description": "How often to take a fresh screenshot and check."
+          },
+          "name": {
+            "type": "string",
+            "default": "praxis-vm"
+          }
+        },
+        "required": [
+          "text"
+        ]
+      },
+      "handler": {
+        "type": "service",
+        "service": "vm",
+        "operation": "vm_wait_for_text",
+        "api_version": 1,
+        "timeout_secs": 300
+      }
+    },
+    {
+      "name": "vm_window_list",
+      "description": "List open windows in the VM (if running a desktop environment). Uses wmctrl or xdotool.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "default": "praxis-vm"
+          }
+        }
+      },
+      "handler": {
+        "type": "service",
+        "service": "vm",
+        "operation": "vm_window_list",
+        "api_version": 1,
+        "timeout_secs": 300
+      }
+    },
+    {
+      "name": "vm_window_focus",
+      "description": "Focus/activate a window in the VM by title or ID.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "window": {
+            "type": "string",
+            "description": "Window title or ID to focus"
+          },
+          "name": {
+            "type": "string",
+            "default": "praxis-vm"
+          }
+        },
+        "required": [
+          "window"
+        ]
+      },
+      "handler": {
+        "type": "service",
+        "service": "vm",
+        "operation": "vm_window_focus",
+        "api_version": 1,
+        "timeout_secs": 300
+      }
+    },
+    {
+      "name": "vm_clipboard_set",
+      "description": "Set clipboard content in the VM. Requires xclip or xsel.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "type": "string",
+            "description": "Content to set in clipboard"
+          },
+          "name": {
+            "type": "string",
+            "default": "praxis-vm"
+          }
+        },
+        "required": [
+          "content"
+        ]
+      },
+      "handler": {
+        "type": "service",
+        "service": "vm",
+        "operation": "vm_clipboard_set",
+        "api_version": 1,
+        "timeout_secs": 300
+      }
+    },
+    {
+      "name": "vm_clipboard_get",
+      "description": "Get clipboard content from the VM. Requires xclip or xsel.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "default": "praxis-vm"
+          }
+        }
+      },
+      "handler": {
+        "type": "service",
+        "service": "vm",
+        "operation": "vm_clipboard_get",
+        "api_version": 1,
+        "timeout_secs": 300
+      }
+    },
+    {
+      "name": "vm_install",
+      "description": "Start a VM with an installation ISO to install an OS. Provide either iso_name (searches in installation_disks context) or iso_path (direct path). The VM boots from the ISO. Use vm_keys and vm_screenshot to complete the installation.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "iso_name": {
+            "type": "string",
+            "description": "Name to search for in installation_disks (e.g. 'alpine', 'ubuntu', 'arch')"
+          },
+          "iso_path": {
+            "type": "string",
+            "description": "Direct path to ISO file (alternative to iso_name)"
+          },
+          "vm_name": {
+            "type": "string",
+            "default": "praxis-vm"
+          },
+          "cpu_cores": {
+            "type": "integer",
+            "default": 2
+          },
+          "ram_mb": {
+            "type": "integer",
+            "default": 4096
+          },
+          "disk_size": {
+            "type": "string",
+            "default": "40G"
+          },
+          "firmware": {
+            "type": "string",
+            "enum": [
+              "bios",
+              "uefi"
+            ],
+            "default": "bios",
+            "description": "Boot firmware: 'bios' (legacy) or 'uefi' (OVMF). Use 'uefi' for modern OSes that require EFI boot."
+          }
+        }
+      },
+      "handler": {
+        "type": "service",
+        "service": "vm",
+        "operation": "vm_install",
+        "api_version": 1,
+        "timeout_secs": 300
+      }
+    }
+  ]
+}

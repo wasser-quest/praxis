@@ -46,6 +46,9 @@ pub(crate) fn failure(error: &anyhow::Error) -> &'static str {
 
 #[async_trait::async_trait]
 pub trait NativeService: Send + Sync {
+    /// Transitional, host-only access for native UI/CLI adapters. Model calls
+    /// still go through invoke; independently hosted packages use IPC instead.
+    fn as_any(&self) -> Option<&dyn std::any::Any> { None }
     async fn invoke(
         &self,
         context: InvocationContext,
@@ -111,6 +114,10 @@ struct Binding {
 pub struct ServiceHandle(Arc<Binding>);
 
 impl ServiceHandle {
+    pub(crate) fn service_as<T: 'static>(&self) -> Option<&T> {
+        if !self.enabled() { return None; }
+        self.0.service.as_any()?.downcast_ref::<T>()
+    }
     pub(crate) fn new(
         owner: &str,
         id: &str,
