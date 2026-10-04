@@ -87,11 +87,12 @@ To keep QEMU code outside the Praxis binary, build the worker and host separatel
 Install QEMU utilities on the same machine. From the source checkout:
 
 ```bash
-cargo build --release --locked -p praxis-vm --bin praxis-vm-service
+cargo build --release --locked -p praxis-vm-worker --bin praxis-vm-service
 cargo build --release --locked -p praxis --no-default-features
 PRAXIS_INSTALL=/absolute/path/to/installation
 ./target/release/praxis install-preset compatibility \
-  --directory "$PRAXIS_INSTALL" --enable-vm-tools --data-dir /actual/path/to/data
+  --directory "$PRAXIS_INSTALL" --update-dashboard \
+  --enable-vm-tools --data-dir /actual/path/to/data
 mkdir -p "$PRAXIS_INSTALL/plugins/vm/bin"
 install -m 755 ./target/release/praxis "$PRAXIS_INSTALL/praxis"
 install -m 755 ./target/release/praxis-vm-service \
@@ -120,11 +121,19 @@ public assets, not this executable: install/update the worker explicitly while
 Praxis is stopped. A missing/incompatible worker fails setup without fallback or
 automatic retry. A compatible worker can later be installed without a host rebuild.
 
-This transport supports tools and configured autostart. The VM dashboard/VNC
-bridge and `praxis vm` CLI still require the native compatibility build and do
-not use the worker yet. For the full previous VM UI experience, leave
-`VM_SERVICE_EXECUTABLE` unset and use the normal compatibility build. See
-[protocol and lifecycle](PLUGIN_PROCESS_PROTOCOL.md).
+For the VM dashboard and VNC, run `./praxis run --no-discord` without
+`--no-dashboard`. Open `http://localhost:1337` (or HTTPS if configured), sign in,
+and select the contributed **Virtual machines** page. The listener still binds
+`0.0.0.0`. No provider credentials are needed for management. The worker embeds
+its UI/noVNC assets and licenses; a core-only installation does not need to copy
+a VM UI directory. Missing/disabled/unready VM packages contribute no page.
+
+Update host and worker from the same checkout and refresh dashboard assets with
+`--update-dashboard`; older workers lack the required `web_info` control. The
+`praxis vm` CLI and automatic screenshot delivery still require the native
+compatibility backend. The default native build retains its VM dashboard without
+setting `VM_SERVICE_EXECUTABLE`. See [web contributions](PLUGIN_WEB_CONTRIBUTIONS.md)
+and [protocol and lifecycle](PLUGIN_PROCESS_PROTOCOL.md).
 
 ## Optional capabilities and headless use
 

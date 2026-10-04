@@ -2,6 +2,7 @@ pub mod routes;
 pub mod decision_profiles;
 pub mod graphs;
 pub mod stream;
+mod extensions;
 
 use std::net::IpAddr;
 use std::path::PathBuf;

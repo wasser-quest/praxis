@@ -5,8 +5,9 @@ A Praxis binary built with `--no-default-features` can use it without linking th
 QEMU implementation. The default compatibility build keeps its native backend
 unless the operator sets `VM_SERVICE_EXECUTABLE`. See [installation commands](INSTALLATION_PRESETS.md#install-the-headless-vm-worker).
 
-This is the headless transport part of roadmap PR 3. VM routes, VNC, the dashboard
-page and the independent VM CLI are not transported yet. Manifest v2, immutable
+Roadmap PR 3 now includes the headless transport and the package-owned web
+contribution: administration, VNC, embedded noVNC and a dashboard page. The
+independent VM CLI and complete ownership/upgrade policy remain. Manifest v2, immutable
 package publication and generic process declarations remain later work. Only the
 VM adapter selects a worker today; models cannot select an executable.
 
@@ -21,14 +22,16 @@ frames and mismatched response identities fail closed.
 
 The startup handshake checks protocol version 1, owner, service ID, a fresh nonce
 and the exact operation/control tables. Native invocation API version 1 remains a
-separate interface: the manifest's `api_version`. No network listener or
-unauthenticated socket is created.
+separate interface: the manifest's `api_version`. Tool calls use only the pipes.
+The web contribution binds a private authenticated loopback listener at an
+ephemeral port; it is never exposed directly as the public dashboard. See
+[web contributions](PLUGIN_WEB_CONTRIBUTIONS.md).
 
 | Request | Purpose |
 | --- | --- |
 | `hello` | Host-selected initialization and declaration handshake |
 | `invoke` | Host caller envelope plus separate model arguments |
-| `control` | Operator lifecycle operation; VM exposes configured autostart |
+| `control` | Host lifecycle/metadata operation; VM exposes `autostart` and `web_info` |
 | `health` | Worker responsiveness without starting a guest |
 | `cancel` | Interrupt the matching in-flight request |
 | `shutdown` | Stop this worker instance |
@@ -91,7 +94,7 @@ and stderr are not returned to the model or written to host logs.
 
 ```bash
 cargo test -p praxis-plugin-api --locked
-cargo test -p praxis-vm --locked
+cargo test -p praxis-vm -p praxis-vm-web -p praxis-vm-worker --locked
 cargo test --lib --locked --no-default-features runtime::vm_process_tests
 cargo test --lib --locked runtime::feature_tests
 cargo tree -p praxis --no-default-features
@@ -101,5 +104,6 @@ Tests use local process/QMP fixtures and a controlled startup child, without rea
 QEMU guests or live inference. They cover identity, credential selection,
 environment isolation, handshake/version failures, bounds, idle/in-flight crash
 detection, stale identities, deadlines including queue time, cancellation cleanup,
-live disable and rejection of guest completion evidence. Interactive guest/VNC
-validation belongs to the later UI slice.
+live disable, package web authentication/VNC disconnect and rejection of guest
+completion evidence. Real guest installation and interactive VNC keyboard/mouse
+remain operator smoke checks.

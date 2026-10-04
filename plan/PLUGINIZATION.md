@@ -161,7 +161,7 @@ Some directories need splitting rather than moving wholesale:
 
 | Current area | Target ownership and migration |
 | --- | --- |
-| `src/vm/`, `src/tools/vm_tools.rs`, `static/novnc/` | `vm` service/tools/configuration/guest adapters; include noVNC licenses and assets |
+| `crates/praxis-vm/`, `crates/praxis-vm-web/`, `plugins/vm/novnc/` | `vm` service/tools/configuration/guest adapters; include noVNC licenses and assets |
 | `src/dashboard/`, `static/index.html`, styles and dashboard JS | `dashboard` UI/listener; move reusable APIs, graph/event semantics and template sync to host services first |
 | `src/gateway/llm/`, `providers.rs`, `decision_client.rs` | Provider-neutral request/stream/usage/error interfaces in host; protocol implementations in provider packages |
 | `decision_routing.rs`, `decision_profiles.rs`, `decisions/` | Routing enforcement/profile validation in host; profile assets and Decision protocol adapters in packages |
@@ -455,8 +455,9 @@ Measure these gates per package instead of treating a renamed module or JSON
 manifest as finished pluginization.
 
 PR 1's native foundation and PR 2's headless VM adapter are implemented.
-PR 3's headless process transport is implemented; its next slice moves VM
-routes/VNC and the dashboard page into package contributions. The compatibility
+PR 3's process transport and package-owned VM routes/VNC/dashboard contribution
+are implemented. Next finish independent CLI, guest ownership and upgrade/recovery
+policy, then extract the whole dashboard in PR 4. The compatibility
 preset is available ahead of PR 7;
 the final minimal distribution still requires the remaining extractions.
 Keep Decision IR and verified execution as shared runtime semantics throughout;

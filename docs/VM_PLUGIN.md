@@ -94,23 +94,28 @@ handles health, caller scope, deadlines, cancellation and worker crashes. Stoppe
 instances are not restarted/replayed automatically; restart Praxis for a fresh
 binding. Installing a manifest alone still does not install an executable.
 
-VM ownership policy, routes/noVNC assets, the dashboard page and independent CLI
-are the next slice. Current dashboard/delivery adapters obtain the native bound
-instance through a host-only bridge; they are unavailable in process mode and
-cannot lazy-initialize a manager. Automatic screenshot delivery through that
-bridge remains native-only; worker tool results still retain screenshot paths.
-The process option serves headless tools and configured autostart.
-The legacy `/websockify` alias now uses the authenticated VNC adapter, and clients
-send the dashboard token. Refresh updated dashboard assets after upgrade.
+The `praxis-vm-web` package owns VM administration, VNC, the dashboard page and
+noVNC assets/licenses. `praxis-vm-worker` hosts it alongside the engine; the
+native compatibility backend uses the same web implementation. Host authentication
+and a generic bounded proxy keep public authority outside the worker. See
+[web contributions](PLUGIN_WEB_CONTRIBUTIONS.md). The VM page works with either
+backend, including a core built without the VM crates. Manual dashboard starts
+use explicit request layout (default `us`) and no implicit credential grants.
+
+Independent CLI, per-user VM ownership and complete upgrade/recovery policy are
+remaining PR 3 work. Automatic screenshot delivery through the native host bridge
+is still native-only; worker tool results retain screenshot paths. Update host
+and worker together and refresh dashboard assets; older workers lack `web_info`.
 
 ## Verification
 
 ```bash
-cargo test -p praxis-vm --locked
+cargo test -p praxis-vm -p praxis-vm-web -p praxis-vm-worker --locked
 cargo test -p praxis-plugin-api --locked
 cargo test --lib --locked --no-default-features runtime::vm_process_tests
 cargo test --lib --locked runtime::vm_tests
-cargo test --lib --locked dashboard::routes::vm_tests
+cargo test --lib --locked --no-default-features dashboard::extensions
+node tests/test_dashboard_extensions.js
 cargo test --lib --locked --no-default-features runtime::vm_tests
 cargo tree -p praxis --no-default-features
 ```

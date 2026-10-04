@@ -3703,6 +3703,7 @@ dependencies = [
  "png",
  "praxis-plugin-api",
  "praxis-vm",
+ "praxis-vm-web",
  "rand 0.8.6",
  "ratatui",
  "rcgen",
@@ -3758,17 +3759,48 @@ name = "praxis-vm"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-trait",
  "base64",
  "chrono",
  "png",
- "praxis-plugin-api",
  "regex",
  "serde",
  "serde_json",
  "tempfile",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "praxis-vm-web"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "futures-util",
+ "praxis-plugin-api",
+ "praxis-vm",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-tungstenite 0.24.0",
+ "tokio-util",
+]
+
+[[package]]
+name = "praxis-vm-worker"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "praxis-plugin-api",
+ "praxis-vm",
+ "praxis-vm-web",
+ "reqwest",
+ "serde_json",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]

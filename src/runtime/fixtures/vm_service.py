@@ -24,7 +24,7 @@ mode = (root / "worker.mode").read_text()
 manifest = json.loads((root / "plugins/vm/plugin.json").read_text())
 write({"type": "ready", "version": 99 if mode == "bad_version" else 1,
        "owner": "vm", "service": "vm", "nonce": hello["nonce"],
-       "operations": [t["name"] for t in manifest["tools"]], "controls": ["autostart"]})
+       "operations": [t["name"] for t in manifest["tools"]], "controls": ["autostart", "web_info"]})
 (root / "worker.ready").touch()
 while True:
     request = read()
@@ -51,6 +51,8 @@ while True:
                   "preferences": context["attributes"]["preferences"],
                   "grant_names": sorted(grants), "credentials_match": grants == {"VM_TOKEN": "permitted-fixture-value"},
                   "secret_count": len(context["secrets"])}
+    elif request["type"] == "control" and request["operation"] == "web_info":
+        result = {"version": 1, "port": 1, "descriptor": {"id":"vm", "title":"Virtual machines", "page":"/plugins/vm/ui/page.html", "script":"/plugins/vm/ui/vm.js", "style":"/plugins/vm/ui/vm.css", "websockets":["/api/plugins/vm/vnc/ws"]}}
     else:
         result = {"healthy": True}
     write({"type": "completed", "result": result, **identity})

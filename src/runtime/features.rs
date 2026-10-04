@@ -46,6 +46,9 @@ pub(crate) fn failure(error: &anyhow::Error) -> &'static str {
 
 #[async_trait::async_trait]
 pub trait NativeService: Send + Sync {
+    fn web_descriptor(&self) -> Option<praxis_plugin_api::web::WebDescriptor> { None }
+    fn web_endpoint(&self) -> Option<super::web::WebEndpoint> { None }
+    fn web_aliases(&self) -> Vec<super::web::WebAlias> { Vec::new() }
     /// Transitional, host-only access for native UI/CLI adapters. Model calls
     /// still go through invoke; independently hosted packages use IPC instead.
     fn as_any(&self) -> Option<&dyn std::any::Any> { None }
@@ -77,6 +80,8 @@ pub struct ServiceDescriptor {
     pub operations: Vec<String>,
     /// New bindings get a new generation even if the manifest is unchanged.
     pub generation: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub web: Option<praxis_plugin_api::web::WebDescriptor>,
 }
 
 pub(crate) fn identifier(value: &str) -> bool {
@@ -110,6 +115,7 @@ struct State {
 struct Binding {
     descriptor: ServiceDescriptor,
     service: Arc<dyn NativeService>,
+    web_aliases: Vec<super::web::WebAlias>,
     state: Mutex<State>,
     drained: Notify,
     forced: CancellationToken,
@@ -153,6 +159,12 @@ impl ServiceHandle {
             ops.len() == operations.len(),
             "Duplicate native service operation"
         );
+        let web = service.web_descriptor();
+        if let Some(web) = &web { web.validate(owner)?; }
+        let aliases = service.web_aliases();
+        anyhow::ensure!(web.is_some() || aliases.is_empty(), "Web aliases require a contribution");
+        let mut paths = std::collections::HashSet::new();
+        for alias in &aliases { alias.validate(owner)?; anyhow::ensure!(paths.insert(&alias.source), "Duplicate host web alias"); }
         Ok(Self(Arc::new(Binding {
             descriptor: ServiceDescriptor {
                 owner: owner.into(),
@@ -160,8 +172,10 @@ impl ServiceHandle {
                 api_version: version,
                 operations: ops,
                 generation: uuid::Uuid::new_v4().to_string(),
+                web,
             },
             service,
+            web_aliases: aliases,
             state: Mutex::new(State {
                 enabled: true,
                 in_flight: 0,
@@ -176,6 +190,17 @@ impl ServiceHandle {
     pub fn descriptor(&self) -> &ServiceDescriptor {
         &self.0.descriptor
     }
+    pub(crate) fn web_endpoint(&self) -> Option<super::web::WebEndpoint> {
+        if !self.enabled() { return None; }
+        let endpoint = self.0.service.web_endpoint()?;
+        if endpoint.info.validate(&self.descriptor().owner).is_err()
+            || self.descriptor().web.as_ref() != Some(&endpoint.info.descriptor) { return None; }
+        Some(endpoint)
+    }
+    pub(crate) fn web_aliases(&self) -> Vec<super::web::WebAlias> { self.0.web_aliases.clone() }
+    /// UI requests share drain/cancellation with model calls without acquiring
+    /// a model invocation's workspace, user storage or secret grants.
+    pub(crate) fn web_lease(&self) -> anyhow::Result<Lease> { self.lease(self.0.forced.child_token()) }
     pub fn enabled(&self) -> bool {
         self.0.state.lock().is_ok_and(|state| state.enabled) && self.0.service.available()
     }
@@ -316,7 +341,7 @@ impl ServiceHandle {
     }
 }
 
-struct Lease {
+pub(crate) struct Lease {
     handle: ServiceHandle,
     cancellation: CancellationToken,
 }

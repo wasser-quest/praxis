@@ -1,0 +1,29 @@
+<h2>Virtual Machine</h2>
+                    <div id="vm-controls" style="display:flex;gap:0.5rem;margin-bottom:1rem;flex-wrap:wrap">
+                        <button class="btn btn-sm btn-primary" onclick="vmStart()">Start VM</button>
+                        <button class="btn btn-sm btn-danger" onclick="vmStop()">Stop VM</button>
+                        <button class="btn btn-sm btn-secondary" onclick="vmReboot()">Reboot</button>
+                        <button class="btn btn-sm btn-secondary" onclick="vmInsertCD()">Insert CD</button>
+                        <button class="btn btn-sm btn-secondary" onclick="vmEjectCD()">Eject CD</button>
+                        <button class="btn btn-sm btn-secondary" id="vm-clipboard-btn" onclick="vmClipboardToggle()">&#128203; Clipboard: OFF</button>
+                        <button class="btn btn-sm btn-secondary" onclick="vmClipboardSet()">&#128228; Set VM Clipboard</button>
+                        <button class="btn btn-sm btn-secondary" onclick="vmClipboardGet()">&#128229; Get VM Clipboard</button>
+                        <button class="btn btn-sm btn-secondary" onclick="vmRefresh()">Refresh</button>
+                    </div>
+                    <div id="vm-status-bar" class="data-list" style="margin-bottom:1rem"></div>
+                    <div>
+                        <h3>Desktop (VNC)</h3>
+                        <div id="vm-vnc-container"><div id="vm-vnc-placeholder">VM not running. Click &quot;Start VM&quot; to begin.</div><div id="vm-vnc-screen"></div></div>
+                        <div id="vm-vnc-log"></div>
+                    </div>
+                    <div style="margin-top:1rem">
+                        <h3>LLM Activity Log</h3>
+                        <div id="vm-activity-log"><div style="color:var(--text-secondary)">No VM activity yet.</div></div>
+                    </div>
+                    <h3 style="margin-top:1.5rem">VM Configuration</h3>
+                    <div id="vm-config" class="data-list"></div>
+                    <h3 style="margin-top:1.5rem">Quick Actions</h3>
+                    <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
+                        <button class="btn btn-sm btn-secondary" onclick="vmCreateSnapshot()">Snapshot</button>
+                        <button class="btn btn-sm btn-secondary" onclick="vmAddSharedFolder()">Add Shared Folder</button>
+                    </div>

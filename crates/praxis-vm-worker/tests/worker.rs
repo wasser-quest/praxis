@@ -20,12 +20,12 @@ fn launch(root: &std::path::Path) -> LaunchSpec {
         owner: "vm".into(),
         service: "vm".into(),
         operations: operations(),
-        controls: vec!["autostart".into()],
+        controls: vec!["autostart".into(), "web_info".into()],
         environment: BTreeMap::new(),
     }
 }
 fn initialization(root: &std::path::Path) -> serde_json::Value {
-    json!({"data_dir":root.to_string_lossy(),"arch":"x86_64","socket_mode":"unix","cpu_cores":2,"ram_mb":512,"disk_size":"1G"})
+    json!({"data_dir":root.to_string_lossy(),"arch":"x86_64","socket_mode":"unix","cpu_cores":2,"ram_mb":512,"disk_size":"1G", "web_token":"test-host-private-nonce"})
 }
 fn caller() -> CallContext {
     CallContext {
@@ -65,6 +65,50 @@ async fn independently_launched_vm_worker_is_read_only_and_preserves_guest_scope
     assert_eq!(result["outcome"], "failed");
     assert!(!data.exists());
     client.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn installed_worker_embeds_its_web_contribution_and_stops_it_on_shutdown() {
+    let root = tempfile::tempdir().unwrap();
+    let data = root.path().join("data");
+    let client = Client::launch(&launch(root.path()), initialization(&data))
+        .await
+        .unwrap();
+    let info: praxis_plugin_api::web::WebInfo =
+        serde_json::from_value(client.control("web_info", json!({})).await.unwrap()).unwrap();
+    info.validate("vm").unwrap();
+    let http = reqwest::Client::new();
+    for path in [
+        info.descriptor.page.as_str(),
+        info.descriptor.script.as_str(),
+        "/plugins/vm/novnc/core/rfb.js",
+        "/api/plugins/vm",
+    ] {
+        let url = format!("http://127.0.0.1:{}{path}", info.port);
+        assert_eq!(http.get(&url).send().await.unwrap().status(), 401);
+        let response = http
+            .get(&url)
+            .header(
+                praxis_plugin_api::web::PRIVATE_HEADER,
+                "test-host-private-nonce",
+            )
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        assert!(!response
+            .text()
+            .await
+            .unwrap()
+            .contains("test-host-private-nonce"));
+    }
+    assert!(!data.exists());
+    client.shutdown().await.unwrap();
+    assert!(http
+        .get(format!("http://127.0.0.1:{}/api/plugins/vm", info.port))
+        .send()
+        .await
+        .is_err());
 }
 
 #[cfg(unix)]

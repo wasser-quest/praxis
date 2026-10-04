@@ -131,10 +131,12 @@ starts preserve disabled tool flags; rerunning `--enable-vm-tools` deliberately
 reenables all 25 VM tools. State/workflow tool allow-lists still apply. Credentials
 are now explicit per-VM grants; see [VM setup and migration](docs/VM_PLUGIN.md).
 
-For headless VM tools with QEMU outside the Praxis binary, install
+For VM tools and the VM dashboard with QEMU outside the Praxis binary, install
 `praxis-vm-service` and set `VM_SERVICE_EXECUTABLE` to its installed path. This
 also works with `--no-default-features`. Follow [worker installation](docs/INSTALLATION_PRESETS.md#install-the-headless-vm-worker).
-The VM dashboard/VNC and VM CLI still use the native compatibility backend.
+The worker now supplies its VM page, administration API and VNC/noVNC assets.
+The `praxis vm` CLI and automatic screenshot delivery still use the native backend.
+See [web contributions](docs/PLUGIN_WEB_CONTRIBUTIONS.md).
 
 Python script plugins require `python3`. Configure their declared credentials and
 servers through Secrets and the plugin's settings; copying a manifest does not
@@ -250,7 +252,7 @@ RUST_LOG=info
 
 # VM (optional)
 VM_ENABLED=true              # Enable QEMU VM support
-# Optional headless worker; omit for the native VM dashboard/CLI:
+# Optional installed worker; omit to use the native VM backend:
 # VM_SERVICE_EXECUTABLE=plugins/vm/bin/praxis-vm-service
 VM_MODE=shared               # shared = host tools + guests; vm = guest backend for agent file/shell aliases
 VM_CPU_CORES=2
@@ -592,8 +594,10 @@ into optional packages. Its target is a small runtime with three builtin
 `file_ops` tools. See the [delivery checklist](plan/README.md) and
 [architecture overview](docs/PLUGIN_FIRST_PLAN.md). Current plugins install
 tools and native service bindings. The VM engine now lives in an optional Rust
-package and an independently installed headless worker. VM route/UI contributions
-and generic process manifests remain planned work.
+package and an independently installed worker. The VM package contributes its
+API, VNC/noVNC assets and dashboard page through a generic authenticated host
+proxy, including in a build without VM support. Independent VM CLI/ownership,
+the optional whole dashboard and generic process manifests remain planned work.
 
 The [shared execution boundary](docs/PLUGIN_RUNTIME.md) is the first implemented
 step: tool owners are checked consistently across discovery, workflow preflight
