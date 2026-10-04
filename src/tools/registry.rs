@@ -648,7 +648,7 @@ fn build_tool_definitions_with_selection(
     };
     if db.is_some() {
         tools.retain(|tool| native.iter().any(|n| n.name == tool.function.name && n.is_enabled));
-        for tool in native.iter().filter(|tool| tool.is_enabled) {
+        for tool in native.iter().filter(|tool| tool.is_enabled && !crate::runtime::vm::is_vm_tool(&tool.name)) {
             let category = get_tool_meta(&tool.name).map(|meta| meta.category).unwrap_or(ToolCategory::Action);
             let activated = full_schemas.contains(&tool.name) || full_cats.as_ref().is_some_and(|cats| cats.contains(&category));
             if (has_explicit_config || discovery_mode == ToolDiscoveryMode::None) && !activated { continue; }
@@ -669,11 +669,14 @@ fn build_tool_definitions_with_selection(
         }
     }
 
+    // VM schemas are provided only by the explicitly bound feature package.
+    tools.retain(|tool| !crate::runtime::vm::is_vm_tool(&tool.function.name));
+
     // Merge plugin tools - also filter them by state settings
     if let Some(plugins) = plugin_tools {
         for plugin_tool in plugins {
             // Check if tool already exists (static registry override)
-            if canonical_tool(&plugin_tool.function.name).is_some()
+            if (canonical_tool(&plugin_tool.function.name).is_some() && !crate::runtime::vm::is_vm_tool(&plugin_tool.function.name))
                 || tools.iter().any(|t| t.function.name == plugin_tool.function.name) {
                 continue;
             }

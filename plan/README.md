@@ -1,8 +1,8 @@
 # Praxis pluginization plan
 
 This folder contains the implementation roadmap for turning Praxis into a small
-runtime with optional feature plugins. Feature packaging is planned; the PR 1
-progress section records the implemented execution boundary.
+runtime with optional feature plugins. The PR 1 and PR 2 progress sections record
+the implemented execution boundary and the first optional native feature package.
 
 Start with [the full app roadmap](PLUGINIZATION.md). The order is:
 
@@ -22,7 +22,7 @@ optional workflow packs add assets rather than replacing the core interpreter.
 ## Delivery checklist
 
 - [x] PR 1: canonical registry and shared dispatch/host API.
-- [ ] PR 2: headless VM adapter extraction, preserving current behavior.
+- [x] PR 2: headless VM adapter extraction, preserving current behavior.
 - [ ] PR 3: independently packaged VM service, routes, UI contribution and lifecycle.
 - [ ] PR 4: optional dashboard with feature-independent runtime APIs/events.
 - [ ] PR 5: runtime-control tools and other tool packages.
@@ -30,8 +30,9 @@ optional workflow packs add assets rather than replacing the core interpreter.
 - [ ] PR 7: minimal distribution, compatibility preset and dependency cleanup.
 
 These are ordered reviewable milestones, not time estimates. Each milestone
-includes migration and acceptance checks in the full roadmap. PR 1's native
-foundation is implemented and verified; VM is the first feature to move.
+includes migration and acceptance checks in the full roadmap. VM is the first
+feature extracted into an optional native crate. Independent IPC/UI packaging
+is PR 3; the dashboard and remaining features still belong to later milestones.
 
 ## PR 1 progress
 
@@ -58,8 +59,34 @@ publication is later work.
 See [the current execution boundary](../docs/PLUGIN_RUNTIME.md) for implemented
 behavior and compatibility limits. PR 1's full compatibility checks passed:
 960 library tests with real POML, 15 CLI tests and seven selected integration
-cases, including real Cargo. No live model inference was used. VM is next;
-installable feature packages and the minimal distribution remain later work.
+cases, including real Cargo. No live model inference was used.
+
+## PR 2 progress
+
+- [x] Optional `praxis-vm` crate owns QEMU/QMP/serial and all 25 VM tools.
+- [x] Explicit host configuration, authenticated callers and user preferences;
+  no global manager, environment reads or default-user fallback in the backend.
+- [x] Native service ownership, live tool flags and explicit guest execution backend.
+- [x] Guest-scoped results cannot satisfy verified host-workspace guards.
+- [x] Optional screenshot hooks and explicit per-guest credential grants.
+- [x] Headless CLI extraction, read-only initialization, safe QMP reattachment and
+  cancellation cleanup of newly spawned children.
+- [x] Legacy dashboard/VNC adapters use the bound service and authenticated tokens.
+- [x] `compatibility` build and offline installation preset, including shipped
+  plugin helpers, workflows and noVNC assets; explicit one-time VM tool activation.
+
+Use [installation presets](../docs/INSTALLATION_PRESETS.md) to retain the previous
+feature set. The [VM migration guide](../docs/VM_PLUGIN.md) explains the native
+package and its transitional boundary. The preset is available now; PR 7 still
+owns the final minimal distribution and app-wide dependency cleanup. Real QEMU
+guest/OS/noVNC interaction remains an operator smoke check.
+
+Compatibility verification: 972 library tests with VM and 965 without VM, 16 CLI
+tests in each build, 10 native VM package tests and seven selected integration
+tests passed. The integrations use real POML/Cargo and synthetic provider
+responses; no live model inference was used. The compiled preset CLI was checked
+for fresh install, upgrade/backups, complete plugin helpers, separate `DATA_DIR`
+and preservation of disabled tools. The no-VM dependency tree excludes `praxis-vm`.
 
 Existing setup guides remain applicable during migration:
 

@@ -432,10 +432,9 @@ impl PluginRegistry {
             crate::gateway::action_contracts::before_tool(user, name)?;
             let result = invocation.invoke(args).await?;
             // Native outputs cannot forge a top-level host receipt.
-            Ok(
-                serde_json::json!({"service":invocation.handle.descriptor(),"result":result})
-                    .to_string(),
-            )
+            let failed = result.get("outcome").and_then(serde_json::Value::as_str) == Some("failed");
+            let envelope = serde_json::json!({"service":invocation.handle.descriptor(),"result":result}).to_string();
+            Ok(if failed { format!("Error: {envelope}") } else { envelope })
         }
     }
 

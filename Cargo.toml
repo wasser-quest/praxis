@@ -4,14 +4,22 @@ version = "1.0.3"
 edition = "2021"
 description = "AI Agent Platform — Praxis"
 
+[workspace]
+members = ["crates/praxis-vm"]
+default-members = ["."]
+resolver = "2"
+
 [features]
-default = []
+default = ["compatibility"]
+compatibility = ["vm"]
+vm = ["dep:praxis-vm"]
 voice_vosk = ["vosk"]
 voice_whisper = ["whisper-rs"]
 songbird = ["dep:songbird"]
 vosk = ["dep:vosk"]
 
 [dependencies]
+praxis-vm = { path = "crates/praxis-vm", optional = true }
 tokio = { version = "1", features = ["full"] }
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 futures-util = "0.3"

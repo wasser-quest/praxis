@@ -196,9 +196,17 @@ pub async fn start(db: crate::db::Database, config: crate::config::Config) -> an
     let secrets = crate::db::secrets::get_secrets();
 
     let plugins_dir = std::env::var("PLUGINS_DIR").unwrap_or_else(|_| "./plugins".to_string());
-    let plugins = crate::plugins::load_all_plugins(std::path::Path::new(&plugins_dir));
+    let mut plugins = crate::plugins::load_all_plugins(std::path::Path::new(&plugins_dir));
+    crate::runtime::vm::configure(&db, &config, &mut plugins)?;
+    if let Err(error) = crate::runtime::vm::autostart(&config, &plugins, &secrets).await {
+        tracing::warn!(%error, "Configured VM autostart failed (non-fatal)");
+    }
+    start_with_plugins(db, config, plugins).await
+}
 
-    let state = management_state(db.clone(), config.clone(), secrets, plugins)?;
+/// Both headless and dashboard entry points share the same feature instances.
+pub async fn start_with_plugins(db: crate::db::Database, config: crate::config::Config, plugins: crate::plugins::PluginRegistry) -> anyhow::Result<()> {
+    let state = management_state(db.clone(), config.clone(), crate::db::secrets::get_secrets(), plugins)?;
     let _ = GATEWAY_STATE.set(state.clone());
 
     if let Some(error) = inference::readiness(&state).error {

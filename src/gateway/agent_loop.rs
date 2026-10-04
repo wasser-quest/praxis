@@ -760,24 +760,13 @@ role: "system".to_string(),
                     );
                 }
 
-                // Auto-screenshot after VM tool calls
-                if tc.function.name.starts_with("vm_") && tc.function.name != "vm_screenshot" {
-                    let auto_screenshot = ctx.settings.vm_screenshot_enabled;
-                    if auto_screenshot {
-                        let data_dir =
-                            std::env::var("DATA_DIR").unwrap_or_else(|_| "./data".to_string());
-                        let args_parsed: serde_json::Value = serde_json::from_str(&tc.function.arguments).unwrap_or(serde_json::json!({}));
-                        let vm_name = args_parsed.get("name").and_then(|v| v.as_str()).or_else(|| args_parsed.get("vm_name").and_then(|v| v.as_str())).unwrap_or("praxis-vm");
-                        if let Some(path) =
-                            crate::tools::vm_tools::save_screenshot_to_disk(vm_name, &data_dir)
-                                .await
-                        {
-                            final_result = format!("{}\n\nScreenshot saved to: {}", result, path);
-                            if ctx.custom_data.is_object() {
-                                ctx.custom_data["vm_last_screenshot"] = serde_json::json!(path);
-                            } else {
-                                ctx.custom_data = serde_json::json!({ "vm_last_screenshot": path });
-                            }
+                // The optional VM service owns capture timing and retention.
+                // Use only its actual tool result, never a model-claimed path.
+                if let Ok(envelope) = serde_json::from_str::<serde_json::Value>(&result) {
+                    if envelope.get("service").and_then(|s| s.get("owner")).and_then(|o| o.as_str()) == Some("vm") {
+                        if let Some(path) = envelope.get("result").and_then(|r| r.get("screenshot_path")).and_then(|p| p.as_str()) {
+                            if !ctx.custom_data.is_object() { ctx.custom_data = serde_json::json!({}); }
+                            ctx.custom_data["vm_last_screenshot"] = serde_json::json!(path);
                         }
                     }
                 }

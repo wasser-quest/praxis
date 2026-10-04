@@ -2,6 +2,38 @@ use super::*;
 use std::collections::BTreeSet;
 
 #[test]
+fn compatibility_preset_contains_all_shipped_plugins_and_preserves_operator_files() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("plugins/vm")).unwrap();
+    std::fs::write(dir.path().join("plugins/vm/plugin.json"), r#"{"enabled":false}"#).unwrap();
+    std::fs::write(dir.path().join(".env"), "private operator configuration").unwrap();
+    let report = install_compatibility(dir.path(), false).unwrap();
+    assert!(!report.created.is_empty());
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("plugins");
+    for entry in std::fs::read_dir(source).unwrap() {
+        let path = entry.unwrap().path();
+        if path.join("plugin.json").is_file() {
+            assert!(dir.path().join("plugins").join(path.file_name().unwrap()).join("plugin.json").is_file());
+        }
+    }
+    assert_eq!(std::fs::read_to_string(dir.path().join("plugins/vm/plugin.json")).unwrap(), r#"{"enabled":false}"#);
+    assert_eq!(std::fs::read_to_string(dir.path().join(".env")).unwrap(), "private operator configuration");
+    assert!(!dir.path().join("data").exists());
+    assert!(!dir.path().join("vm").exists());
+    assert!(install_compatibility(dir.path(), false).unwrap().created.is_empty());
+}
+
+#[test]
+fn compatibility_preset_preflights_all_plugin_destinations_before_any_write() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("plugins/system_info")).unwrap();
+    std::fs::create_dir(dir.path().join("plugins/system_info/plugin.json")).unwrap();
+    assert!(install_compatibility(dir.path(), false).is_err());
+    assert!(!dir.path().join("templates").exists());
+    assert!(!dir.path().join("plugins/brave_search").exists());
+}
+
+#[test]
 fn onboarding_assets_install_every_bundled_file_and_executable() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("fresh-install");

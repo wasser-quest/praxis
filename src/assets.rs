@@ -145,6 +145,8 @@ const BUNDLED_ASSETS: &[Asset] = &[
     asset!("docs/VERIFIED_CODING_ROLES.md"),
     asset!("docs/LANGUAGE_LEARNING_FLOW.md"),
     asset!("docs/PLUGIN_FIRST_PLAN.md"),
+    asset!("docs/INSTALLATION_PRESETS.md"),
+    asset!("docs/VM_PLUGIN.md"),
     asset!("docs/BRANDING.md"),
     asset!("docs/SKILLS.md"),
     asset!("docs/POML_WORKFLOWS.md"),
@@ -157,9 +159,108 @@ const BUNDLED_ASSETS: &[Asset] = &[
     asset!("docs/TOOL_DISCOVERY.md"),
     asset!("docs/TOOL_OUTPUTS.md"),
     asset!("docs/MEMORY_PROFILES.md"),
+    asset!("plugins/vm/plugin.json"),
     asset!("plugins/brave_search/plugin.json"),
     asset!("plugins/brave_search/search.py", executable),
     asset!("plugins/brave_search/README.md"),
+];
+
+// First-party compatibility packages shipped with the full distribution.
+const COMPATIBILITY_ASSETS: &[Asset] = &[
+    asset!("static/novnc/core/base64.js"),
+    asset!("static/novnc/core/crypto/aes.js"),
+    asset!("static/novnc/core/crypto/bigint.js"),
+    asset!("static/novnc/core/crypto/crypto.js"),
+    asset!("static/novnc/core/crypto/des.js"),
+    asset!("static/novnc/core/crypto/dh.js"),
+    asset!("static/novnc/core/crypto/md5.js"),
+    asset!("static/novnc/core/crypto/rsa.js"),
+    asset!("static/novnc/core/decoders/copyrect.js"),
+    asset!("static/novnc/core/decoders/hextile.js"),
+    asset!("static/novnc/core/decoders/jpeg.js"),
+    asset!("static/novnc/core/decoders/raw.js"),
+    asset!("static/novnc/core/decoders/rre.js"),
+    asset!("static/novnc/core/decoders/tight.js"),
+    asset!("static/novnc/core/decoders/tightpng.js"),
+    asset!("static/novnc/core/decoders/zrle.js"),
+    asset!("static/novnc/core/deflator.js"),
+    asset!("static/novnc/core/display.js"),
+    asset!("static/novnc/core/encodings.js"),
+    asset!("static/novnc/core/inflator.js"),
+    asset!("static/novnc/core/input/domkeytable.js"),
+    asset!("static/novnc/core/input/fixedkeys.js"),
+    asset!("static/novnc/core/input/gesturehandler.js"),
+    asset!("static/novnc/core/input/keyboard.js"),
+    asset!("static/novnc/core/input/keysym.js"),
+    asset!("static/novnc/core/input/keysymdef.js"),
+    asset!("static/novnc/core/input/util.js"),
+    asset!("static/novnc/core/input/vkeys.js"),
+    asset!("static/novnc/core/input/xtscancodes.js"),
+    asset!("static/novnc/core/ra2.js"),
+    asset!("static/novnc/core/rfb.js"),
+    asset!("static/novnc/core/util/browser.js"),
+    asset!("static/novnc/core/util/cursor.js"),
+    asset!("static/novnc/core/util/element.js"),
+    asset!("static/novnc/core/util/events.js"),
+    asset!("static/novnc/core/util/eventtarget.js"),
+    asset!("static/novnc/core/util/int.js"),
+    asset!("static/novnc/core/util/logging.js"),
+    asset!("static/novnc/core/util/strings.js"),
+    asset!("static/novnc/core/websock.js"),
+    asset!("static/novnc/vendor/pako/LICENSE"),
+    asset!("static/novnc/vendor/pako/README.md"),
+    asset!("static/novnc/vendor/pako/lib/utils/common.js"),
+    asset!("static/novnc/vendor/pako/lib/zlib/adler32.js"),
+    asset!("static/novnc/vendor/pako/lib/zlib/constants.js"),
+    asset!("static/novnc/vendor/pako/lib/zlib/crc32.js"),
+    asset!("static/novnc/vendor/pako/lib/zlib/deflate.js"),
+    asset!("static/novnc/vendor/pako/lib/zlib/gzheader.js"),
+    asset!("static/novnc/vendor/pako/lib/zlib/inffast.js"),
+    asset!("static/novnc/vendor/pako/lib/zlib/inflate.js"),
+    asset!("static/novnc/vendor/pako/lib/zlib/inftrees.js"),
+    asset!("static/novnc/vendor/pako/lib/zlib/messages.js"),
+    asset!("static/novnc/vendor/pako/lib/zlib/trees.js"),
+    asset!("static/novnc/vendor/pako/lib/zlib/zstream.js"),
+    asset!("static/novnc/LICENSE.txt"),
+    asset!("static/novnc/docs/LICENSE.MPL-2.0"),
+    asset!("static/novnc/docs/LICENSE.BSD-3-Clause"),
+    asset!("plugins/comfyui/.gitignore"),
+    asset!("plugins/comfyui/README.md"),
+    asset!("plugins/comfyui/common.py", executable),
+    asset!("plugins/comfyui/examples/img2img.api.json"),
+    asset!("plugins/comfyui/examples/txt2img.api.json"),
+    asset!("plugins/comfyui/nodes.py", executable),
+    asset!("plugins/comfyui/plugin.json"),
+    asset!("plugins/comfyui/result.py", executable),
+    asset!("plugins/comfyui/run.py", executable),
+    asset!("plugins/comfyui/workflow.py", executable),
+    asset!("plugins/elevenlabs_tts/README.md"),
+    asset!("plugins/elevenlabs_tts/generate.py", executable),
+    asset!("plugins/elevenlabs_tts/media_common.py", executable),
+    asset!("plugins/elevenlabs_tts/plugin.json"),
+    asset!("plugins/mimo_understand/mimo_common.py", executable),
+    asset!("plugins/mimo_understand/plugin.json"),
+    asset!("plugins/mimo_understand/understand_audio.py", executable),
+    asset!("plugins/mimo_understand/understand_image.py", executable),
+    asset!("plugins/mimo_understand/understand_video.py", executable),
+    asset!("plugins/openrouter_image/README.md"),
+    asset!("plugins/openrouter_image/generate.py", executable),
+    asset!("plugins/openrouter_image/media_common.py", executable),
+    asset!("plugins/openrouter_image/plugin.json"),
+    asset!("plugins/sosse/get_document.py", executable),
+    asset!("plugins/sosse/plugin.json"),
+    asset!("plugins/sosse/search.py", executable),
+    asset!("plugins/spotify/get_album.py", executable),
+    asset!("plugins/spotify/get_artist.py", executable),
+    asset!("plugins/spotify/get_playlist.py", executable),
+    asset!("plugins/spotify/get_recommendations.py", executable),
+    asset!("plugins/spotify/get_track.py", executable),
+    asset!("plugins/spotify/plugin.json"),
+    asset!("plugins/spotify/search.py", executable),
+    asset!("plugins/spotify/spotify_common.py", executable),
+    asset!("plugins/system_info/plugin.json"),
+    asset!("plugins/system_info/process_list.py", executable),
+    asset!("plugins/system_info/system_info.py", executable),
 ];
 
 #[derive(Debug, Default)]
@@ -175,16 +276,26 @@ pub struct InstallReport {
 /// Existing prompt/SM/skill/configuration files are replaced when `overwrite` is true.
 /// Each file is atomic; this is not a cross-file transaction.
 pub fn install(directory: &Path, update_dashboard: bool, overwrite: bool) -> anyhow::Result<InstallReport> {
+    install_selected(directory, BUNDLED_ASSETS.iter().collect(), update_dashboard, overwrite)
+}
+
+/// Restore the source distribution's plugin set, without changing existing
+/// manifests, operator configuration, credentials, flags or service state.
+pub fn install_compatibility(directory: &Path, update_dashboard: bool) -> anyhow::Result<InstallReport> {
+    install_selected(directory, BUNDLED_ASSETS.iter().chain(COMPATIBILITY_ASSETS).collect(), update_dashboard, false)
+}
+
+fn install_selected(directory: &Path, assets: Vec<&Asset>, update_dashboard: bool, overwrite: bool) -> anyhow::Result<InstallReport> {
     fs::create_dir_all(directory)
         .with_context(|| format!("Cannot create asset directory {}", directory.display()))?;
     let root = directory.canonicalize()?;
     // Preflight every destination before writing files. Do not follow asset
     // symlinks, including dangling links, into unrelated directories.
-    for asset in BUNDLED_ASSETS {
+    for asset in &assets {
         check_destination(&root, Path::new(asset.path))?;
     }
     let mut report = InstallReport::default();
-    for asset in BUNDLED_ASSETS {
+    for asset in &assets {
         let destination = root.join(asset.path);
         let existing = match fs::symlink_metadata(&destination) {
             Ok(meta) => {

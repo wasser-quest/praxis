@@ -23,7 +23,7 @@ pub(crate) enum ToolOwner<'a> {
 }
 
 pub(crate) fn is_builtin(name: &str) -> bool {
-    BUILTINS.contains(name)
+    BUILTINS.contains(name) && !crate::runtime::vm::is_vm_tool(name)
 }
 
 pub(crate) fn owner<'a>(plugins: &'a PluginRegistry, name: &str) -> anyhow::Result<ToolOwner<'a>> {
@@ -84,10 +84,7 @@ pub(crate) fn require_enabled(
             .into_iter()
             .find(|tool| tool.name == name)
             .map_or(true, |tool| tool.is_enabled),
-        ToolOwner::Plugin { .. } => crate::db::tools::list_plugin_tools(db)?
-            .get(name)
-            .copied()
-            .unwrap_or(true),
+        ToolOwner::Plugin { .. } => crate::db::tools::plugin_tool_enabled(db, name)?,
     };
     anyhow::ensure!(enabled, "Tool '{name}' is disabled or unavailable");
     Ok(())
@@ -101,11 +98,16 @@ pub fn definitions(db: &Database, plugins: &PluginRegistry) -> anyhow::Result<Ve
         .filter(|tool| is_builtin(&tool.function.name))
         .collect();
     let flags = crate::db::tools::list_plugin_tools(db)?;
+    let legacy = crate::db::tools::list(db)?;
     tools.extend(
         plugins
             .tool_definitions()
             .into_iter()
-            .filter(|tool| flags.get(&tool.function.name).copied().unwrap_or(true)),
+            .filter(|tool| flags.get(&tool.function.name).copied().unwrap_or_else(|| {
+                if crate::runtime::vm::is_vm_tool(&tool.function.name) {
+                    legacy.iter().find(|row| row.name == tool.function.name).is_some_and(|row| row.is_enabled)
+                } else { true }
+            })),
     );
     tools.sort_by(|a, b| a.function.name.cmp(&b.function.name));
     let mut names = HashSet::new();

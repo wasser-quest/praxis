@@ -24,14 +24,15 @@ pub struct PendingQuestion {
 
 /// Send a VM screenshot to Discord
 pub async fn send_screenshot_to_discord(
+    plugins: &crate::plugins::PluginRegistry,
+    user_id: &str,
     channel_id: &str,
     caption: Option<&str>,
     vm_name: &str,
 ) -> anyhow::Result<String> {
-    let data_dir = std::env::var("DATA_DIR").unwrap_or_else(|_| "./data".to_string());
 
     let screenshot_path =
-        match crate::tools::vm_tools::save_screenshot_to_disk(vm_name, &data_dir).await {
+        match crate::tools::vm_tools::save_screenshot_to_disk(plugins, user_id, vm_name).await {
             Some(path) => path,
             None => return Ok("No screenshot available. Is the VM running?".to_string()),
         };
@@ -55,14 +56,15 @@ pub async fn send_screenshot_to_discord(
 
 /// Send a screenshot with feedback text to Discord as a rich embed
 pub async fn screenshot_with_feedback(
+    plugins: &crate::plugins::PluginRegistry,
+    user_id: &str,
     channel_id: &str,
     feedback: &str,
     vm_name: &str,
 ) -> anyhow::Result<String> {
-    let data_dir = std::env::var("DATA_DIR").unwrap_or_else(|_| "./data".to_string());
 
     let screenshot_path =
-        match crate::tools::vm_tools::save_screenshot_to_disk(vm_name, &data_dir).await {
+        match crate::tools::vm_tools::save_screenshot_to_disk(plugins, user_id, vm_name).await {
             Some(path) => path,
             None => {
                 crate::tools::discord_send_message::send_message(channel_id, feedback).await?;

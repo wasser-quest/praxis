@@ -2750,11 +2750,20 @@ async function loadVMStatus() {
     try {
         const res = await apiGet('/api/vm');
         if (!res.ok) {
-            container.innerHTML = '<div class="data-item"><span class="name" style="color:var(--text-secondary)">VM feature not available. Add VM_ENABLED=true to .env</span></div>';
+            container.innerHTML = '<div class="data-item"><span class="name" style="color:var(--text-secondary)">VM feature unavailable. Install the compatibility preset and set VM_ENABLED=true.</span></div>';
             return;
         }
         const data = await res.json();
         const vms = data.vms || [];
+        if (data.config && data.config.vm_enabled === false) {
+            const setup = data.config.vm_compiled === false
+                ? 'This binary has no VM package. Build with the compatibility or vm feature.'
+                : 'VM package is disabled or missing. Install the compatibility preset, set VM_ENABLED=true, then restart.';
+            container.innerHTML = `<div class="data-item"><span class="name">${escapeHtml(setup)}</span></div>`;
+            document.getElementById('vm-config').innerHTML = '';
+            disconnectVNC();
+            return;
+        }
 
         if (vms.length === 0) {
             container.innerHTML = '<div class="data-item"><span class="name">No VMs running</span></div>';
@@ -2966,7 +2975,7 @@ async function connectVNC(vmName) {
         if (!vncModule) { vncModule = await import('/static/novnc/core/rfb.js'); vncLog('noVNC loaded', 'success'); }
         const RFB = vncModule.default || vncModule.RFB;
         if (vncRfb) { vncRfb.disconnect(); vncRfb = null; }
-        const wsUrl = `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/websockify?vm=${encodeURIComponent(vmName)}`;
+        const wsUrl = `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/websockify?vm=${encodeURIComponent(vmName)}&token=${encodeURIComponent(authToken || '')}`;
 
         placeholder.textContent = 'Connecting to VNC...';
         placeholder.style.display = 'block';
