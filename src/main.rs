@@ -570,6 +570,7 @@ async fn run_services(
         if let Some(name) = dashboard_package.clone() {
             let options = praxis::runtime::dashboard_package::Launch {
                 db: db.clone(),
+                plugins: feature_plugins.clone(),
                 plugins_dir: std::path::Path::new(&plugins_dir),
                 name: &name,
                 listen: format!("0.0.0.0:{}", config.dashboard_port),

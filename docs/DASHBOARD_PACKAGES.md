@@ -70,6 +70,20 @@ route requires a scope; undeclared scopes return 403.
 | `GET /host/v1/agent/:user`, `POST …/begin`, `…/input`, `…/stop` | `agent` |
 | `GET /host/v1/events/:user` (SSE) | `events` |
 | `POST /host/v1/auth/login`, `/auth/verify` | `auth` |
+| `GET /host/v1/admin/tools`, `/admin/templates`, `/admin/templates/*name` | `admin:read` |
+| `GET /host/v1/admin/workflows`, `/admin/workflows/:name`, `/admin/memory/:user?profile=` | `admin:read` |
+| `GET /host/v1/admin/pairings`, `/admin/pending-pairings`, `/admin/cron`, `/admin/delegations/:user` | `admin:read` |
+| `POST /admin/tools/:name` `{is_enabled}` | `admin:write` |
+| `POST /admin/templates`, `PUT`/`DELETE /admin/templates/*name` | `admin:write` |
+| `PUT /admin/workflows/:name`, `PUT /admin/memory/:user` | `admin:write` |
+| `DELETE /admin/pairings/:user`, `POST`/`DELETE /admin/pending-pairings/:code` | `admin:write` |
+
+Admin writes go through `services::admin`, the same code the built-in
+dashboard now uses: template updates are rendered against a real context
+before saving, workflow files are parsed before an atomic write, shared memory
+needs a reason, unknown tools return 404, and template names cannot leave
+`templates/` (this also fixes a path traversal in the old dashboard
+create/delete handlers).
 
 Messages include prompt/completion tokens and `generation_ms`; graphs come from
 the same state-machine parser as the built-in dashboard (active node, edges,
@@ -86,7 +100,7 @@ the Host API grants, but they are not an OS sandbox.
 
 ## Not yet in v1
 
-Administration APIs (tools, secrets, pairings, templates, profiles, memory,
-skills, cron), uploads/media, STT/TTS, and feature page slots (e.g. the VM
-page) are still only in the built-in dashboard. They move into services and
+Secrets, settings/providers, profiles, skills, cron editing, uploads/media,
+STT/TTS, and feature page slots (e.g. the VM page) are still only in the
+built-in dashboard. They move into services and
 Host API scopes next; the built-in dashboard then becomes a package itself.

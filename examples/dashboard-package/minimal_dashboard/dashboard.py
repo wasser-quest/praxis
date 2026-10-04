@@ -71,8 +71,12 @@ const api=(p,o={})=>fetch("/api"+p,{...o,headers:{Authorization:"Bearer "+tok,"C
 $("f").onsubmit=async e=>{e.preventDefault();const r=await fetch("/api/auth/login",{method:"POST",
  headers:{"Content-Type":"application/json"},body:JSON.stringify({password:$("p").value})}).then(r=>r.json());
  if(r.token){tok=localStorage.tok=r.token;load()}};
+async function admin(){const [t,w]=await Promise.all([api("/admin/tools"),api("/admin/workflows")]);
+ $("m").innerHTML="<h3>Tools ("+t.total+")</h3><pre class=t></pre><h3>Workflows</h3><pre class=t></pre>";
+ const p=$("m").querySelectorAll("pre");p[0].textContent=(t.tools||[]).map(x=>(x.is_enabled?"on  ":"off ")+x.name+" ["+x.source+"]").join("\n");
+ p[1].textContent=(w.sm_files||[]).map(x=>x.name).join("\n")}
 async function load(){const r=await api("/sessions");if(!r.sessions)return;
- $("s").innerHTML="";r.sessions.forEach(x=>{const d=document.createElement("div");
+ $("s").innerHTML="";const a=document.createElement("div");a.textContent="Tools & workflows";a.onclick=admin;$("s").append(a);r.sessions.forEach(x=>{const d=document.createElement("div");
  d.textContent=(x.session_title||x.username||x.user_id)+" ("+x.message_count+")";d.onclick=()=>open(x.user_id);$("s").append(d)})}
 async function open(u){user=u;const [msgs,g,use]=await Promise.all([api("/messages/"+encodeURIComponent(u)),
  api("/graphs/"+encodeURIComponent(u)),api("/usage/"+encodeURIComponent(u))]);

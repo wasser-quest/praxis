@@ -7,6 +7,6 @@
   "dashboard": {
     "executable": "dashboard.py",
     "args": [],
-    "scopes": ["sessions:read", "sessions:write", "agent", "events", "auth"]
+    "scopes": ["sessions:read", "sessions:write", "agent", "events", "auth", "admin:read"]
   }
 }

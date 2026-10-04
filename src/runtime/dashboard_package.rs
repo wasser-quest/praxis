@@ -60,6 +60,7 @@ impl DashboardPackage {
 
 pub struct Launch<'a> {
     pub db: crate::db::Database,
+    pub plugins: std::sync::Arc<crate::plugins::PluginRegistry>,
     pub plugins_dir: &'a Path,
     pub name: &'a str,
     pub listen: String,
@@ -91,6 +92,7 @@ pub async fn launch(options: Launch<'_>) -> anyhow::Result<DashboardPackage> {
     };
     let api = crate::host_api::HostApi::start(
         options.db,
+        options.plugins,
         options.name,
         &declaration.scopes,
         options.gateway_port,
@@ -186,6 +188,7 @@ mod tests {
             .port();
         let package = launch(Launch {
             db,
+            plugins: std::sync::Arc::new(crate::plugins::PluginRegistry::new()),
             plugins_dir: &plugins,
             name: "minimal_dashboard",
             listen: format!("127.0.0.1:{port}"),
@@ -243,6 +246,7 @@ mod tests {
         let db = crate::db::Database::new(&dir.path().join("data")).unwrap();
         let result = launch(Launch {
             db,
+            plugins: std::sync::Arc::new(crate::plugins::PluginRegistry::new()),
             plugins_dir: &plugins,
             name: "minimal_dashboard",
             listen: "127.0.0.1:0".into(),

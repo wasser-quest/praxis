@@ -42,19 +42,6 @@ pub struct MemoryUpdate {
     pub last_topics: Option<Vec<String>>,
 }
 
-#[derive(Serialize)]
-pub struct MemoryInfo {
-    pub user_id: String,
-    pub profile: String,
-    pub active_profile: String,
-    pub profile_exists: bool,
-    pub profiles: Vec<String>,
-    pub shared: HashMap<String, serde_json::Value>,
-    pub user_preferences: std::collections::HashMap<String, serde_json::Value>,
-    pub custom_variables: std::collections::HashMap<String, serde_json::Value>,
-    pub learned_facts: Vec<String>,
-    pub last_topics: Vec<String>,
-}
 
 #[derive(Deserialize)]
 pub struct TemplateUpdate {
@@ -592,13 +579,7 @@ async fn list_delegations_route(
     State(state): State<Arc<DashboardState>>,
     Path(user_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    match crate::gateway::delegation::list_delegations(&state.db, &user_id) {
-        Ok(list) => Ok(Json(serde_json::json!({ "delegations": list }))),
-        Err(e) => {
-            tracing::error!(user_id = %user_id, error = %e, "[DELEGATIONS] list failed");
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
-        }
-    }
+    admin_json(crate::services::admin::delegations(&state.db, &user_id))
 }
 
 // ── Templates ────────────────────────────────────────────────────────────────
@@ -606,108 +587,55 @@ async fn list_delegations_route(
 async fn list_templates(
     State(state): State<Arc<DashboardState>>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    match state.db.list_templates() {
-        Ok(templates) => {
-            let tpls: Vec<serde_json::Value> = templates
-                .iter()
-                .map(|t| {
-                    serde_json::json!({
-                        "name": t.name,
-                        "description": t.description,
-                        "is_system": t.is_system,
-                        "updated_at": t.updated_at,
-                    })
-                })
-                .collect();
-            Ok(Json(serde_json::json!({ "templates": tpls })))
-        }
-        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
-    }
+    admin_json(crate::services::admin::templates(&state.db))
 }
 
 async fn get_template(
     State(state): State<Arc<DashboardState>>,
     Path(name): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let templates = state
-        .db
-        .list_templates()
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let template = templates
-        .into_iter()
-        .find(|t| t.name == name)
-        .ok_or(StatusCode::NOT_FOUND)?;
-    Ok(Json(serde_json::json!({
-        "name": template.name,
-        "content": template.content,
-        "description": template.description,
-    })))
+    admin_json(crate::services::admin::template(&state.db, &name))
 }
 
 async fn update_template(
     State(state): State<Arc<DashboardState>>,
     Path(name): Path<String>,
     Json(update): Json<TemplateUpdate>,
-) -> Result<Json<TemplateSaveResult>, StatusCode> {
-    let result = async {
-        let mut ctx = if let Some(uid) = update.user_id.as_deref().filter(|s| !s.is_empty()) {
-            state.db.load_context(uid)?
-        } else { crate::db::contexts::Context::default() };
-        let input = crate::gateway::prompt::preview_input(&state.db, &ctx, update.user_prompt.as_deref())?;
-        let plugins_dir = std::env::var("PLUGINS_DIR").unwrap_or_else(|_| "./plugins".into());
-        let plugins = crate::plugins::load_all_plugins(std::path::Path::new(&plugins_dir));
-        let config = crate::gateway::state_ref().map(|gateway| gateway.config.clone()).unwrap_or_else(crate::config::Config::from_env);
-        let workspace = config.workspace_root()?;
-        crate::gateway::prompt::route_context_with_workspace(std::path::Path::new("."), &workspace, &mut ctx, &input, &plugins, None)?;
-        let context = crate::gateway::prompt::build_context(&state.db, &ctx, &input, &plugins, 0, std::path::Path::new(".")).await?;
-        crate::tools::update_template::save_validated(std::path::Path::new("templates"), &name, &update.content, &context).await
-    }.await;
-    match result {
-        Ok(rendered) => {
-            let error = state.db.save_template(&name, &update.content, None, false).err().map(|e| format!("Validated template saved to disk, but database update failed: {e}"));
-            Ok(Json(TemplateSaveResult { success: true, error, rendered_preview: Some(rendered) }))
-        }
-        Err(e) => Ok(Json(TemplateSaveResult {
-            success: false, error: Some(format!("Template was not saved: {e}")), rendered_preview: None,
-        })),
-    }
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    admin_json(
+        crate::services::admin::update_template(
+            &state.db,
+            &name,
+            &update.content,
+            update.user_id.as_deref(),
+            update.user_prompt.as_deref(),
+        )
+        .await,
+    )
 }
 
 async fn create_template(
     State(state): State<Arc<DashboardState>>,
     Json(create): Json<TemplateCreate>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let file_path = format!("templates/{}.poml", create.name);
-    if let Some(parent) = std::path::Path::new(&file_path).parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    if let Err(e) = std::fs::write(&file_path, &create.content) {
-        return Ok(Json(serde_json::json!({
-            "success": false,
-            "error": format!("Failed to write template file: {}", e)
-        })));
-    }
-    let _ = state.db.save_template(
+    admin_json(crate::services::admin::create_template(
+        &state.db,
+        std::path::Path::new("templates"),
         &create.name,
         &create.content,
         create.description.as_deref(),
-        false,
-    );
-    Ok(Json(serde_json::json!({ "success": true })))
+    ))
 }
 
 async fn delete_template(
     State(state): State<Arc<DashboardState>>,
     Path(name): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let conn = state.db.conn();
-    let _ = conn.execute(
-        "DELETE FROM templates WHERE name = ?1",
-        rusqlite::params![name],
-    );
-    let file_path = format!("templates/{}.poml", name);
-    let _ = std::fs::remove_file(&file_path);
-    Ok(Json(serde_json::json!({ "success": true })))
+    admin_json(crate::services::admin::delete_template(
+        &state.db,
+        std::path::Path::new("templates"),
+        &name,
+    ))
 }
 
 // ── Tools ────────────────────────────────────────────────────────────────────
@@ -722,38 +650,7 @@ async fn list_tools(
 async fn list_all_tools(
     State(state): State<Arc<DashboardState>>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    // Built-in tools from registry
-    let builtin: Vec<_> = crate::tools::registry::all_tool_meta()
-        .iter()
-        .filter(|m| crate::tools::catalog::is_builtin(m.name))
-        .map(|m| serde_json::json!({
-            "name": m.name,
-            "description": m.description,
-            "category": format!("{:?}", m.category),
-            "parameters": m.params_schema,
-            "source": "builtin",
-            "default_enabled": m.default_enabled,
-            "is_enabled": crate::db::tools::get(&state.db, m.name).map(|t| t.is_enabled).unwrap_or(m.default_enabled),
-        }))
-        .collect();
-
-    // Plugin tools
-    let plugin_tools: Vec<_> = state.plugins
-        .enabled_tools()
-        .iter()
-        .map(|t| serde_json::json!({
-            "name": t.name,
-            "description": t.description,
-            "category": "Plugin",
-            "parameters": t.parameters,
-            "source": "plugin",
-            "default_enabled": true,
-            "is_enabled": crate::db::tools::get_plugin_tool_enabled(&state.db, &t.name),
-        }))
-        .collect();
-
-    let all = [builtin, plugin_tools].concat();
-    Ok(Json(serde_json::json!({ "tools": all, "total": all.len() })))
+    Ok(Json(crate::services::admin::all_tools(&state.db, &state.plugins)))
 }
 
 async fn update_tool(
@@ -771,17 +668,25 @@ fn set_dashboard_tool_enabled(
     name: &str,
     enabled: bool,
 ) -> Result<(), StatusCode> {
-    let builtins = crate::db::tools::list(db).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    // Builtins own their names, including when a plugin declares the same name.
-    if crate::tools::catalog::is_builtin(name) && builtins.iter().any(|tool| tool.name == name) {
-        crate::db::tools::set_enabled(db, name, enabled)
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
-    } else if plugins.enabled_tools().iter().any(|tool| tool.name == name) {
-        crate::db::tools::set_plugin_tool_enabled(db, name, enabled)
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
-    } else {
-        Err(StatusCode::NOT_FOUND)
+    crate::services::admin::set_tool_enabled(db, plugins, name, enabled).map_err(admin_status)
+}
+
+/// HTTP status for an administration-service failure.
+fn admin_status(failure: crate::services::admin::Failure) -> StatusCode {
+    use crate::services::admin::Failure;
+    match failure {
+        Failure::BadRequest(_) => StatusCode::BAD_REQUEST,
+        Failure::NotFound => StatusCode::NOT_FOUND,
+        Failure::Internal(error) => {
+            tracing::error!(%error, "Dashboard-Admin-Aufruf fehlgeschlagen");
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
     }
+}
+fn admin_json(
+    result: crate::services::admin::Outcome<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    result.map(Json).map_err(admin_status)
 }
 
 // ── Memory ───────────────────────────────────────────────────────────────────
@@ -795,35 +700,8 @@ async fn get_memory(
     State(state): State<Arc<DashboardState>>,
     Path(user_id): Path<String>,
     Query(query): Query<MemoryQuery>,
-) -> Result<Json<MemoryInfo>, StatusCode> {
-    use crate::db::memory_profiles as profiles;
-    let ctx = state
-        .db
-        .load_context(&user_id)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let mut view =
-        profiles::snapshot(&state.db, &ctx).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let active_profile = view.profile.clone();
-    if let Some(name) = query.profile {
-        profiles::validate_name(&name).map_err(|_| StatusCode::BAD_REQUEST)?;
-        let memory = profiles::read_named(&state.db, &user_id, &name)
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        view.profile = name;
-        view.exists = memory.is_some();
-        view.memory = memory.unwrap_or_default();
-    }
-    Ok(Json(MemoryInfo {
-        user_id,
-        active_profile,
-        profile: view.profile,
-        profile_exists: view.exists,
-        profiles: view.profiles,
-        shared: view.shared,
-        user_preferences: view.memory.user_preferences,
-        custom_variables: view.memory.custom_variables,
-        learned_facts: view.memory.learned_facts,
-        last_topics: view.memory.last_topics,
-    }))
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    admin_json(crate::services::admin::memory(&state.db, &user_id, query.profile.as_deref()))
 }
 
 async fn update_memory(
@@ -831,50 +709,15 @@ async fn update_memory(
     Path(user_id): Path<String>,
     Json(update): Json<MemoryUpdate>,
 ) -> Result<String, StatusCode> {
-    use crate::db::memory_profiles as profiles;
-    let profile = match update.profile {
-        Some(name) => name,
-        None => {
-            let ctx = state
-                .db
-                .load_context(&user_id)
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-            profiles::snapshot(&state.db, &ctx)
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-                .profile
-        }
+    let update = crate::services::admin::MemoryUpdate {
+        profile: update.profile,
+        reason: update.reason,
+        user_preferences: update.user_preferences,
+        custom_variables: update.custom_variables,
+        learned_facts: update.learned_facts,
+        last_topics: update.last_topics,
     };
-    profiles::validate_name(&profile).map_err(|_| StatusCode::BAD_REQUEST)?;
-    if profile == profiles::SHARED
-        && !update
-            .reason
-            .as_deref()
-            .is_some_and(|r| !r.trim().is_empty() && r.len() <= 512)
-    {
-        return Err(StatusCode::BAD_REQUEST);
-    }
-    if profiles::read_named(&state.db, &user_id, &profile)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .is_none()
-    {
-        return Err(StatusCode::NOT_FOUND);
-    }
-    profiles::update_named(&state.db, &user_id, &profile, |memory| {
-        if let Some(vars) = update.custom_variables {
-            memory.custom_variables = vars;
-        }
-        if let Some(facts) = update.learned_facts {
-            memory.learned_facts = facts;
-        }
-        if let Some(topics) = update.last_topics {
-            memory.last_topics = topics;
-        }
-        if let Some(preferences) = update.user_preferences {
-            memory.user_preferences = preferences;
-        }
-        Ok(())
-    })
-    .map_err(|_| StatusCode::BAD_REQUEST)?;
+    crate::services::admin::update_memory(&state.db, &user_id, update).map_err(admin_status)?;
     Ok("Memory updated".to_string())
 }
 
@@ -1053,104 +896,37 @@ mod codex_secret_tests {
 async fn list_pairings(
     State(state): State<Arc<DashboardState>>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let conn = state.db.conn();
-    let mut stmt = conn
-        .prepare("SELECT user_id, discord_user_id, discord_guild_id, paired_at, last_seen_at FROM pairings ORDER BY paired_at DESC")
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let pairings: Vec<serde_json::Value> = stmt
-        .query_map([], |row| {
-            Ok(serde_json::json!({
-                "user_id": row.get::<_, String>(0)?,
-                "discord_user_id": row.get::<_, String>(1)?,
-                "discord_guild_id": row.get::<_, Option<String>>(2)?,
-                "paired_at": row.get::<_, Option<String>>(3)?,
-                "last_seen_at": row.get::<_, Option<String>>(4)?,
-            }))
-        })
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap_or_default();
-
-    Ok(Json(serde_json::json!({ "pairings": pairings })))
+    admin_json(crate::services::admin::pairings(&state.db))
 }
 
 async fn delete_pairing(
     State(state): State<Arc<DashboardState>>,
     Path(user_id): Path<String>,
 ) -> Result<String, StatusCode> {
-    let conn = state.db.conn();
-    conn.execute(
-        "DELETE FROM pairings WHERE user_id = ?1",
-        rusqlite::params![user_id],
-    )
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    crate::services::admin::delete_pairing(&state.db, &user_id).map_err(admin_status)?;
     Ok("Pairing deleted".to_string())
 }
 
 async fn list_pending_pairings(
     State(state): State<Arc<DashboardState>>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let conn = state.db.conn();
-    let mut stmt = conn
-        .prepare("SELECT code, discord_user_id, expires_at, created_at FROM pending_pairings ORDER BY created_at DESC")
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let pending: Vec<serde_json::Value> = stmt
-        .query_map([], |row| {
-            Ok(serde_json::json!({
-                "code": row.get::<_, String>(0)?,
-                "discord_user_id": row.get::<_, String>(1)?,
-                "expires_at": row.get::<_, String>(2)?,
-                "created_at": row.get::<_, Option<String>>(3)?,
-            }))
-        })
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap_or_default();
-
-    Ok(Json(serde_json::json!({ "pending_pairings": pending })))
+    admin_json(crate::services::admin::pending_pairings(&state.db))
 }
 
 async fn approve_pending_pairing(
     State(state): State<Arc<DashboardState>>,
     Path(code): Path<String>,
 ) -> Result<String, StatusCode> {
-    let pending = state
-        .db
-        .get_pending_pairing(&code)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let pending = match pending {
-        Some(p) => p,
-        None => return Err(StatusCode::NOT_FOUND),
-    };
-
-    let user_id = uuid::Uuid::new_v4().to_string();
-    state
-        .db
-        .create_pairing(&user_id, &pending.discord_user_id, None)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    state
-        .db
-        .delete_pending_pairing(&code)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    Ok(format!(
-        "Pairing approved for Discord user {}",
-        pending.discord_user_id
-    ))
+    let discord_user_id =
+        crate::services::admin::approve_pairing(&state.db, &code).map_err(admin_status)?;
+    Ok(format!("Pairing approved for Discord user {discord_user_id}"))
 }
 
 async fn delete_pending_pairing(
     State(state): State<Arc<DashboardState>>,
     Path(code): Path<String>,
 ) -> Result<String, StatusCode> {
-    state
-        .db
-        .delete_pending_pairing(&code)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    crate::services::admin::delete_pending_pairing(&state.db, &code).map_err(admin_status)?;
     Ok("Pending pairing deleted".to_string())
 }
 
@@ -1160,42 +936,7 @@ async fn list_sm_files(
     State(state): State<Arc<DashboardState>>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let _ = state; // Workflows use the same canonical root as runtime routing.
-    let sm_dir = std::path::Path::new("contexts");
-    let mut files = Vec::new();
-
-    for dir in [sm_dir] {
-        if dir.exists() {
-            if let Ok(entries) = std::fs::read_dir(dir) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    let ext = path.extension().and_then(|e| e.to_str());
-                    if ext == Some("sm") || ext == Some("cl") {
-                        let name = path
-                            .file_name()
-                            .unwrap_or_default()
-                            .to_string_lossy()
-                            .to_string();
-                        if !files
-                            .iter()
-                            .any(|f: &serde_json::Value| f["name"].as_str() == Some(&name))
-                        {
-                            files.push(serde_json::json!({
-                                "name": name,
-                                "path": path.to_string_lossy(),
-                            }));
-                        }
-                    }
-                }
-            }
-        }
-    }
-    files.sort_by(|a, b| {
-        a["name"]
-            .as_str()
-            .unwrap_or("")
-            .cmp(b["name"].as_str().unwrap_or(""))
-    });
-    Ok(Json(serde_json::json!({ "sm_files": files })))
+    Ok(Json(crate::services::admin::sm_files(std::path::Path::new("contexts"))))
 }
 
 async fn get_sm_file(
@@ -1203,8 +944,7 @@ async fn get_sm_file(
     Path(name): Path<String>,
 ) -> Result<String, StatusCode> {
     let _ = state;
-    let path = crate::sm::resolve_file_in(std::path::Path::new("contexts"), &name).map_err(|_| StatusCode::NOT_FOUND)?;
-    std::fs::read_to_string(path).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+    crate::services::admin::sm_file(std::path::Path::new("contexts"), &name).map_err(admin_status)
 }
 
 async fn save_sm_file(
@@ -1213,7 +953,8 @@ async fn save_sm_file(
     Json(update): Json<SmFileUpdate>,
 ) -> Result<String, StatusCode> {
     let _ = state;
-    crate::sm::save_file_in(std::path::Path::new("contexts"), &name, &update.content).map_err(|_| StatusCode::BAD_REQUEST)?;
+    crate::services::admin::save_sm_file(std::path::Path::new("contexts"), &name, &update.content)
+        .map_err(admin_status)?;
     Ok("SM file saved".to_string())
 }
 
@@ -1222,29 +963,7 @@ async fn save_sm_file(
 async fn list_cron_jobs(
     State(state): State<Arc<DashboardState>>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let conn = state.db.conn();
-    let mut stmt = conn
-        .prepare(
-            "SELECT id, name, schedule, enabled, last_run, run_count FROM cron_jobs ORDER BY name",
-        )
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let jobs: Vec<serde_json::Value> = stmt
-        .query_map([], |row| {
-            Ok(serde_json::json!({
-                "id": row.get::<_, String>(0)?,
-                "name": row.get::<_, String>(1)?,
-                "schedule": row.get::<_, String>(2)?,
-                "enabled": row.get::<_, i32>(3)? != 0,
-                "last_run": row.get::<_, Option<String>>(4)?,
-                "run_count": row.get::<_, i64>(5)?,
-            }))
-        })
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap_or_default();
-
-    Ok(Json(serde_json::json!({ "cron_jobs": jobs })))
+    admin_json(crate::services::admin::cron_jobs(&state.db))
 }
 
 pub(crate) async fn tool_activity(
@@ -1876,9 +1595,9 @@ mod dashboard_tests {
         .await
         .unwrap()
         .0;
-        assert_eq!(memory.learned_facts, vec!["one"]);
-        assert_eq!(memory.user_preferences["brief"], true);
-        assert_eq!(memory.custom_variables["n"], 3);
+        assert_eq!(memory["learned_facts"], serde_json::json!(["one"]));
+        assert_eq!(memory["user_preferences"]["brief"], true);
+        assert_eq!(memory["custom_variables"]["n"], 3);
         let clear: MemoryUpdate =
             serde_json::from_value(serde_json::json!({"learned_facts":[], "user_preferences":{}}))
                 .unwrap();
@@ -1893,9 +1612,9 @@ mod dashboard_tests {
         .await
         .unwrap()
         .0;
-        assert!(memory.learned_facts.is_empty());
-        assert!(memory.user_preferences.is_empty());
-        assert_eq!(memory.custom_variables["n"], 3);
+        assert_eq!(memory["learned_facts"], serde_json::json!([]));
+        assert_eq!(memory["user_preferences"], serde_json::json!({}));
+        assert_eq!(memory["custom_variables"]["n"], 3);
         assert!(get_memory(
             State(state),
             Path("bob".into()),
@@ -1903,8 +1622,9 @@ mod dashboard_tests {
         )
         .await
         .unwrap()
-        .0
-        .custom_variables
+        .0["custom_variables"]
+        .as_object()
+        .unwrap()
         .is_empty());
     }
 
@@ -1933,8 +1653,8 @@ mod dashboard_tests {
         .await
         .unwrap()
         .0;
-        assert_eq!(selected.profile, "standard");
-        assert!(selected.custom_variables.is_empty());
+        assert_eq!(selected["profile"], "standard");
+        assert!(selected["custom_variables"].as_object().unwrap().is_empty());
         let lesson = get_memory(
             State(state.clone()),
             Path("alice".into()),
@@ -1945,8 +1665,8 @@ mod dashboard_tests {
         .await
         .unwrap()
         .0;
-        assert_eq!(lesson.custom_variables["xp"], 2);
-        assert_eq!(lesson.active_profile, "standard");
+        assert_eq!(lesson["custom_variables"]["xp"], 2);
+        assert_eq!(lesson["active_profile"], "standard");
         for body in [
             serde_json::json!({"profile":"shared", "custom_variables":{"name":"Alex"}}),
             serde_json::json!({"profile":"shared", "reason":"Explicit synthetic permission", "custom_variables":{"xp":2}}),
@@ -1972,7 +1692,7 @@ mod dashboard_tests {
             .await
             .unwrap()
             .0
-            .shared["name"],
+            ["shared"]["name"],
             "Alex"
         );
     }

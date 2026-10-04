@@ -171,8 +171,10 @@ clipboard) remains an operator smoke check.
   `DASHBOARD_PACKAGE` selection, single active dashboard, process supervision,
   no silent fallback. Example package in `examples/dashboard-package`. See
   [dashboard packages](../docs/DASHBOARD_PACKAGES.md).
-- [ ] Move remaining administration APIs (tools, secrets, pairings, templates,
-  profiles, memory, skills, cron) into services.
+- [x] Administration services + Host API `admin:read`/`admin:write`: tools,
+  templates, workflow files, memory profiles, pairings, cron list, delegations.
+- [ ] Move remaining administration APIs (secrets, settings/providers,
+  profiles, skills, cron editing) into services.
 - [ ] Package the frontend/static assets with the dashboard package and add
   navigation slots for absent features.
 - [ ] Convert the built-in dashboard into a package on Host API v1. Runtime-control and the remaining

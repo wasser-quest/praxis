@@ -9,7 +9,7 @@ use axum::{
         sse::{Event, KeepAlive, Sse},
         IntoResponse, Response,
     },
-    routing::{get, post},
+    routing::{delete, get, post},
     Json, Router,
 };
 use praxis_plugin_api::host::{valid_scope, HostApiGrant, HOST_API_PREFIX, HOST_API_VERSION};
@@ -20,6 +20,7 @@ use tokio_util::sync::CancellationToken;
 
 struct ApiState {
     db: crate::db::Database,
+    plugins: Arc<crate::plugins::PluginRegistry>,
     token: String,
     scopes: BTreeSet<String>,
     gateway_port: u16,
@@ -36,6 +37,7 @@ pub struct HostApi {
 impl HostApi {
     pub async fn start(
         db: crate::db::Database,
+        plugins: Arc<crate::plugins::PluginRegistry>,
         owner: &str,
         scopes: &[String],
         gateway_port: u16,
@@ -50,6 +52,7 @@ impl HostApi {
         let port = listener.local_addr()?.port();
         let state = Arc::new(ApiState {
             db,
+            plugins,
             token: token.clone(),
             scopes: scopes.iter().cloned().collect(),
             gateway_port,
@@ -113,6 +116,25 @@ fn router(_state: Arc<ApiState>) -> Router<Arc<ApiState>> {
         .route(&route("/events/:user"), get(events))
         .route(&route("/auth/login"), post(login))
         .route(&route("/auth/verify"), post(verify))
+        .route(&route("/admin/tools"), get(admin_tools))
+        .route(&route("/admin/tools/:name"), post(admin_set_tool))
+        .route(&route("/admin/templates"), get(admin_templates).post(admin_create_template))
+        .route(
+            &route("/admin/templates/*name"),
+            get(admin_template).put(admin_update_template).delete(admin_delete_template),
+        )
+        .route(&route("/admin/workflows"), get(admin_workflows))
+        .route(&route("/admin/workflows/:name"), get(admin_workflow).put(admin_save_workflow))
+        .route(&route("/admin/memory/:user"), get(admin_memory).put(admin_update_memory))
+        .route(&route("/admin/pairings"), get(admin_pairings))
+        .route(&route("/admin/pairings/:user"), delete(admin_delete_pairing))
+        .route(&route("/admin/pending-pairings"), get(admin_pending))
+        .route(
+            &route("/admin/pending-pairings/:code"),
+            post(admin_approve).delete(admin_delete_pending),
+        )
+        .route(&route("/admin/cron"), get(admin_cron))
+        .route(&route("/admin/delegations/:user"), get(admin_delegations))
 }
 
 /// Scope required for a request path; `None` means the route is unknown.
@@ -127,6 +149,8 @@ fn required_scope(method: &axum::http::Method, path: &str) -> Option<&'static st
         "agent" => "agent",
         "events" => "events",
         "auth" => "auth",
+        "admin" if method == axum::http::Method::GET => "admin:read",
+        "admin" => "admin:write",
         _ => return None,
     })
 }
@@ -286,6 +310,149 @@ async fn verify(Json(req): Json<Verify>) -> Json<Value> {
     Json(json!({"valid": crate::services::auth::OperatorAuth::resolve().token_valid(&req.token)}))
 }
 
+// ── Administration ──────────────────────────────────────────────────────
+
+use crate::services::admin::{self, Failure};
+const TEMPLATES: &str = "templates";
+const WORKFLOWS: &str = "contexts";
+
+fn admin_fail(failure: Failure) -> (StatusCode, Json<Value>) {
+    match failure {
+        Failure::BadRequest(message) => fail(StatusCode::BAD_REQUEST, message),
+        Failure::NotFound => fail(StatusCode::NOT_FOUND, "Not found"),
+        Failure::Internal(error) => internal(error),
+    }
+}
+fn admin_ok(result: admin::Outcome<Value>) -> ApiResult {
+    result.map(Json).map_err(admin_fail)
+}
+fn done(result: admin::Outcome<()>) -> ApiResult {
+    result.map(|()| Json(json!({"success": true}))).map_err(admin_fail)
+}
+
+async fn admin_tools(State(s): State<Arc<ApiState>>) -> Json<Value> {
+    Json(admin::all_tools(&s.db, &s.plugins))
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ToolToggle {
+    is_enabled: bool,
+}
+async fn admin_set_tool(
+    State(s): State<Arc<ApiState>>,
+    Path(name): Path<String>,
+    Json(req): Json<ToolToggle>,
+) -> ApiResult {
+    done(admin::set_tool_enabled(&s.db, &s.plugins, &name, req.is_enabled))
+}
+async fn admin_templates(State(s): State<Arc<ApiState>>) -> ApiResult {
+    admin_ok(admin::templates(&s.db))
+}
+async fn admin_template(State(s): State<Arc<ApiState>>, Path(name): Path<String>) -> ApiResult {
+    admin_ok(admin::template(&s.db, &name))
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TemplateCreate {
+    name: String,
+    content: String,
+    description: Option<String>,
+}
+async fn admin_create_template(
+    State(s): State<Arc<ApiState>>,
+    Json(req): Json<TemplateCreate>,
+) -> ApiResult {
+    admin_ok(admin::create_template(
+        &s.db,
+        std::path::Path::new(TEMPLATES),
+        &req.name,
+        &req.content,
+        req.description.as_deref(),
+    ))
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TemplateUpdate {
+    content: String,
+    user_id: Option<String>,
+    user_prompt: Option<String>,
+}
+async fn admin_update_template(
+    State(s): State<Arc<ApiState>>,
+    Path(name): Path<String>,
+    Json(req): Json<TemplateUpdate>,
+) -> ApiResult {
+    admin_ok(
+        admin::update_template(
+            &s.db,
+            &name,
+            &req.content,
+            req.user_id.as_deref(),
+            req.user_prompt.as_deref(),
+        )
+        .await,
+    )
+}
+async fn admin_delete_template(
+    State(s): State<Arc<ApiState>>,
+    Path(name): Path<String>,
+) -> ApiResult {
+    admin_ok(admin::delete_template(&s.db, std::path::Path::new(TEMPLATES), &name))
+}
+async fn admin_workflows() -> Json<Value> {
+    Json(admin::sm_files(std::path::Path::new(WORKFLOWS)))
+}
+async fn admin_workflow(Path(name): Path<String>) -> ApiResult {
+    admin::sm_file(std::path::Path::new(WORKFLOWS), &name)
+        .map(|content| Json(json!({"name": name, "content": content})))
+        .map_err(admin_fail)
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Content {
+    content: String,
+}
+async fn admin_save_workflow(Path(name): Path<String>, Json(req): Json<Content>) -> ApiResult {
+    done(admin::save_sm_file(std::path::Path::new(WORKFLOWS), &name, &req.content))
+}
+async fn admin_memory(
+    State(s): State<Arc<ApiState>>,
+    Path(user): Path<String>,
+    Query(q): Query<HashMap<String, String>>,
+) -> ApiResult {
+    admin_ok(admin::memory(&s.db, &user, q.get("profile").map(String::as_str)))
+}
+async fn admin_update_memory(
+    State(s): State<Arc<ApiState>>,
+    Path(user): Path<String>,
+    Json(req): Json<admin::MemoryUpdate>,
+) -> ApiResult {
+    done(admin::update_memory(&s.db, &user, req))
+}
+async fn admin_pairings(State(s): State<Arc<ApiState>>) -> ApiResult {
+    admin_ok(admin::pairings(&s.db))
+}
+async fn admin_delete_pairing(State(s): State<Arc<ApiState>>, Path(user): Path<String>) -> ApiResult {
+    done(admin::delete_pairing(&s.db, &user))
+}
+async fn admin_pending(State(s): State<Arc<ApiState>>) -> ApiResult {
+    admin_ok(admin::pending_pairings(&s.db))
+}
+async fn admin_approve(State(s): State<Arc<ApiState>>, Path(code): Path<String>) -> ApiResult {
+    admin::approve_pairing(&s.db, &code)
+        .map(|id| Json(json!({"success": true, "discord_user_id": id})))
+        .map_err(admin_fail)
+}
+async fn admin_delete_pending(State(s): State<Arc<ApiState>>, Path(code): Path<String>) -> ApiResult {
+    done(admin::delete_pending_pairing(&s.db, &code))
+}
+async fn admin_cron(State(s): State<Arc<ApiState>>) -> ApiResult {
+    admin_ok(admin::cron_jobs(&s.db))
+}
+async fn admin_delegations(State(s): State<Arc<ApiState>>, Path(user): Path<String>) -> ApiResult {
+    admin_ok(admin::delegations(&s.db, &user))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -298,7 +465,7 @@ mod tests {
         db.save_context(&ctx).unwrap();
         db.add_message("u", &crate::db::messages::Message::user("hi".into()))
             .unwrap();
-        let api = HostApi::start(db, "my_dashboard", &["sessions:read".into()], 3537)
+        let api = HostApi::start(db, Arc::new(crate::plugins::PluginRegistry::new()), "my_dashboard", &["sessions:read".into()], 3537)
             .await
             .unwrap();
         let grant = api.grant().clone();
@@ -332,7 +499,56 @@ mod tests {
             .unwrap();
         assert_eq!(post.status(), 403);
         assert_eq!(get("/nope", t).send().await.unwrap().status(), 404);
+        // Administration needs its own scopes.
+        assert_eq!(get("/admin/tools", t).send().await.unwrap().status(), 403);
         api.stop();
+    }
+
+    #[tokio::test]
+    async fn admin_scopes_separate_reads_from_validated_writes() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = crate::db::Database::new(dir.path()).unwrap();
+        let api = HostApi::start(db, Arc::new(crate::plugins::PluginRegistry::new()), "d", &["admin:read".into()], 3537)
+            .await
+            .unwrap();
+        let grant = api.grant().clone();
+        let http = reqwest::Client::new();
+        let url = |p: &str| format!("{}{HOST_API_PREFIX}{p}", grant.url);
+        let tools: Value = http.get(url("/admin/tools")).bearer_auth(&grant.token)
+            .send().await.unwrap().json().await.unwrap();
+        assert!(tools["total"].as_u64().unwrap() > 0);
+        assert!(tools["tools"].as_array().unwrap().iter().any(|t| t["source"] == "builtin"));
+        for path in ["/admin/pairings", "/admin/pending-pairings", "/admin/cron", "/admin/memory/u"] {
+            let status = http.get(url(path)).bearer_auth(&grant.token).send().await.unwrap().status();
+            assert_eq!(status, 200, "{path}");
+        }
+        // Read-only grant cannot write.
+        let write = http.post(url("/admin/tools/shell")).bearer_auth(&grant.token)
+            .json(&json!({"is_enabled": false})).send().await.unwrap();
+        assert_eq!(write.status(), 403);
+        let delete = http.delete(url("/admin/templates/standard")).bearer_auth(&grant.token)
+            .send().await.unwrap();
+        assert_eq!(delete.status(), 403);
+        api.stop();
+
+        let db = crate::db::Database::new(&dir.path().join("w")).unwrap();
+        let api = HostApi::start(db, Arc::new(crate::plugins::PluginRegistry::new()), "d", &["admin:write".into()], 3537)
+            .await
+            .unwrap();
+        let grant = api.grant().clone();
+        let url = |p: &str| format!("{}{HOST_API_PREFIX}{p}", grant.url);
+        // Unknown tools and escaping template names are rejected by the service.
+        let missing = http.post(url("/admin/tools/no_such_tool")).bearer_auth(&grant.token)
+            .json(&json!({"is_enabled": false})).send().await.unwrap();
+        assert_eq!(missing.status(), 404);
+        let escape = http.post(url("/admin/templates")).bearer_auth(&grant.token)
+            .json(&json!({"name": "../../evil", "content": "x"})).send().await.unwrap();
+        assert_eq!(escape.status(), 400);
+        // Invalid workflow names are refused before anything is written.
+        let workflow = http.put(url("/admin/workflows/bad.name.sm")).bearer_auth(&grant.token)
+            .json(&json!({"content": "x"})).send().await.unwrap();
+        assert_eq!(workflow.status(), 400);
+        assert!(!std::path::Path::new(WORKFLOWS).join("bad.name.sm").exists());
     }
 
     #[tokio::test]
@@ -340,7 +556,7 @@ mod tests {
         use futures_util::StreamExt;
         let dir = tempfile::tempdir().unwrap();
         let db = crate::db::Database::new(dir.path()).unwrap();
-        let api = HostApi::start(db, "d", &["events".into()], 3537).await.unwrap();
+        let api = HostApi::start(db, Arc::new(crate::plugins::PluginRegistry::new()), "d", &["events".into()], 3537).await.unwrap();
         let grant = api.grant().clone();
         let user = format!("ev-{}", uuid::Uuid::new_v4());
         let response = reqwest::Client::new()

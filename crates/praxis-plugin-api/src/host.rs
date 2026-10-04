@@ -21,6 +21,11 @@ pub const SCOPES: &[&str] = &[
     // Verify/issue operator login tokens so the package can reuse the
     // existing dashboard password instead of inventing its own auth.
     "auth",
+    // Read tools, templates, workflow files, memory, pairings, cron jobs and
+    // delegations.
+    "admin:read",
+    // Change those (validated by the host exactly like the built-in editor).
+    "admin:write",
 ];
 
 pub fn valid_scope(scope: &str) -> bool {
