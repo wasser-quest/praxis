@@ -67,6 +67,9 @@ pub(crate) fn check_task(
     )
     .map_err(|error| anyhow::anyhow!("Workflow routing failed: {error}"))?;
     let workspace = state.config.workspace_root()?;
+    if super::task_control::cancellation(user).is_some() {
+        super::task_control::pin_workspace(user, &workspace)?;
+    }
     workflow.workspace.check(&workspace)?;
     super::workflow_preflight::validate(
         &state.db,

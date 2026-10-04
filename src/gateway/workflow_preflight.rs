@@ -89,6 +89,7 @@ pub(crate) fn target<'a>(
         }
         target
     };
+    service(db, plugins, workflow, state, name)?;
     if !crate::tools::discovery::enabled(db, plugins, name) {
         return Err(failure(
             "tool_disabled",
@@ -104,6 +105,58 @@ pub(crate) fn target<'a>(
     Ok(name)
 }
 
+fn service(
+    db: &Database,
+    plugins: &PluginRegistry,
+    workflow: &str,
+    state: &str,
+    name: &str,
+) -> anyhow::Result<()> {
+    if crate::tools::catalog::owner(plugins, name).is_err() {
+        if let Some(plugin) = plugins.list().into_iter().find(|plugin| {
+            !plugin.enabled
+                && plugin.tools.iter().any(|tool| {
+                    tool.name == name
+                        && matches!(&tool.handler, crate::plugins::PluginHandler::Service(_))
+                })
+        }) {
+            return Err(failure(
+                "plugin_disabled",
+                workflow,
+                state,
+                name,
+                "The required native service owner is disabled",
+                format!(
+                    "Enable plugin '{}' in its manifest and restart Praxis",
+                    plugin.name
+                ),
+            ));
+        }
+    }
+    if let Ok(crate::tools::catalog::ToolOwner::Plugin { plugin, tool }) =
+        crate::tools::catalog::owner(plugins, name)
+    {
+        if let crate::plugins::PluginHandler::Service(adapter) = &tool.handler {
+            plugins.require_service(name).map_err(|_| failure(
+                "service_unavailable", workflow, state, name,
+                "The declared native feature service is missing, disabled or incompatible",
+                format!("Bind owner '{}' service '{}' with native invocation API {} and operation '{}' at startup, then start a new task", plugin.name, adapter.service, adapter.api_version, adapter.operation),
+            ))?;
+            if !crate::db::tools::get_plugin_tool_enabled(db, name) {
+                return Err(failure(
+                    "tool_disabled",
+                    workflow,
+                    state,
+                    name,
+                    "Required native service tool is disabled",
+                    format!("Enable '{name}' in Dashboard → Tools, then start a new task"),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Validate effective tables in all declared states. Unused global mappings
 /// overridden by every state do not create fictitious requirements. Discovery
 /// cannot make an invalid trusted allow-list pass setup.
@@ -114,22 +167,25 @@ pub fn validate(
     sm: &StateMachine,
     ctx: &Context,
 ) -> anyhow::Result<()> {
-    crate::tools::catalog::validate(plugins).map_err(|error| failure(
-        "owner_conflict", workflow, ctx.active_state.as_deref().unwrap_or(""), "tool_catalog",
-        "Enabled tool declarations have conflicting owners", error.to_string(),
-    ))?;
+    crate::tools::catalog::validate(plugins).map_err(|error| {
+        failure(
+            "owner_conflict",
+            workflow,
+            ctx.active_state.as_deref().unwrap_or(""),
+            "tool_catalog",
+            "Enabled tool declarations have conflicting owners",
+            error.to_string(),
+        )
+    })?;
     let mut states: Vec<_> = sm
         .states
         .keys()
         .filter(|s| s.as_str() != "_default")
         .collect();
     states.sort();
-    let plugin_tools = plugins.tool_definitions();
+    let plugin_tools = plugins.declared_tool_definitions();
     for state in states {
         let mapping = sm.ir_for(state);
-        if mapping.is_empty() {
-            continue;
-        }
         let mut value = serde_json::to_value(ctx)?;
         anyhow::ensure!(
             crate::sm::apply_state(sm, &mut value, state),
@@ -145,6 +201,12 @@ pub fn validate(
             Some(&plugin_tools),
             Some(db),
         );
+        for name in crate::tools::registry::activated_tool_names(&candidate.settings) {
+            service(db, plugins, workflow, state, &name)?;
+        }
+        if mapping.is_empty() {
+            continue;
+        }
         target(db, plugins, workflow, state, "execute_decision")?;
         if !definitions
             .iter()

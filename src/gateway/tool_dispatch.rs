@@ -107,7 +107,8 @@ async fn dispatch(
 
     if matches!(&owner, crate::tools::catalog::ToolOwner::Plugin { .. }) {
         return plugins
-            .execute_tool_for_task(
+            .execute_tool_with_host(
+                db,
                 user_id,
                 &tc.id,
                 &tc.function.name,
@@ -116,7 +117,7 @@ async fn dispatch(
                 Some(&plugin_secrets),
             )
             .await
-            .unwrap_or_else(|e| format!("Plugin tool {} failed: {}", tc.function.name, e));
+            .unwrap_or_else(|e| format!("Error: Plugin tool {} failed: {}", tc.function.name, e));
     }
 
     match tc.function.name.as_str() {

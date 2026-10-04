@@ -109,8 +109,10 @@ The initial input schema supports a closed flat object with string, boolean,
 integer and number properties, required fields, enums, string length bounds
 and numeric bounds. Unsupported nested schemas/keywords fail closed.
 Inputs are checked before effects; model-supplied contracts are rejected as
-undeclared fields. Script, HTTP GET/POST, native verification and native source-edit handlers are
-supported. Other builtin handlers still require a semantic adapter. Contract names use ASCII
+undeclared fields. Script, HTTP GET/POST, native verification, native source-edit
+and host-bound native service handlers are supported. See
+[native invocation API v1](NATIVE_FEATURE_SERVICES.md) for service binding and
+scope. Other builtin handlers still require a semantic adapter. Contract names use ASCII
 letters/digits/underscore/hyphen, with at most 128 bytes per identifier.
 
 Script execution uses the pinned host root, no stdin, and invocation-specific
