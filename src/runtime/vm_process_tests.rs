@@ -301,7 +301,7 @@ async fn vm_process_screenshot_delivery_resolves_user_preferences_and_expires_on
             .unwrap();
     assert_eq!(
         captured,
-        json!({"name":"desktop","preferences":{"keyboard_layout":"de","screenshot_enabled":false,"screenshot_limit":3}})
+        json!({"name":"desktop","user":user,"preferences":{"keyboard_layout":"de","screenshot_enabled":false,"screenshot_limit":3}})
     );
     assert!(access.capture(&user, "../outside").await.is_none());
     assert!(super::vm::runtime(&registry).is_some());

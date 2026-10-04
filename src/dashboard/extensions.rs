@@ -12,7 +12,7 @@ use axum::{
     Json, Router,
 };
 use futures_util::{SinkExt, StreamExt};
-use praxis_plugin_api::web::PRIVATE_HEADER;
+use praxis_plugin_api::web::{PRINCIPAL_HEADER, PRIVATE_HEADER};
 use std::sync::Arc;
 use std::time::Duration;
 const LIMIT: usize = 2 * 1024 * 1024;
@@ -174,6 +174,10 @@ async fn forward(State(proxy): State<Proxy>, request: Request) -> Response {
             return StatusCode::BAD_GATEWAY.into_response();
         };
         upstream_request.headers_mut().insert(PRIVATE_HEADER, key);
+        // Dashboard tokens are operator credentials (sub = "admin").
+        upstream_request
+            .headers_mut()
+            .insert(PRINCIPAL_HEADER, axum::http::HeaderValue::from_static("operator"));
         let upstream = tokio::select! {
             _ = stop.cancelled() => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
             result = tokio::time::timeout(Duration::from_secs(5), tokio_tungstenite::connect_async_with_config(upstream_request, Some(tokio_tungstenite::tungstenite::protocol::WebSocketConfig { max_message_size:Some(LIMIT), max_frame_size:Some(LIMIT), ..Default::default() }), false)) => match result { Ok(Ok((socket,_))) => socket, Ok(Err(tokio_tungstenite::tungstenite::Error::Http(response))) if response.status().is_client_error() => return response.status().into_response(), _ => return StatusCode::SERVICE_UNAVAILABLE.into_response() },
@@ -224,6 +228,7 @@ async fn forward(State(proxy): State<Proxy>, request: Request) -> Response {
             .client
             .request(method, url)
             .header(PRIVATE_HEADER, &endpoint.key)
+            .header(PRINCIPAL_HEADER, "operator")
             .body(body);
         if let Some(content_type) = content_type {
             outgoing = outgoing.header(header::CONTENT_TYPE, content_type);

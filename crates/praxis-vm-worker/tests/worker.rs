@@ -20,7 +20,17 @@ fn launch(root: &std::path::Path) -> LaunchSpec {
         owner: "vm".into(),
         service: "vm".into(),
         operations: operations(),
-        controls: vec!["autostart".into(), "web_info".into(), "capture".into()],
+        controls: [
+            "autostart",
+            "web_info",
+            "capture",
+            "recover",
+            "guests",
+            "share",
+            "transfer",
+        ]
+        .map(String::from)
+        .to_vec(),
         environment: BTreeMap::new(),
     }
 }
@@ -62,7 +72,8 @@ async fn independently_launched_vm_worker_is_read_only_and_preserves_guest_scope
     assert_eq!(result["scope"]["user"], "operator-selected-user");
     assert_eq!(result["scope"]["kind"], "guest");
     assert_eq!(result["verified"], false);
-    assert_eq!(result["outcome"], "failed");
+    // No guest record exists, so the call is denied before any guest effect.
+    assert_eq!(result["outcome"], "denied");
     assert!(!data.exists());
     client.shutdown().await.unwrap();
 }
@@ -92,6 +103,7 @@ async fn installed_worker_embeds_its_web_contribution_and_stops_it_on_shutdown()
                 praxis_plugin_api::web::PRIVATE_HEADER,
                 "test-host-private-nonce",
             )
+            .header(praxis_plugin_api::web::PRINCIPAL_HEADER, "operator")
             .send()
             .await
             .unwrap();
@@ -185,15 +197,15 @@ async fn screenshot_control_uses_typed_host_preferences_without_creating_a_guest
     let data = root.path().join("data");
     let spec = launch(root.path());
     let client = Client::launch(&spec, initialization(&data)).await.unwrap();
-    let input = json!({"name":"missing", "preferences":{"keyboard_layout":"de", "screenshot_enabled":false, "screenshot_limit":3}});
+    let input = json!({"name":"missing", "user":"operator-selected-user", "preferences":{"keyboard_layout":"de", "screenshot_enabled":false, "screenshot_limit":3}});
     assert!(client
         .control("capture", input.clone())
         .await
         .unwrap()
         .is_null());
     for extra in [
-        json!({"name":"../outside","preferences":input["preferences"]}),
-        json!({"name":"missing","preferences":input["preferences"],"data_dir":"/wrong"}),
+        json!({"name":"../outside","user":"u","preferences":input["preferences"]}),
+        json!({"name":"missing","user":"u","preferences":input["preferences"],"data_dir":"/wrong"}),
     ] {
         assert!(client.control("capture", extra).await.is_err());
     }
@@ -280,14 +292,19 @@ async fn worker_captures_real_qmp_frames_as_png_and_obeys_the_host_retention_lim
         .unwrap();
     assert_eq!(result["scope"]["kind"], "guest");
     assert_eq!(result["verified"], false);
-    assert!(result["output"].as_str().unwrap().contains("reattached"));
+    // Startup recovery may already have reattached through persisted endpoints.
+    let output = result["output"].as_str().unwrap();
+    assert!(
+        output.contains("reattached") || output.contains("already running"),
+        "{output}"
+    );
     let screenshots = data.join("vm/existing/screenshots");
     std::fs::create_dir_all(&screenshots).unwrap();
     for name in ["legacy_a.ppm", "legacy_b.ppm"] {
         std::fs::write(screenshots.join(name), b"old-image").unwrap();
     }
     for _ in 0..3 {
-        let path = client.control("capture", json!({"name":"existing", "preferences":{"keyboard_layout":"de", "screenshot_enabled":false, "screenshot_limit":2}})).await.unwrap();
+        let path = client.control("capture", json!({"name":"existing", "user":"operator-selected-user", "preferences":{"keyboard_layout":"de", "screenshot_enabled":false, "screenshot_limit":2}})).await.unwrap();
         assert!(std::fs::read(path.as_str().unwrap())
             .unwrap()
             .starts_with(b"\x89PNG\r\n\x1a\n"));
@@ -298,7 +315,7 @@ async fn worker_captures_real_qmp_frames_as_png_and_obeys_the_host_retention_lim
             .count(),
         2
     );
-    let latest = client.control("capture", json!({"name":"existing", "preferences":{"keyboard_layout":"us", "screenshot_enabled":false, "screenshot_limit":0}})).await.unwrap();
+    let latest = client.control("capture", json!({"name":"existing", "user":"operator-selected-user", "preferences":{"keyboard_layout":"us", "screenshot_enabled":false, "screenshot_limit":0}})).await.unwrap();
     assert!(std::path::Path::new(latest.as_str().unwrap()).is_file());
     assert_eq!(std::fs::read_dir(&screenshots).unwrap().count(), 1);
     client.shutdown().await.unwrap();

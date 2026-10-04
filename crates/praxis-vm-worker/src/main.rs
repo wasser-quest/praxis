@@ -1,6 +1,7 @@
 //! Installed VM worker. Stdout contains protocol frames only; credentials and
 //! implementation errors are never written to either output stream.
 use praxis_plugin_api::{CallContext, Service, ServiceInfo};
+use praxis_vm::guests::Principal;
 use praxis_vm::runtime::{VmCaller, VmPreferences, VmRuntime, VmSettings};
 use serde_json::Value;
 use std::{collections::BTreeMap, sync::Arc};
@@ -52,7 +53,15 @@ impl Service for Worker {
             owner: "vm".into(),
             service: "vm".into(),
             operations: OPERATIONS.iter().map(|op| (*op).into()).collect(),
-            controls: vec!["autostart".into(), "web_info".into(), "capture".into()],
+            controls: vec![
+                "autostart".into(),
+                "web_info".into(),
+                "capture".into(),
+                "recover".into(),
+                "guests".into(),
+                "share".into(),
+                "transfer".into(),
+            ],
         }
     }
     async fn initialize(&mut self, mut initialization: Value) -> anyhow::Result<()> {
@@ -67,6 +76,8 @@ impl Service for Worker {
             "VM data directory must be host resolved"
         );
         let runtime = Arc::new(VmRuntime::new(settings)?);
+        // Reattach surviving guests before serving tools or routes.
+        let _ = runtime.recover().await;
         self.web = Some(praxis_vm_web::WebServer::start(runtime.clone(), key).await?);
         self.runtime = Some(runtime);
         Ok(())
@@ -111,15 +122,65 @@ impl Service for Worker {
             #[serde(deny_unknown_fields)]
             struct Capture {
                 name: String,
+                user: String,
                 preferences: VmPreferences,
             }
             let input: Capture = serde_json::from_value(input)?;
             praxis_vm::validate_vm_name(&input.name)?;
             return Ok(serde_json::to_value(
                 self.runtime()?
-                    .capture(&input.name, input.preferences.screenshot_limit)
+                    .capture_as(
+                        &Principal::user(&input.user),
+                        &input.name,
+                        input.preferences.screenshot_limit,
+                    )
                     .await,
             )?);
+        }
+        if operation == "recover" {
+            return Ok(self.runtime()?.recover().await);
+        }
+        if matches!(operation, "guests" | "share" | "transfer") {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Guests {
+                /// Host-authenticated identity; `operator` only for operator surfaces.
+                user: String,
+                #[serde(default)]
+                operator: bool,
+                #[serde(default)]
+                name: Option<String>,
+                #[serde(default)]
+                target: Option<String>,
+                #[serde(default)]
+                grant: Option<bool>,
+            }
+            let input: Guests = serde_json::from_value(input)?;
+            let principal = if input.operator {
+                Principal::operator()
+            } else {
+                Principal::user(&input.user)
+            };
+            let runtime = self.runtime()?;
+            if operation == "guests" {
+                return Ok(serde_json::json!({"vms": runtime.list_for(&principal).await}));
+            }
+            let name = input.name.ok_or_else(|| anyhow::anyhow!("Missing guest"))?;
+            let target = input
+                .target
+                .ok_or_else(|| anyhow::anyhow!("Missing target"))?;
+            let record = if operation == "share" {
+                runtime
+                    .guests()
+                    .share(&principal, &name, &target, input.grant.unwrap_or(true))
+                    .await?
+            } else {
+                runtime
+                    .guests()
+                    .transfer(&principal, &name, &target)
+                    .await?
+            };
+            return Ok(record.public());
         }
         if operation == "web_info" {
             return Ok(serde_json::to_value(
@@ -132,11 +193,7 @@ impl Service for Worker {
         anyhow::ensure!(operation == "autostart", "Unsupported VM control");
         let grants: BTreeMap<String, String> = serde_json::from_value(input)?;
         praxis_vm::secrets_inject::validate_grants(&grants)?;
-        let runtime = self.runtime()?;
-        runtime
-            .manager()
-            .start_vm_with_grants(runtime.default_config("praxis-vm")?, &grants)
-            .await?;
+        self.runtime()?.autostart(&grants).await?;
         Ok(serde_json::json!({"started":true}))
     }
 }

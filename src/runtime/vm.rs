@@ -62,7 +62,11 @@ impl VmAccess {
                 return adapter
                     .access
                     .inner
-                    .capture(name, preferences.screenshot_limit)
+                    .capture_as(
+                        &praxis_vm::guests::Principal::user(user),
+                        name,
+                        preferences.screenshot_limit,
+                    )
                     .await;
             }
             None
@@ -382,6 +386,8 @@ impl crate::runtime::features::NativeService for VmAdapter {
         ))
     }
     async fn initialize(&self) -> anyhow::Result<()> {
+        // Reattach surviving guests and record interrupted operations first.
+        let _ = self.access.inner.recover().await;
         self.web
             .set(
                 praxis_vm_web::WebServer::start(self.access.inner.clone(), self.web_key.clone())
@@ -487,11 +493,7 @@ pub async fn autostart(
                 grants.insert(file.clone(), value.to_string());
             }
         }
-        access
-            .inner
-            .manager()
-            .start_vm_with_grants(access.inner.default_config("praxis-vm")?, &grants)
-            .await?;
+        access.inner.autostart(&grants).await?;
         Ok(())
     }
     #[cfg(not(feature = "vm"))]

@@ -82,8 +82,51 @@ pub async fn dispatch_vm_tool(
     args: &serde_json::Value,
     grants: &BTreeMap<String, String>,
 ) -> Option<String> {
+    dispatch_vm_tool_with(manager, tool_name, args, grants, None).await
+}
+
+pub const OPERATIONS: &[&str] = &[
+    "vm_start",
+    "vm_stop",
+    "vm_shell",
+    "vm_keys",
+    "vm_input",
+    "vm_screenshot",
+    "vm_file_transfer",
+    "vm_snapshot",
+    "vm_shared_folder",
+    "vm_mouse",
+    "vm_look_screenshot",
+    "vm_process_list",
+    "vm_file_read",
+    "vm_network_test",
+    "vm_service_list",
+    "vm_package_install",
+    "vm_snapshot_list",
+    "vm_snapshot_restore",
+    "vm_snapshot_delete",
+    "vm_wait_for_text",
+    "vm_window_list",
+    "vm_window_focus",
+    "vm_clipboard_set",
+    "vm_clipboard_get",
+    "vm_install",
+];
+pub fn is_known_operation(operation: &str) -> bool {
+    OPERATIONS.contains(&operation)
+}
+
+/// `persisted` carries the guest's recorded endpoints and disk so restarts
+/// reuse the same QMP/serial/VNC addresses instead of re-deriving them.
+pub async fn dispatch_vm_tool_with(
+    manager: &VmManager,
+    tool_name: &str,
+    args: &serde_json::Value,
+    grants: &BTreeMap<String, String>,
+    persisted: Option<&crate::VmConfig>,
+) -> Option<String> {
     let result = match tool_name {
-        "vm_start" => handle_vm_start(manager, args, grants).await,
+        "vm_start" => handle_vm_start(manager, args, grants, persisted).await,
         "vm_stop" => handle_vm_stop(manager, args).await,
         "vm_shell" => handle_vm_shell(manager, args).await,
         "vm_keys" => handle_vm_keys(manager, args).await,
@@ -118,6 +161,7 @@ async fn handle_vm_start(
     manager: &VmManager,
     args: &serde_json::Value,
     grants: &BTreeMap<String, String>,
+    persisted: Option<&crate::VmConfig>,
 ) -> String {
     let name = args["name"].as_str().unwrap_or("praxis-vm");
     let cpu_cores = args["cpu_cores"].as_u64().unwrap_or(2) as u32;
@@ -160,6 +204,9 @@ async fn handle_vm_start(
         mount_point: "/mnt/shared".to_string(),
         readonly: false,
     });
+    if let Some(saved) = persisted.filter(|saved| saved.name == name) {
+        config.reuse_endpoints(saved);
+    }
 
     match manager.start_vm_with_grants(config, grants).await {
         Ok(msg) => {
@@ -894,7 +941,10 @@ async fn handle_vm_look_screenshot(manager: &VmManager, args: &serde_json::Value
         .flatten()
         .filter_map(|e| e.ok())
         .filter(|e| {
-            matches!(e.path().extension().and_then(|s| s.to_str()), Some("png" | "ppm"))
+            matches!(
+                e.path().extension().and_then(|s| s.to_str()),
+                Some("png" | "ppm")
+            )
         })
         .map(|e| e.path().to_string_lossy().to_string())
         .collect();
@@ -951,7 +1001,10 @@ fn cleanup_screenshot_limit_dir(ss_dir: &str, max_screenshots: usize) {
         .flatten()
         .filter_map(|e| e.ok())
         .filter(|e| {
-            matches!(e.path().extension().and_then(|s| s.to_str()), Some("png" | "ppm"))
+            matches!(
+                e.path().extension().and_then(|s| s.to_str()),
+                Some("png" | "ppm")
+            )
         })
         .filter_map(|e| {
             let time = e.metadata().and_then(|m| m.modified()).ok()?;
