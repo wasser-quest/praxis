@@ -3,8 +3,9 @@
 Status: migration started; the roadmap baseline is merged main `a037f21`.
 The [first implementation slice](../docs/PLUGIN_RUNTIME.md) adds shared tool
 ownership and dispatch. The [progress checklist](README.md) tracks PR 1's
-remaining work. Manifest v2, service hosting, route/UI registration and minimal
-startup below remain implementation targets.
+remaining work. A native background-service host and core event/template services
+are now implemented. Manifest v2, feature-service tool hosting, route/UI
+registration and minimal startup below remain implementation targets.
 
 ## 1. Decision and scope
 
@@ -18,6 +19,13 @@ tasks/state machines, applies permissions and verifies execution receipts.
 Plugins supply features through those interfaces. A plugin may request an
 operation or declare a contract; it cannot mark its own output as a verified
 runtime receipt, change the operator-selected workspace or bypass a guard.
+
+POML rendering, context data and state-machine execution stay in the runtime.
+They must work with an empty feature-plugin registry and without the dashboard.
+Local `templates/` and `contexts/` remain supported; optional workflow packs
+supply additional assets. Full POML rendering still requires Node/POML_CLI.
+Workflows that declare plugin capabilities fail setup when those owners are
+missing; the interpreter must not invent replacements or accept claimed facts.
 
 Move **the entire dashboard UI** into a plugin: login UI, navigation, chat,
 Graphs, Messages, configuration and plugin-management pages. Authentication,
@@ -62,6 +70,11 @@ through these message paths. Explicit native names replace the blanket `vm_`
 reservation. Native feature adapters and defaults remain until extraction;
 this is a shared execution seam, not completed VM or minimal-runtime packaging.
 
+`src/runtime/events.rs` now owns the user stream; the dashboard stream module is
+a compatibility re-export. `src/runtime/templates.rs` owns resolution/catalog
+sync, retaining operator metadata. Core retention, cron and shell cleanup have
+separate workers under the native service host, with bounded disable/shutdown.
+
 ## 3. Runtime boundary and builtin file operations
 
 | Remains in the trusted runtime | Supplied by plugins |
@@ -69,7 +82,7 @@ this is a shared execution seam, not completed VM or minimal-runtime packaging.
 | Bootstrap CLI, health, plugin administration and configuration loading | Optional clients, onboarding UI and feature CLI commands |
 | Authentication, pairing, user/session identity and permission grants | Dashboard, Discord and other channel frontends |
 | Registry, dependency validation and package lifecycle | Tools, providers, services, routes and UI contributions |
-| Task engine, SM/Decision IR interpreter and guard evaluation | Workflows, templates, personas and Decision profiles |
+| Task engine, POML/context runtime, SM/Decision IR interpretation and guards | Additional workflow/template/persona packs and Decision profiles |
 | Workspace resolver, resource locks, execution journal and receipt store | Language-specific build/test/source contracts and verifiers |
 | Cancellation, budgets, compaction policy, retries and audit | Provider transport/protocol implementations |
 | Scoped storage/secrets, events, usage and asset APIs | Memory, RAG, learning, cron, skills, media and VM features |
@@ -150,7 +163,7 @@ Some directories need splitting rather than moving wholesale:
 | `src/discord/`, Discord tool implementations | `discord` channel/plugin with pairing and delivery adapters |
 | `src/voice/`, `src/comfyui/`, `src/gpu_router.rs`, audio integrations | Separate voice/media/provider services; enable downloads, devices and paid requests only when configured |
 | `src/skills/` and `skills/` | `skills` executor/catalog and separately installable skill assets |
-| POML rendering, template authoring, `templates/`, `contexts/` | `prompts_poml`, `workflow_authoring`, and coding/learning/persona asset packages |
+| POML rendering, context handling, template authoring, `templates/`, `contexts/` | POML/context/SM engines and local assets remain core; `workflow_authoring` and optional coding/learning/persona packs add tools/assets |
 | `src/tui/`, `src/context_cmd.rs`, `src/onboard.rs` | Optional TUI/client and onboarding/preset packages; retain core plugin-management CLI |
 | `src/assets.rs` | Package-local assets plus bootstrap assets; preserve repair backups and operator edits |
 | `src/config.rs`, DB connection/migrations, secrets and pairings | Shared host infrastructure; feature fields/migrations move to namespaced plugin schemas |
@@ -358,9 +371,10 @@ misrepresented as verified language capabilities.
   a committed tool action. Preserve supported Praxis attribution headers.
 - Move Discord, voice/audio, image generation, ComfyUI and GPU routing into
   independently enabled packages with scoped credentials and delivery adapters.
-- Package POML rendering and coding/learning/persona assets. Resolve namespaced
-  workflows/templates through the host asset catalog, preserving legacy paths,
-  hashes and operator edits. Required renderers/providers are preflight-checked.
+- Package additional coding/learning/persona assets while retaining POML/context
+  rendering and SM execution in core. Resolve optional namespaced workflows and
+  templates through the host asset catalog; preserve local paths, hashes and
+  operator edits. Required CLI/provider/capability setup is preflight-checked.
 
 Acceptance: provider-only chat, verified Rust and language teaching work without
 VM/UI/media. The [Snake setup/test prompt](../docs/SNAKE_IR_TEST.md) stays

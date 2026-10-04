@@ -1,8 +1,8 @@
 # Shared plugin execution boundary
 
-The first implementation slice of the [pluginization roadmap](../plan/PLUGINIZATION.md)
-introduces shared tool ownership and dispatch. It requires no new configuration
-and retains existing v1 plugin manifests and verified capability contracts.
+The foundation of the [pluginization roadmap](../plan/PLUGINIZATION.md) provides
+shared tool ownership/dispatch and core event/template services. It requires no
+new configuration and retains v1 plugin manifests and capability contracts.
 
 ## Implemented behavior
 
@@ -38,6 +38,34 @@ delete/toggle include user ownership in the SQL mutation; run/status responses
 cannot reveal another user's job. Supplying a different `user_id` in tool
 arguments does not change the caller.
 
+## Core workflow and background services
+
+POML rendering, contexts and SM/Decision IR interpretation remain in core and
+work with an empty feature-plugin registry. Full POML rendering requires Node
+and `POML_CLI`; a workflow declaring a missing capability still fails preflight.
+Local template/workflow files remain supported when optional asset packages are
+introduced. See [plugin-free workflows](CORE_WORKFLOWS.md).
+
+`runtime::events` now owns user event channels. Core DB, gateway, tool and channel
+code publish there; `dashboard::stream` is a compatibility re-export of that same
+bus. Wire names/payloads remain unchanged. Context notifications still expose
+only the public web-speech flag, not private context/settings.
+
+`runtime::templates` owns template resolution and catalog synchronization.
+Startup calls it directly without dashboard routes. Synchronization preserves
+descriptions/operator flags, leaves disk files untouched, supports nested names
+and avoids importing outside-root links or traversing directory cycles. The
+gateway template exports and old dashboard synchronization function remain
+compatibility adapters.
+
+The native `runtime::services::ServiceHost` API v1 checks versions, service IDs
+and duplicate owners before starting periodic callbacks. It owns cancellation,
+draining and bounded shutdown; dropped hosts abort their workers. Core tool-output
+retention, cron checks and shell job cleanup are separate workers registered after
+the gateway binds its listener. A blocked or failing feature worker no longer
+holds up the core retention tick. The cron adapter preserves the existing job
+check behavior; this change does not implement new scheduled inference.
+
 ## Compatibility and remaining work
 
 All current native tools are still present. This change does not yet reduce them
@@ -46,10 +74,11 @@ packages. The shared dispatcher temporarily contains their native adapters.
 Agent VM redirection and chat host-file/terminal behavior remain distinct through
 an explicit dispatch mode, ready for the later execution-backend extraction.
 
-Versioned service hosting, registry revision pinning, runtime event/template
-services, provider-independent startup and feature dependency removal are still
-tracked in [PR 1 and subsequent milestones](../plan/README.md). Contracts and
-receipts retain their existing meanings; plugin processes remain operator-trusted.
+The worker API is an in-process migration adapter. Service-backed tool handles,
+registry revision pinning and provider-independent management startup are still
+tracked in [PR 1](../plan/README.md). Sidecar IPC, installable service manifests,
+feature-process lifecycle and dependency removal remain subsequent work.
+Contracts/receipts retain their meanings; plugin processes remain operator-trusted.
 
 ## Verification
 
@@ -59,7 +88,14 @@ cancelled writes, shared cron dispatch and resource ownership. Plugin registrati
 has an atomic-rejection test. Existing capability-dispatch, graph, rollback,
 output-archival and tool-loop suites remain the regression checks.
 
-Validated without live model inference: 918 library tests, 15 CLI tests and two
-real Cargo-based project IR tests passed. The full library run leaves 48 cases
-ignored by their existing annotations; the two Cargo IR cases were then selected
-and run separately. New modules pass rustfmt checks and documentation links resolve.
+`runtime::tests` covers empty-registry contexts/graphs, a real IR navigation call,
+core transition delivery, real POML before/after a state change, missing-plugin
+setup errors, template catalog metadata and independent service lifecycle/retention.
+
+Validated without live model inference: 929 library tests, 15 CLI tests and two
+real Cargo-based project IR tests passed. The library run requires the real POML
+CLI, including the plugin-free render regression and all shipped root templates.
+It leaves 48 cases ignored by existing annotations; the two Cargo IR cases were
+then selected and run separately. New modules pass rustfmt checks; documentation
+links resolve. Homepage source/docs links, metadata and clone commands now use
+`https://github.com/wasser-quest/praxis` and were checked in the HTML.

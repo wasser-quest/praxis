@@ -106,7 +106,7 @@ impl LLMRouter {
         let result = self.route(request, provider, user, cancel, None).await;
         if let Err(error) = &result {
             if let Some(user) = user {
-                crate::dashboard::stream::send(user, "stream_abort", "{}");
+                crate::runtime::events::send(user, "stream_abort", "{}");
             }
             resilience::progress(user, &error.to_string());
         }
@@ -117,7 +117,7 @@ impl LLMRouter {
         let cancel = crate::gateway::task_control::cancellation(user).unwrap_or_default();
         let result = self.route(request, provider, Some(user), &cancel, Some(trace)).await;
         if let Err(error) = &result {
-            crate::dashboard::stream::send(user, "stream_abort", "{}");
+            crate::runtime::events::send(user, "stream_abort", "{}");
             resilience::progress(Some(user), &error.to_string());
         }
         result
@@ -229,7 +229,7 @@ impl LLMRouter {
                 let mut stream = StreamAttempt::new(user);
                 let trace_id = trace.map(|t| t.attempt(&req, name, attempts as u64)).transpose()?;
                 let generation = crate::gateway::telemetry::Generation::new();
-                if let Some(user) = user { crate::dashboard::stream::send(user, "stream_start", "{}"); }
+                if let Some(user) = user { crate::runtime::events::send(user, "stream_start", "{}"); }
                 let on_delta = |delta: StreamDelta| {
                     generation.delta(user, trace_id, &delta);
                     if let Some(user) = user {
@@ -237,16 +237,16 @@ impl LLMRouter {
                             StreamDelta::TemplateOmitted => crate::gateway::task_control::note_template_omitted(user),
                             StreamDelta::Text { text } if !text.is_empty() => {
                                 stream.emitted.store(true, Ordering::Relaxed);
-                                crate::dashboard::stream::send(user, "char", text);
+                                crate::runtime::events::send(user, "char", text);
                             }
                             StreamDelta::Reasoning { text } if !text.is_empty() && crate::gateway::task_control::show_thinking(user) => {
                                 stream.previewed.store(true, Ordering::Relaxed);
-                                crate::dashboard::stream::send(user, "reasoning_delta", text);
+                                crate::runtime::events::send(user, "reasoning_delta", text);
                             }
                             StreamDelta::ToolCall { .. } => {
                                 if let Ok(data) = serde_json::to_string(&delta) {
                                     stream.previewed.store(true, Ordering::Relaxed);
-                                    crate::dashboard::stream::send(user, "tool_call_delta", &data);
+                                    crate::runtime::events::send(user, "tool_call_delta", &data);
                                 }
                             }
                             _ => {}
@@ -284,7 +284,7 @@ impl LLMRouter {
                         // final text. This event is separate from disposable status.
                         if let Some(user) = user.filter(|u| crate::gateway::task_control::show_thinking(u)) {
                             if let Some(text) = response.reasoning_content.as_deref().filter(|s| !s.is_empty()) {
-                                crate::dashboard::stream::send(user, "reasoning", text);
+                                crate::runtime::events::send(user, "reasoning", text);
                             }
                         }
                         if attempt.continuation.is_some() {
@@ -329,7 +329,7 @@ impl LLMRouter {
                             // preview nor an assistant answer. Keep its display
                             // and re-enter the same attempt/time/rate gates.
                             stream.committed = true;
-                            if let Some(user) = user { crate::dashboard::stream::send(user, "stream_end", "{}"); }
+                            if let Some(user) = user { crate::runtime::events::send(user, "stream_end", "{}"); }
                             if attempts >= allowance {
                                 let error = ProviderError::with_cause(ErrorKind::ReasoningOnly,
                                     "reasoning continuation reached the configured LLM attempt limit; no final answer was returned");
@@ -351,11 +351,11 @@ impl LLMRouter {
                             }
                         }
                         stream.committed = true;
-                        if let Some(user) = user { crate::dashboard::stream::send(user, "stream_end", "{}"); }
+                        if let Some(user) = user { crate::runtime::events::send(user, "stream_end", "{}"); }
                         if let (Some(user), Some(text)) =
                             (user, response.content.as_deref().filter(|s| !s.trim().is_empty()))
                         {
-                            crate::dashboard::stream::send(user, "assistant", text);
+                            crate::runtime::events::send(user, "assistant", text);
                         }
                         tracing::info!(provider = %label(name), attempt = attempts, elapsed_ms = attempt_start.elapsed().as_millis() as u64, content_bytes = response.content.as_ref().map_or(0, String::len), tool_call_count = response.tool_calls.as_ref().map_or(0, Vec::len), "LLM attempt succeeded");
                         return Ok(response);
@@ -555,7 +555,7 @@ struct StreamAttempt<'a> {
 impl<'a> StreamAttempt<'a> {
     fn new(user: Option<&'a str>) -> Self {
         if let Some(user) = user {
-            crate::dashboard::stream::send(user, "typing", "true");
+            crate::runtime::events::send(user, "typing", "true");
         }
         Self {
             user,
@@ -571,9 +571,9 @@ impl Drop for StreamAttempt<'_> {
             // Clear failed reasoning/tool previews as well as text. An attempt
             // with no visible output must not stop the UI timer before a retry.
             if !self.committed && (self.emitted.load(Ordering::Relaxed) || self.previewed.load(Ordering::Relaxed)) {
-                crate::dashboard::stream::send(user, "stream_abort", "{}");
+                crate::runtime::events::send(user, "stream_abort", "{}");
             }
-            crate::dashboard::stream::send(user, "typing", "false");
+            crate::runtime::events::send(user, "typing", "false");
         }
     }
 }

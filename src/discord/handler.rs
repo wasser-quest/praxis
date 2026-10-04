@@ -229,7 +229,7 @@ impl EventHandler for DiscordHandler {
                 "author": author_name,
                 "content": content_clone,
             });
-            crate::dashboard::stream::send(
+            crate::runtime::events::send(
                 &uid,
                 "discord_message",
                 &payload.to_string(),
@@ -398,7 +398,7 @@ impl EventHandler for DiscordHandler {
                             "author": "bot",
                             "content": trimmed,
                         });
-                        crate::dashboard::stream::send(
+                        crate::runtime::events::send(
                             &mirror_uid,
                             "discord_message",
                             &bot_meta.to_string(),

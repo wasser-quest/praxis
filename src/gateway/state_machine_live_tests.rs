@@ -4,14 +4,14 @@ use super::*;
 use std::sync::{atomic::AtomicBool, Mutex};
 
 pub(super) struct RoutingTrace {
-    receiver: Mutex<tokio::sync::broadcast::Receiver<crate::dashboard::stream::StreamEvent>>,
+    receiver: Mutex<tokio::sync::broadcast::Receiver<crate::runtime::events::StreamEvent>>,
     events: Mutex<Vec<serde_json::Value>>,
     complete: AtomicBool,
 }
 impl RoutingTrace {
     fn new(user: &str) -> Self {
         Self {
-            receiver: Mutex::new(crate::dashboard::stream::get_or_create(user).subscribe()),
+            receiver: Mutex::new(crate::runtime::events::get_or_create(user).subscribe()),
             events: Mutex::new(Vec::new()),
             complete: AtomicBool::new(true),
         }
@@ -180,7 +180,7 @@ async fn run_state_task(
     let result = fixture_http_chat(state, &user, &prompt).await;
     trace.drain(calls.load(Ordering::SeqCst))?;
     trace.save(out)?;
-    crate::dashboard::stream::remove(&user);
+    crate::runtime::events::remove(&user);
     std::fs::write(
         out.join("result.json"),
         serde_json::to_vec_pretty(&json!({

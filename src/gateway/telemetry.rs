@@ -45,7 +45,7 @@ impl CallTrace {
             number,
             &self.limits,
         )?;
-        crate::dashboard::stream::send(&self.ctx.user_id, "generation", &json!({"request_id":id,"status":"started","provider":provider,
+        crate::runtime::events::send(&self.ctx.user_id, "generation", &json!({"request_id":id,"status":"started","provider":provider,
             "model":request.model,"attempt":number,"limits":self.limits,"output_limit":request.max_tokens,
             "request_tokens_estimate":super::llm::resilience::estimated_tokens(request)}).to_string());
         Ok(id)
@@ -66,7 +66,7 @@ impl CallTrace {
             first_token_ms,
             response.and_then(|r| r.finish_reason.as_deref()),
         )?;
-        crate::dashboard::stream::send(&self.ctx.user_id, "generation", &json!({"request_id":id,"status":status,"elapsed_ms":elapsed_ms,
+        crate::runtime::events::send(&self.ctx.user_id, "generation", &json!({"request_id":id,"status":status,"elapsed_ms":elapsed_ms,
             "first_token_ms":first_token_ms,"usage":response.and_then(|r| r.usage.as_ref()),
             "tokens_per_sec":response.and_then(|r| r.usage.as_ref()).filter(|_| elapsed_ms > 0).map(|u|f64::from(u.completion_tokens)*1000.0/elapsed_ms as f64),"estimated":false}).to_string());
         Ok(())
@@ -117,7 +117,7 @@ impl Generation {
         counts.last_emit_ms = elapsed_ms;
         let estimated = counts.characters.div_ceil(4);
         if let Some(user) = user {
-            crate::dashboard::stream::send(user, "generation", &json!({"request_id":request_id,"status":"generating",
+            crate::runtime::events::send(user, "generation", &json!({"request_id":request_id,"status":"generating",
             "elapsed_ms":elapsed_ms,"first_token_ms":counts.first_token_ms,"output_tokens_estimate":estimated,
             "tokens_per_sec":if elapsed_ms > 0 {estimated as f64 * 1000.0 / elapsed_ms as f64} else {0.0},"estimated":true}).to_string());
         }

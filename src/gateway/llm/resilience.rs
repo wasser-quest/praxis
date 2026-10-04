@@ -161,7 +161,7 @@ pub async fn interruptible<T>(
 
 pub fn progress(user: Option<&str>, message: &str) {
     if let Some(user) = user {
-        crate::dashboard::stream::send(user, "feedback", message);
+        crate::runtime::events::send(user, "feedback", message);
     }
 }
 

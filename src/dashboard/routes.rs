@@ -131,45 +131,10 @@ pub struct DashboardLoginResponse {
     pub token: String,
 }
 
+/// Compatibility entry point; synchronization belongs to the core runtime.
 pub fn sync_templates_from_disk(db: &crate::db::Database) {
-    let templates_dir = std::path::Path::new("templates");
-    if !templates_dir.exists() {
-        return;
-    }
-    sync_templates_dir(db, templates_dir, "");
-}
-
-fn sync_templates_dir(db: &crate::db::Database, dir: &std::path::Path, prefix: &str) {
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                let sub_prefix = if prefix.is_empty() {
-                    entry.file_name().to_string_lossy().to_string()
-                } else {
-                    format!("{}/{}", prefix, entry.file_name().to_string_lossy())
-                };
-                sync_templates_dir(db, &path, &sub_prefix);
-            } else if path.extension().and_then(|e| e.to_str()) == Some("poml") {
-                let file_stem = path.file_stem().unwrap_or_default().to_string_lossy();
-                let name = if prefix.is_empty() {
-                    file_stem.to_string()
-                } else {
-                    format!("{}/{}", prefix, file_stem)
-                };
-                if let Ok(content) = std::fs::read_to_string(&path) {
-                    let existing = db.get_template(&name).ok().flatten();
-                    let needs_sync = match &existing {
-                        None => true,
-                        Some(t) => t.content != content,
-                    };
-                    if needs_sync {
-                        let _ = db.save_template(&name, &content, None, true);
-                        tracing::info!("Synced template from disk: {}", name);
-                    }
-                }
-            }
-        }
+    if let Err(error) = crate::runtime::templates::sync_from_disk(db, std::path::Path::new("templates")) {
+        tracing::warn!(%error, "Template catalog synchronization failed");
     }
 }
 
@@ -2196,7 +2161,7 @@ async fn chat_stream_auth(
         return Err(StatusCode::UNAUTHORIZED);
     }
     tracing::info!(user_id = %user_id, "[SSE] connection opened");
-    let rx = crate::dashboard::stream::get_or_create(&user_id).subscribe();
+    let rx = crate::runtime::events::get_or_create(&user_id).subscribe();
     let uid = user_id.clone();
     let stream = futures_util::stream::unfold(rx, move |mut r| {
         let uid = uid.clone();
@@ -2253,7 +2218,7 @@ async fn chat_stream_tts_only(
         return Err(StatusCode::UNAUTHORIZED);
     }
     tracing::info!(user_id = %user_id, "[SSE-TTS] connection opened");
-    let rx = crate::dashboard::stream::get_or_create(&user_id).subscribe();
+    let rx = crate::runtime::events::get_or_create(&user_id).subscribe();
     let uid = user_id.clone();
     let stream = futures_util::stream::unfold(rx, move |mut r| {
         let uid = uid.clone();

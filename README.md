@@ -496,7 +496,14 @@ tools; service/UI packaging and minimal startup are planned work.
 
 The [shared execution boundary](docs/PLUGIN_RUNTIME.md) is the first implemented
 step: tool owners are checked consistently across discovery, workflow preflight
-and chat/agent/Decision IR execution.
+and chat/agent/Decision IR execution. User event delivery, template resolution
+and catalog synchronization are now core services, with independently owned
+retention, cron and shell workers.
+
+**POML, contexts and state machines remain in core.** Local workflows can run
+without feature plugins or the dashboard. Full POML rendering requires Node and
+`POML_CLI`; a workflow declaring a plugin capability still requires that plugin.
+See [plugin-free workflows and regression checks](docs/CORE_WORKFLOWS.md).
 
 Install plugins by placing a directory with `plugin.json` in `plugins/`:
 

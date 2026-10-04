@@ -220,7 +220,7 @@ pub async fn start_background(
         tracing::info!(job_id = %job_id_done, command = %snapshot.command, status = %status_str, "background job finished");
         // Announce completion to the owner's dashboard/TUI stream (if any).
         if let Some(owner) = owner {
-            let _ = crate::dashboard::stream::send(
+            let _ = crate::runtime::events::send(
                 &owner,
                 "background_job",
                 &serde_json::json!({
@@ -266,10 +266,23 @@ pub fn list_jobs() -> Vec<BackgroundJob> {
     v
 }
 
+/// Transitional shell adapter; core retention does not depend on this service.
+pub fn register_maintenance(host: &mut crate::runtime::services::ServiceHost) -> anyhow::Result<()> {
+    host.register_periodic(
+        "shell.background-maintenance",
+        crate::runtime::services::SERVICE_API_VERSION,
+        std::time::Duration::from_secs(60),
+        || async {
+            cleanup_finished_jobs();
+            Ok(())
+        },
+    )
+}
+
 /// Remove finished background jobs older than `FINISHED_JOB_TTL_SECS` and, if
 /// the registry still exceeds `MAX_JOBS`, drop the oldest finished entries.
-/// Running jobs are never removed. Called periodically from the gateway cron
-/// tick so the in-memory registry cannot grow without bound.
+/// Running jobs are never removed. Called by the shell's maintenance service
+/// so the in-memory registry cannot grow without bound.
 pub fn cleanup_finished_jobs() -> usize {
     let now = chrono::Utc::now();
     let mut removed = 0usize;

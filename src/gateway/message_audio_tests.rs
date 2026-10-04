@@ -35,7 +35,7 @@ async fn audio_tts_is_saved_without_subscribers_and_notifications_reference_save
     ctx.settings = settings.clone();
     db.save_context(&ctx).unwrap();
     for subscribed in [false, true] {
-        let mut rx = subscribed.then(|| crate::dashboard::stream::get_or_create(&user).subscribe());
+        let mut rx = subscribed.then(|| crate::runtime::events::get_or_create(&user).subscribe());
         let id = db.add_message(&user, &crate::db::messages::Message::assistant("fixture reply".into())).unwrap();
         spawn_tts("fixture reply".into(), &settings, &Default::default(), &user, &db, Some(id), Some("web"));
         tokio::time::timeout(std::time::Duration::from_secs(5), async {
@@ -53,7 +53,7 @@ async fn audio_tts_is_saved_without_subscribers_and_notifications_reference_save
             assert!(payload.get("audio").is_none(), "SSE should not buffer huge base64 blobs for saved replies");
         }
     }
-    crate::dashboard::stream::remove(&user);
+    crate::runtime::events::remove(&user);
 }
 
 #[tokio::test]
@@ -134,7 +134,7 @@ fn audio_context_saves_publish_only_web_tts_permission() {
     let dir = tempfile::tempdir().unwrap();
     let db = crate::db::Database::new(dir.path()).unwrap();
     let user = format!("audio-settings-{}", uuid::Uuid::new_v4());
-    let mut rx = crate::dashboard::stream::get_or_create(&user).subscribe();
+    let mut rx = crate::runtime::events::get_or_create(&user).subscribe();
     for (updates, enabled) in [
         (serde_json::json!({"settings": {"web_chat_tts": true}, "custom_data": {"private": "do not publish"}}), true),
         (serde_json::json!({"settings.web_chat_tts": false}), false),
@@ -148,7 +148,7 @@ fn audio_context_saves_publish_only_web_tts_permission() {
     }
     db.delete_context(&user).unwrap();
     assert_eq!(rx.try_recv().unwrap().data, "{\"enabled\":false}");
-    crate::dashboard::stream::remove(&user);
+    crate::runtime::events::remove(&user);
 }
 
 #[tokio::test]
@@ -173,7 +173,7 @@ async fn audio_disable_during_synthesis_keeps_replay_without_late_notification()
             "settings.web_chat_tts": true,
             "settings.use_tts": true,
         })).unwrap();
-        let mut rx = crate::dashboard::stream::get_or_create(&user).subscribe();
+        let mut rx = crate::runtime::events::get_or_create(&user).subscribe();
         let id = db.add_message(&user, &crate::db::messages::Message::assistant("delayed".into())).unwrap();
         let previous_requests = server.received_requests().await.unwrap().len();
         spawn_tts("delayed".into(), &ctx.settings, &Default::default(), &user, &db, Some(id), Some(channel));
@@ -192,6 +192,6 @@ async fn audio_disable_during_synthesis_keeps_replay_without_late_notification()
         assert_eq!(rx.recv().await.unwrap().event, "chat_tts_settings");
         assert!(tokio::time::timeout(std::time::Duration::from_millis(100), rx.recv()).await.is_err(),
             "late synthesis must not announce chat_tts after OFF");
-        crate::dashboard::stream::remove(&user);
+        crate::runtime::events::remove(&user);
     }
 }

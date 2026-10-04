@@ -139,28 +139,17 @@ pub async fn start(db: crate::db::Database, config: crate::config::Config) -> an
 
     let app = app.merge(protected);
 
-    let cron_db = db.clone();
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
-        loop {
-            interval.tick().await;
-            if let Err(e) = run_due_cron_jobs(&cron_db).await {
-                tracing::error!("Cron scheduler error: {}", e);
-            }
-            // Housekeeping: drop old finished background jobs so the
-            // in-memory registry cannot grow without bound.
-            crate::tools::execute_terminal::cleanup_finished_jobs();
-            if let Err(error) = cron_db.prune_tool_outputs() {
-                tracing::warn!(%error, "Tool-output retention cleanup failed");
-            }
-        }
-    });
-
     let addr = format!("0.0.0.0:{}", config.gateway_port);
     tracing::info!("Gateway listening on {}", addr);
 
     let listener = tokio::net::TcpListener::bind(&addr).await?;
-    axum::serve(listener, app).await?;
+    let mut services = crate::runtime::services::ServiceHost::new();
+    crate::runtime::retention::register(&mut services, db.clone())?;
+    cron_scheduler::register_service(&mut services, db)?;
+    crate::tools::execute_terminal::register_maintenance(&mut services)?;
+    let result = axum::serve(listener, app).await;
+    services.shutdown(std::time::Duration::from_secs(2)).await;
+    result?;
 
     Ok(())
 }
@@ -182,30 +171,6 @@ async fn rate_limit_middleware(
         Ok(()) => Ok(next.run(req).await),
         Err(_) => Err(axum::http::StatusCode::TOO_MANY_REQUESTS),
     }
-}
-
-async fn run_due_cron_jobs(db: &crate::db::Database) -> anyhow::Result<()> {
-    let conn = db.conn();
-    let mut stmt = conn
-        .prepare("SELECT id, name, user_id, template, prompt FROM cron_jobs WHERE enabled = 1")?;
-
-    let jobs: Vec<(String, String, String, String, String)> = stmt
-        .query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
-                row.get::<_, String>(4)?,
-            ))
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
-
-    for (id, name, _user_id, _template, _prompt) in jobs {
-        tracing::debug!("Cron job check: {} ({})", name, id);
-    }
-
-    Ok(())
 }
 
 #[cfg(test)]

@@ -89,7 +89,7 @@ async fn ollama_output_limit_recovers_thinking_only_on_both_paths() {
             }).expect(2).mount(&server).await;
         let r = router(&server, policy("5", "16384"));
         let user = format!("ollama-output-limit-{streaming}");
-        let mut events = crate::dashboard::stream::get_or_create(&user).subscribe();
+        let mut events = crate::runtime::events::get_or_create(&user).subscribe();
         let result = if streaming {
             r.streaming_chat(request(), None, &user).await
         } else {
@@ -167,7 +167,7 @@ async fn ollama_output_limit_never_replays_visible_partial_text() {
         .mount(&server)
         .await;
     let user = "ollama-output-partial";
-    let mut events = crate::dashboard::stream::get_or_create(user).subscribe();
+    let mut events = crate::runtime::events::get_or_create(user).subscribe();
     let error = router(&server, policy("5", "16384"))
         .streaming_chat(request(), None, user)
         .await
