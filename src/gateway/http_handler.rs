@@ -62,7 +62,7 @@ pub async fn stop(axum::extract::Path(user): axum::extract::Path<String>) -> Jso
 pub async fn events(
     axum::extract::Path(user): axum::extract::Path<String>,
 ) -> axum::response::Sse<impl futures_util::Stream<Item = Result<axum::response::sse::Event, std::convert::Infallible>>> {
-    let rx = crate::dashboard::stream::get_or_create(&user).subscribe();
+    let rx = crate::runtime::events::get_or_create(&user).subscribe();
     let stream = futures_util::stream::unfold(rx, |mut rx| async move {
         loop {
             match rx.recv().await {

@@ -18,17 +18,17 @@ pub async fn before_request(state: &GatewayState, user: &str) -> anyhow::Result<
     if !super::task_control::claim_compaction(user) { return Ok(()); }
     let prefix = &messages[..last_user];
     compaction_event(state, &ctx, "running", tokens)?;
-    crate::dashboard::stream::send(user,"feedback","Compacting older complete turns; keeping the current request and tool chain.");
+    crate::runtime::events::send(user,"feedback","Compacting older complete turns; keeping the current request and tool chain.");
     match summarize(state,user,prefix,&ctx.settings.compaction_summary,ctx.settings.compaction_template.as_deref()).await {
         Ok(summary) => {
             state.db.commit_compaction(user,&ctx.session_id,&ctx.settings.compaction_summary,&summary,prefix)?;
             compaction_event(state, &ctx, "completed", tokens)?;
-            crate::dashboard::stream::send(user,"feedback","Compaction saved: goal, key insights and handoff. Current turn and saved tool outputs preserved.");
+            crate::runtime::events::send(user,"feedback","Compaction saved: goal, key insights and handoff. Current turn and saved tool outputs preserved.");
         }
         Err(error) => {
             compaction_event(state, &ctx, "failed", tokens)?;
             tracing::warn!(user_id=user,error=%error,"Compaction failed; history unchanged");
-            crate::dashboard::stream::send(user,"feedback","Auto-compaction failed; no history was deleted. Safe request budgeting remains active.");
+            crate::runtime::events::send(user,"feedback","Auto-compaction failed; no history was deleted. Safe request budgeting remains active.");
         }
     }
     Ok(())
@@ -38,7 +38,7 @@ fn compaction_event(state: &GatewayState, ctx: &crate::db::contexts::Context, st
     let limits = super::telemetry::limits(&state.db, ctx)?;
     let payload = serde_json::json!({"status":status,"tokens_before_estimate":before,"limits":limits});
     state.db.record_execution_event(ctx, "compaction", &payload)?;
-    crate::dashboard::stream::send(&ctx.user_id, "compaction", &payload.to_string());
+    crate::runtime::events::send(&ctx.user_id, "compaction", &payload.to_string());
     Ok(())
 }
 

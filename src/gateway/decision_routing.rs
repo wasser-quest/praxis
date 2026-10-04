@@ -78,7 +78,7 @@ pub(crate) async fn route_in(root:&Path,state:&GatewayState,ctx:Context,input:&s
     };
     anyhow::ensure!(next.session_id==ctx.session_id,"Session changed during Decision routing; task stopped");
     if status!="already_evaluated" {
-        crate::dashboard::stream::send(&ctx.user_id,"decision_route",&json!({
+        crate::runtime::events::send(&ctx.user_id,"decision_route",&json!({
             "source":"decision","profile":name,"status":status,"probability":probability,
             "confidence":confidence,"usage":usage,
             "from_state":ctx.active_state,"to_state":next.active_state,

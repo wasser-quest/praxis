@@ -574,7 +574,9 @@ async fn run_services(
     praxis::gateway::delegation::ensure_delegations_table(&db);
 
     // Sync templates from disk to database
-    praxis::dashboard::routes::sync_templates_from_disk(&db);
+    if let Err(error) = praxis::runtime::templates::sync_from_disk(&db, Path::new("templates")) {
+        tracing::warn!(%error, "Template catalog synchronization failed");
+    }
 
     // Load secrets (encrypted or plaintext)
     let mut secrets = if let Some(ref password) = master_password {

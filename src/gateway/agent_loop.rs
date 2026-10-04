@@ -136,7 +136,7 @@ pub(crate) async fn run_agent_loop_in_task(
     unregister_active_loop(user_id).await;
     if let Ok(reply) = &result {
         if let Some(id) = reply.response_message_id {
-            crate::dashboard::stream::assistant_saved(user_id, id, &reply.response);
+            crate::runtime::events::assistant_saved(user_id, id, &reply.response);
             // Emit usage event for TUI/dashboard token display.
             if reply.total_tokens > 0 {
                 let usage_data = serde_json::json!({
@@ -148,11 +148,11 @@ pub(crate) async fn run_agent_loop_in_task(
                         (reply.completion_tokens as f64 / (reply.generation_ms as f64 / 1000.0)).round()
                     } else { 0.0 },
                 });
-                crate::dashboard::stream::send(user_id, "usage", &usage_data.to_string());
+                crate::runtime::events::send(user_id, "usage", &usage_data.to_string());
             }
         }
     }
-    crate::dashboard::stream::send(user_id, "agent_stop", "{}");
+    crate::runtime::events::send(user_id, "agent_stop", "{}");
     result
 }
 async fn run_agent_loop_inner(
@@ -178,7 +178,7 @@ async fn run_agent_loop_inner(
 
     // Notify the dashboard chat that the agent loop has started, so the
     // frontend can render a visually distinct "loop running" banner.
-    crate::dashboard::stream::send(user_id, "agent_start", "{}");
+    crate::runtime::events::send(user_id, "agent_start", "{}");
 
     let mut ctx = state.db.load_context(user_id)?;
     let mut tool_calls_used = 0usize;
@@ -596,7 +596,7 @@ role: "system".to_string(),
                                 &tc.function.arguments, 200),
                         }),
                     };
-                    crate::dashboard::stream::send(
+                    crate::runtime::events::send(
                         user_id,
                         "tool_call",
                         &serde_json::json!({
@@ -680,7 +680,7 @@ role: "system".to_string(),
                     } else {
                         crate::util::truncate_chars(&result, 400)
                     };
-                    crate::dashboard::stream::send(
+                    crate::runtime::events::send(
                         user_id,
                         "tool_result",
                         &serde_json::json!({
@@ -719,7 +719,7 @@ role: "system".to_string(),
                                         .and_then(|iu| iu.get("url"))
                                         .and_then(|u| u.as_str())
                                     {
-                                        crate::dashboard::stream::send(
+                                        crate::runtime::events::send(
                                             user_id,
                                             "chat_image",
                                             &serde_json::json!({

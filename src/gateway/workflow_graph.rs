@@ -280,7 +280,7 @@ pub(crate) async fn navigate_checked(
     }
     let receipt = json!({"kind":"state_transition", "verified":true, "workflow":super::prompt::workflow_name(&after), "from_state":source, "to_state":target, "edge":edge_id, "back":back, "graph":graph});
     super::action_contracts::commit_navigation(db, &before, &after, &sm, back, &receipt)?;
-    crate::dashboard::stream::send(user, "state_transition", &receipt.to_string());
+    crate::runtime::events::send(user, "state_transition", &receipt.to_string());
     Ok(receipt.to_string())
 }
 

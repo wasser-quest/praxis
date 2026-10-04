@@ -92,7 +92,7 @@ async fn codex_reasoning_continues_to_answer_or_tools_with_opt_in_headlines() {
             let user = format!("codex-continuation-{tool}-{visible:?}");
             let _guard = task_control::begin(&user).unwrap();
             task_control::set_show_thinking(&user, visible == Some(true));
-            let mut events = crate::dashboard::stream::get_or_create(&user).subscribe();
+            let mut events = crate::runtime::events::get_or_create(&user).subscribe();
             let mut req = request();
             req.tools = Some(vec![ToolDefinition {
                 tool_type: "function".into(),
@@ -241,7 +241,7 @@ async fn codex_reasoning_continuations_obey_pacing_deadline_and_cancellation() {
             },
         );
         let user = format!("codex-continuation-cancel-{cancel_task}");
-        let mut events = crate::dashboard::stream::get_or_create(&user).subscribe();
+        let mut events = crate::runtime::events::get_or_create(&user).subscribe();
         let cancel = CancellationToken::new();
         let (result, ()) = tokio::join!(
             router.chat_controlled(request(), None, Some(&user), &cancel),

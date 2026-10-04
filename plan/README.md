@@ -13,9 +13,11 @@ Start with [the full app roadmap](PLUGINIZATION.md). The order is:
 5. Ship a minimal runtime and a compatibility preset with independent packages.
 
 The intended builtin tool set is `inspect_file`, `write_file` and `apply_patch`
-under `file_ops`. State-machine execution, workspace authority, permissions and
-receipt verification remain trusted runtime services. Their model-facing tools
-can be supplied by a `runtime_control` plugin.
+under `file_ops`. POML rendering, context handling, state-machine execution,
+workspace authority, permissions and receipt verification remain trusted runtime
+services. Feature plugins and the dashboard are not required for local POML/SM
+workflows. Model-facing runtime tools can be supplied by `runtime_control`;
+optional workflow packs add assets rather than replacing the core interpreter.
 
 ## Delivery checklist
 
@@ -37,9 +39,15 @@ changes implement part of PR 1; VM is the first feature to move.
 - [x] Atomic rejection of duplicate package/tool owners on activation.
 - [x] Shared chat/agent dispatcher, including lowered Decision IR and WebSocket tasks.
 - [x] Live enable/cancellation checks and authenticated cron/background ownership.
+- [x] Native background-service API v1: owner/version checks, drain and bounded stop.
 - [ ] Versioned service API and registry revision pinning for feature hosts.
-- [ ] Runtime events, template synchronization and independent housekeeping services.
-- [ ] Provider-independent startup and headless fixture-service lifecycle coverage.
+- [x] Runtime events, template synchronization and independent housekeeping services.
+- [x] Headless fixture-service lifecycle and plugin-free POML/context/SM coverage.
+- [ ] Provider-independent management startup.
+
+The native worker API does not yet host service-backed tool calls or the proposed
+v2 IPC packages. Feature-host handles, pinned registry revisions and
+provider-independent management startup remain before the first VM extraction.
 
 See [the current execution boundary](../docs/PLUGIN_RUNTIME.md) for implemented
 behavior and compatibility limits. Milestone PR 1 remains incomplete until its

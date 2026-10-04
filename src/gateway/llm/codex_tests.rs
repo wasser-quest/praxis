@@ -204,7 +204,7 @@ async fn codex_streamed_tools_with_empty_terminal_output_execute_once_and_contin
         vec![Box::new(provider(&server))], "codex".into(), vec![], Default::default(),
     );
     let user = "codex-empty-terminal-tool-loop";
-    let mut events = crate::dashboard::stream::get_or_create(user).subscribe();
+    let mut events = crate::runtime::events::get_or_create(user).subscribe();
     let mut req = request();
     req.tools = Some(vec![ToolDefinition {
         tool_type: "function".into(),
@@ -236,7 +236,7 @@ async fn codex_streamed_tools_with_empty_terminal_output_execute_once_and_contin
     assert_eq!(result.response, "Finished");
     assert_eq!(result.tool_calls.len(), 1);
     assert_eq!(result.feedback_messages, vec!["Exactly once"]);
-    crate::dashboard::stream::remove(user);
+    crate::runtime::events::remove(user);
 }
 
 #[tokio::test]

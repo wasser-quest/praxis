@@ -393,7 +393,7 @@ role: "system".to_string(),
         msg.total_tokens = Some(cumulative_total_tokens);
     }
     let message_id = state.db.add_message(user_id, &msg)?;
-    crate::dashboard::stream::assistant_saved(user_id, message_id, &reply);
+    crate::runtime::events::assistant_saved(user_id, message_id, &reply);
     // Emit usage event for TUI/dashboard token display.
     if cumulative_total_tokens > 0 {
         let usage_data = serde_json::json!({
@@ -401,7 +401,7 @@ role: "system".to_string(),
             "completion_tokens": cumulative_completion_tokens,
             "total_tokens": cumulative_total_tokens,
         });
-        crate::dashboard::stream::send(user_id, "usage", &usage_data.to_string());
+        crate::runtime::events::send(user_id, "usage", &usage_data.to_string());
     }
 
     let mut updated_ctx = state.db.load_context(user_id)?;
@@ -524,7 +524,7 @@ async fn handle_message_agent_loop(
     tokio::spawn(async move {
         while let Some(msg) = feedback_rx.recv().await {
             if is_web {
-                crate::dashboard::stream::send(&uid, "feedback", &msg);
+                crate::runtime::events::send(&uid, "feedback", &msg);
             }
             // A context command/tool can disable speech during the agent loop.
             let Ok(current_ctx) = tts_db.load_context(&uid) else { continue };
@@ -545,7 +545,7 @@ async fn handle_message_agent_loop(
                     }
                     "dm" => {
                         crate::event_channel::broadcast_agent_feedback(&uid, &msg);
-                        crate::dashboard::stream::send(&uid, "feedback", &msg);
+                        crate::runtime::events::send(&uid, "feedback", &msg);
                         handled = true;
                     }
                     "text" => {
@@ -562,7 +562,7 @@ async fn handle_message_agent_loop(
                         if !sent_to_channel {
                             crate::event_channel::broadcast_agent_feedback(&uid, &msg);
                         }
-                        crate::dashboard::stream::send(&uid, "feedback", &msg);
+                        crate::runtime::events::send(&uid, "feedback", &msg);
                         handled = true;
                     }
                     _ => {}
@@ -941,7 +941,7 @@ fn spawn_tts(
         let web_chat_tts = tts_db.load_context(&user_id)
             .is_ok_and(|ctx| ctx.settings.web_chat_tts);
         if web_chat_tts && (stored || message_id.is_none())
-            && crate::dashboard::stream::has_subscriber(&user_id)
+            && crate::runtime::events::has_subscriber(&user_id)
         {
             let payload = if stored {
                 serde_json::json!({ "message_id": message_id, "mime": mime })
@@ -952,7 +952,7 @@ fn spawn_tts(
                     "mime": mime,
                 })
             };
-            crate::dashboard::stream::send(&user_id, "chat_tts", &payload.to_string());
+            crate::runtime::events::send(&user_id, "chat_tts", &payload.to_string());
         } else if stored {
             tracing::info!(user_id = %user_id, message_id, "Reply audio saved for dashboard replay");
         }

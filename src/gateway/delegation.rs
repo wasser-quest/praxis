@@ -227,7 +227,7 @@ pub async fn delegate_task(
             result_text.clone()
         }
     );
-    let _ = crate::dashboard::stream::send(&parent, "delegation_update", &serde_json::json!({
+    let _ = crate::runtime::events::send(&parent, "delegation_update", &serde_json::json!({
         "delegation_id": rec.id,
         "status": status,
         "result": result_text,

@@ -23,7 +23,7 @@ pub(super) async fn handle(
     receiver: &mut SplitStream<WebSocket>,
 ) -> anyhow::Result<String> {
     let _owner = task_control::begin(user)?;
-    let mut feedback = crate::dashboard::stream::get_or_create(user).subscribe();
+    let mut feedback = crate::runtime::events::get_or_create(user).subscribe();
     let work = crate::gateway::message_handler::handle_message_inner(state, user, content, channel);
     tokio::pin!(work);
     let mut connected = true;

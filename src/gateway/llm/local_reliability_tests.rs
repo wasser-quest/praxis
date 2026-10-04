@@ -59,7 +59,7 @@ fn response_validation_distinguishes_missing_answers_and_bad_arguments() {
 #[test]
 fn tool_only_failure_aborts_previews_before_retry() {
     let user = "tool-only-preview-abort-test";
-    let mut events = crate::dashboard::stream::get_or_create(user).subscribe();
+    let mut events = crate::runtime::events::get_or_create(user).subscribe();
     let attempt = StreamAttempt::new(Some(user));
     attempt.previewed.store(true, Ordering::Relaxed);
     drop(attempt);

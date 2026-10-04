@@ -308,7 +308,7 @@ async fn resilience_http_ollama_stream_retries_before_output_and_parses_usage() 
     }).expect(2).mount(&server).await;
     let (p, _, _) = adapter("ollama", server.uri());
     let r = LLMRouter::with_providers(vec![p], "ollama".into(), vec![], policy());
-    let mut events = crate::dashboard::stream::get_or_create("resilience-http-stream").subscribe();
+    let mut events = crate::runtime::events::get_or_create("resilience-http-stream").subscribe();
     let response = r
         .streaming_chat(request(), None, "resilience-http-stream")
         .await
@@ -338,7 +338,7 @@ async fn resilience_http_ollama_partial_stream_never_retries_or_emits_final() {
     let (p, _, _) = adapter("ollama", server.uri());
     let r = LLMRouter::with_providers(vec![p], "ollama".into(), vec![], policy());
     let user = "resilience-http-partial";
-    let mut events = crate::dashboard::stream::get_or_create(user).subscribe();
+    let mut events = crate::runtime::events::get_or_create(user).subscribe();
     assert!(r
         .streaming_chat(request(), None, user)
         .await
@@ -392,7 +392,7 @@ async fn llamacpp_reasoning_cutoff_is_visible_but_never_a_final_answer() {
     let user = "llamacpp-reasoning-only";
     let _guard = crate::gateway::task_control::begin(user).unwrap();
     crate::gateway::task_control::set_show_thinking(user, true);
-    let mut events = crate::dashboard::stream::get_or_create(user).subscribe();
+    let mut events = crate::runtime::events::get_or_create(user).subscribe();
     let error = r.streaming_chat(request(), None, user).await.unwrap_err();
     assert!(error.to_string().contains("output token limit"), "{error}");
     let mut reasoning = 0;
@@ -695,6 +695,6 @@ async fn usage_metrics_failed_retry_is_not_added_to_validated_reply() {
             else { r.chat(request(),None).await }.unwrap();
         assert_eq!(serde_json::to_value(response.usage).unwrap(),
             serde_json::json!({"prompt_tokens":7,"completion_tokens":5,"total_tokens":12}));
-        crate::dashboard::stream::remove("usage-retry-fixture");
+        crate::runtime::events::remove("usage-retry-fixture");
     }
 }

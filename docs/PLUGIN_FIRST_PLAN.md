@@ -17,7 +17,7 @@ designs, not supported installer syntax.
 | --- | --- |
 | Authentication, configuration, sessions and plugin management | Dashboard UI, optional clients and onboarding |
 | Registry, dependency validation and lifecycle | VM, shell, media, channels and integrations |
-| State-machine/Decision IR interpretation and guards | Workflows, templates, personas and routing profiles |
+| POML/context runtime, state-machine/Decision IR interpretation and guards | Additional workflow/template/persona packs and routing profiles |
 | Workspace permissions, journals and receipt verification | Language-specific capabilities and verifier definitions |
 | Budgets, cancellation, compaction, events and scoped storage | Providers, memory, RAG, learning, cron and skills |
 | Small builtin `file_ops` set | Runtime-control wrappers and other model-facing tools |
@@ -46,6 +46,13 @@ operator-edited assets through explicit migration adapters. Preserve
 `0.0.0.0:1337` for the installed dashboard and the separate gateway port.
 Missing dependencies fail before inference; package installation/enabling and
 workspace selection remain operator actions.
+
+POML rendering, contexts and state machines remain available without feature
+plugins. Node and `POML_CLI` are still required for full POML syntax. Local
+`templates/` and `contexts/` work without an asset package; a workflow declaring
+an unavailable plugin capability fails setup. Core events/template sync and
+independent retention now support the headless path. See
+[plugin-free workflows](CORE_WORKFLOWS.md) for the tested behavior and commands.
 
 Existing [verified coding roles](VERIFIED_CODING_ROLES.md),
 [Decision IR](DECISION_IR.md), and [language-learning flow](LANGUAGE_LEARNING_FLOW.md)

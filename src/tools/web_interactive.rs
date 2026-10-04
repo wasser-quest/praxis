@@ -46,7 +46,7 @@ pub async fn send_screenshot_to_web(
         "path": format!("/api/screenshots/{}", url_path),
         "caption": caption.unwrap_or("VM Screenshot"),
     }).to_string();
-    crate::dashboard::stream::send(user_id, "image", &stream_payload);
+    crate::runtime::events::send(user_id, "image", &stream_payload);
 
     Ok(format!(
         "Screenshot sent to web chat: {} ({})",
@@ -117,7 +117,7 @@ pub async fn ask_question_web(
         "text": question,
         "suggestions": suggestions,
     }).to_string();
-    crate::dashboard::stream::send(user_id, "question", &stream_payload);
+    crate::runtime::events::send(user_id, "question", &stream_payload);
 
     let (response_tx, mut response_rx) = mpsc::channel::<String>(32);
     let (cancel_tx, cancel_rx) = oneshot::channel::<Option<String>>();

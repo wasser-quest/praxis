@@ -256,7 +256,7 @@ async fn resilience_streaming_honors_vision_routing() {
 #[tokio::test(start_paused = true)]
 async fn resilience_partial_stream_is_not_replayed_or_committed() {
     let user = "resilience-partial";
-    let mut events = crate::dashboard::stream::get_or_create(user).subscribe();
+    let mut events = crate::runtime::events::get_or_create(user).subscribe();
     let (p, calls) = Scripted::boxed("primary", vec![Step::Partial, Step::Reply]);
     let r = router(p, policy());
     let e = r
@@ -642,7 +642,7 @@ async fn resilience_output_expansion_does_not_create_a_provider_cooldown() {
     let (p, calls) = Scripted::boxed("primary", vec![Step::Fail(ProviderError::new(ErrorKind::OutputLimit)), Step::Reply]);
     let r = router(p, ResilienceConfig {initial_backoff_ms:20_000,max_backoff_ms:20_000,total_timeout_ms:5000,..policy()});
     let user = "output-expansion-no-rate-limit";
-    let mut events = crate::dashboard::stream::get_or_create(user).subscribe();
+    let mut events = crate::runtime::events::get_or_create(user).subscribe();
     let start = Instant::now();
     let mut req = request();
     req.max_tokens = Some(4096);
@@ -661,7 +661,7 @@ async fn resilience_output_expansion_does_not_create_a_provider_cooldown() {
 async fn resilience_wait_messages_distinguish_local_pacing_from_provider_failures() {
     for (index, cause) in ["configured request pacing", "configured token-per-minute budget", "provider rate limit", "provider retry backoff"].into_iter().enumerate() {
         let user = format!("wait-cause-{index}");
-        let mut events = crate::dashboard::stream::get_or_create(&user).subscribe();
+        let mut events = crate::runtime::events::get_or_create(&user).subscribe();
         let mut config = policy();
         let steps = match index {
             0 => { config.requests_per_minute = 6; vec![Step::Reply, Step::Reply] }
@@ -721,7 +721,7 @@ async fn usage_metrics_continuation_must_not_present_partial_sum_as_complete() {
                 else { r.chat(request(), None).await }.unwrap();
             assert_eq!(response.usage.map(|u|u.total_tokens), expected,
                 "only a complete, exact logical-call sum is available");
-            crate::dashboard::stream::remove("usage-continuation-fixture");
+            crate::runtime::events::remove("usage-continuation-fixture");
         }
     }
 }

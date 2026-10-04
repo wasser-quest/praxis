@@ -1,6 +1,30 @@
+use crate::runtime::services::{ServiceHost, SERVICE_API_VERSION};
 use std::str::FromStr;
 
 pub use crate::db::cron_jobs::CronJob;
+
+/// Transitional native scheduler adapter. Keep the existing job check behavior;
+/// storage retention and process cleanup have their own independent workers.
+pub fn register_service(host: &mut ServiceHost, db: crate::db::Database) -> anyhow::Result<()> {
+    host.register_periodic(
+        "cron.scheduler",
+        SERVICE_API_VERSION,
+        std::time::Duration::from_secs(60),
+        move || {
+            let db = db.clone();
+            async move {
+                for job in db
+                    .list_all_cron_jobs()?
+                    .into_iter()
+                    .filter(|job| job.enabled)
+                {
+                    tracing::debug!("Cron job check: {} ({})", job.name, job.id);
+                }
+                Ok(())
+            }
+        },
+    )
+}
 
 pub struct CronScheduler {
     db: crate::db::Database,

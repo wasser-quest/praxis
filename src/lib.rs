@@ -13,6 +13,7 @@ pub mod gateway;
 pub mod gpu_router;
 pub mod onboard;
 pub mod plugins;
+pub mod runtime;
 pub mod skills;
 pub mod tags;
 pub mod tools;

@@ -589,7 +589,7 @@ impl Database {
         }
         // Publish while the DB lock still orders saves. Only the public web-
         // speech flag is sent, never credentials or other context contents.
-        crate::dashboard::stream::chat_tts_settings(&ctx.user_id, ctx.settings.web_chat_tts);
+        crate::runtime::events::chat_tts_settings(&ctx.user_id, ctx.settings.web_chat_tts);
         Ok(())
     }
 
@@ -731,7 +731,7 @@ impl Database {
             )?;
         }
         tx.commit()?;
-        crate::dashboard::stream::chat_tts_settings(user_id, false);
+        crate::runtime::events::chat_tts_settings(user_id, false);
         Ok(())
     }
 
