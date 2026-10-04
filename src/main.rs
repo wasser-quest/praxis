@@ -631,8 +631,8 @@ async fn run_services(
     config.validate()?;
     let workspace = config.workspace_root()?;
     tracing::info!(root = %workspace.display(), "Verified action workspace selected");
-    // Fail before starting VMs/Discord when the selected provider is missing.
-    praxis::gateway::llm::LLMRouter::new(&config, &secrets).validate_configuration()?;
+    // Management starts with incomplete provider setup. Actual chat/agent entry
+    // validates its routed provider before changing workflow state or history.
 
     // Enable VM tools if VM=true in config
     if config.vm_enabled {

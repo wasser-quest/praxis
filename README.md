@@ -192,7 +192,7 @@ VOICE_TTS_TYPE=windows_sapi  # windows_sapi | elevenlabs | qwen_tts
 
 ### Long-running LLM tasks
 
-LLM calls share bounded retries, provider/account concurrency limits, optional RPM/TPM pacing, and a total time budget. Set `USE_PROVIDER` to a configured provider: missing providers now fail clearly at startup. **No implicit fallbacks**; opt in with `LLM_FALLBACK_PROVIDERS`. Defaults are five attempts, one concurrent request, a 180-second attempt timeout and a 300-second total budget per LLM call. Tool effects are not replayed by retries; stop remains responsive during LLM waits.
+LLM calls share bounded retries, provider/account concurrency limits, optional RPM/TPM pacing, and a total time budget. Management starts even when `USE_PROVIDER` is not configured: health, authenticated context/status and provider login remain available. Chat/agent tasks return a non-retryable setup error before changing workflow context or history until their selected provider is configured. `/api/status` reports inference configuration readiness separately from process health; it does not probe endpoint/model availability. **No implicit fallbacks**; opt in with `LLM_FALLBACK_PROVIDERS`. Defaults are five attempts, one concurrent request, a 180-second attempt timeout and a 300-second total budget per LLM call. Tool effects are not replayed by retries; stop remains responsive during LLM waits.
 
 See [LLM resilience and safe rollout](docs/LLM_RESILIENCE.md) for configuration, streaming safety, tests, and the Ollama working-directory repair.
 
@@ -498,7 +498,9 @@ The [shared execution boundary](docs/PLUGIN_RUNTIME.md) is the first implemented
 step: tool owners are checked consistently across discovery, workflow preflight
 and chat/agent/Decision IR execution. User event delivery, template resolution
 and catalog synchronization are now core services, with independently owned
-retention, cron and shell workers.
+retention, cron and shell workers. Each task pins its plugin declarations and
+action receipts record the registry revision. Live tool disable flags still
+apply. Provider clients initialize lazily so management works before LLM setup.
 
 **POML, contexts and state machines remain in core.** Local workflows can run
 without feature plugins or the dashboard. Full POML rendering requires Node and

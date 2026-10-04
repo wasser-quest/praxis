@@ -36,9 +36,24 @@ impl LLMRouter {
     }
 
     pub fn validate_configuration(&self) -> anyhow::Result<()> {
-        self.policy.validate()?;
-        for name in std::iter::once(&self.default_provider).chain(self.fallback_providers.iter()) {
-            self.find_provider(name)?;
+        self.validate_request_configuration(None)
+    }
+
+    /// The trusted session/workflow may select a usable provider even when the
+    /// installation default has not been configured yet. No network request.
+    pub fn validate_request_configuration(&self, provider: Option<&str>) -> anyhow::Result<()> {
+        Self::validate_provider_inventory(&self.policy, &self.default_provider, &self.fallback_providers, &self.provider_names(), provider)
+    }
+
+    pub(crate) fn validate_provider_inventory(
+        policy: &ResilienceConfig, default: &str, fallbacks: &[String],
+        providers: &[String], selected: Option<&str>,
+    ) -> anyhow::Result<()> {
+        policy.validate()?;
+        for name in std::iter::once(selected.unwrap_or(default)).chain(fallbacks.iter().map(String::as_str)) {
+            if !providers.iter().any(|provider| provider == name) {
+                return Err(missing_provider(name, providers));
+            }
         }
         Ok(())
     }
@@ -60,18 +75,7 @@ impl LLMRouter {
             .iter()
             .find(|p| p.name() == name)
             .map(|p| p.as_ref())
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "LLM '{}': {}. Registered: {}",
-                    label(name),
-                    ProviderError::new(ErrorKind::Configuration),
-                    self.provider_names()
-                        .iter()
-                        .map(|s| label(s))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )
-            })
+            .ok_or_else(|| missing_provider(name, &self.provider_names()))
     }
 
     pub async fn chat(
@@ -472,6 +476,12 @@ fn label(name: &str) -> String {
         .filter(|ch| ch.is_ascii_alphanumeric() || "-_./".contains(*ch))
         .take(80)
         .collect()
+}
+
+fn missing_provider(name: &str, providers: &[String]) -> anyhow::Error {
+    anyhow::anyhow!("LLM '{}': {}. Registered: {}", label(name),
+        ProviderError::new(ErrorKind::Configuration),
+        providers.iter().map(|s| label(s)).collect::<Vec<_>>().join(", "))
 }
 
 #[cfg(test)]

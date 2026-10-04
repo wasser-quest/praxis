@@ -3,10 +3,14 @@
 //! its result. Starting a second task in that interval would risk duplicate effects.
 use dashmap::{mapref::entry::Entry, DashMap};
 use once_cell::sync::Lazy;
-use std::{collections::HashSet, sync::{Arc, Mutex}};
+use std::{
+    collections::HashSet,
+    sync::{Arc, Mutex},
+};
 use tokio_util::sync::CancellationToken;
 
 struct TaskState {
+    registry: Mutex<Option<RegistryPin>>,
     verification: Mutex<super::action_contracts::VerificationState>,
     token: CancellationToken,
     tools: Mutex<HashSet<String>>,
@@ -14,6 +18,10 @@ struct TaskState {
     template_omitted: std::sync::atomic::AtomicBool,
     compaction_claimed: std::sync::atomic::AtomicBool,
     decision_entry_claimed: std::sync::atomic::AtomicBool,
+}
+struct RegistryPin {
+    revision: String,
+    snapshot: Arc<crate::plugins::PluginRegistry>,
 }
 static TASKS: Lazy<DashMap<String, Arc<TaskState>>> = Lazy::new(DashMap::new);
 
@@ -29,6 +37,7 @@ pub fn begin(user: &str) -> anyhow::Result<TaskGuard> {
         ),
         Entry::Vacant(entry) => {
             let state = Arc::new(TaskState {
+                registry: Mutex::new(None),
                 verification: Mutex::new(super::action_contracts::VerificationState::default()),
                 token: CancellationToken::new(),
                 tools: Mutex::new(HashSet::new()),
@@ -38,14 +47,102 @@ pub fn begin(user: &str) -> anyhow::Result<TaskGuard> {
                 decision_entry_claimed: std::sync::atomic::AtomicBool::new(false),
             });
             entry.insert(state.clone());
-            Ok(TaskGuard { user: user.into(), state })
+            Ok(TaskGuard {
+                user: user.into(),
+                state,
+            })
         }
     }
 }
 
-pub(crate) fn with_verification<T>(user: &str, f: impl FnOnce(&mut super::action_contracts::VerificationState) -> anyhow::Result<T>) -> anyhow::Result<T> {
-    let task = TASKS.get(user).ok_or_else(|| anyhow::anyhow!("Verification requires an active task"))?;
-    let mut ledger = task.verification.lock().map_err(|_| anyhow::anyhow!("Verification lock unavailable"))?;
+/// Capture immutable declarations before routing, discovery or inference.
+/// A changed registry requires a new task; live database enable flags remain
+/// authoritative and are deliberately excluded from the snapshot.
+pub fn pin_registry(user: &str, registry: &crate::plugins::PluginRegistry) -> anyhow::Result<()> {
+    let task = TASKS
+        .get(user)
+        .ok_or_else(|| anyhow::anyhow!("Registry pinning requires an active task"))?;
+    anyhow::ensure!(!task.token.is_cancelled(), "Task cancelled");
+    let mut pin = task
+        .registry
+        .lock()
+        .map_err(|_| anyhow::anyhow!("Registry lock unavailable"))?;
+    let revision = registry.revision()?;
+    if let Some(pinned) = &*pin {
+        anyhow::ensure!(pinned.revision == revision, "Plugin registry revision is pinned for this task; start a new task before using changed declarations");
+    } else {
+        crate::tools::catalog::validate(registry)?;
+        *pin = Some(RegistryPin {
+            revision,
+            snapshot: Arc::new(registry.clone()),
+        });
+    }
+    Ok(())
+}
+
+pub(crate) fn check_registry(
+    user: &str,
+    registry: &crate::plugins::PluginRegistry,
+) -> anyhow::Result<()> {
+    // Preview and legacy non-task callers do not establish execution authority.
+    if cancellation(user).is_some() {
+        pin_registry(user, registry)?;
+    }
+    Ok(())
+}
+
+pub fn registry_snapshot(user: &str) -> Option<Arc<crate::plugins::PluginRegistry>> {
+    TASKS.get(user).and_then(|task| {
+        task.registry
+            .lock()
+            .ok()
+            .and_then(|pin| pin.as_ref().map(|pin| pin.snapshot.clone()))
+    })
+}
+
+pub fn registry_revision(user: &str) -> Option<String> {
+    TASKS.get(user).and_then(|task| {
+        task.registry
+            .lock()
+            .ok()
+            .and_then(|pin| pin.as_ref().map(|pin| pin.revision.clone()))
+    })
+}
+
+/// Low-level contracted adapters must use the pinned declaration too, even if
+/// they bypass registry lookup. Check before creating a ticket or any effect.
+pub(crate) fn check_capability(
+    user: &str,
+    plugin: &crate::plugins::Plugin,
+    tool: &crate::plugins::PluginTool,
+) -> anyhow::Result<()> {
+    if let Some(registry) = registry_snapshot(user) {
+        let pinned = registry
+            .get(&plugin.name)
+            .filter(|p| p.enabled)
+            .and_then(|p| p.tools.iter().find(|t| t.name == tool.name).map(|t| (p, t)))
+            .ok_or_else(|| {
+                anyhow::anyhow!("Capability is absent from the pinned registry revision")
+            })?;
+        anyhow::ensure!(
+            serde_json::to_value((plugin, tool))? == serde_json::to_value(pinned)?,
+            "Capability differs from the pinned registry revision; start a new task"
+        );
+    }
+    Ok(())
+}
+
+pub(crate) fn with_verification<T>(
+    user: &str,
+    f: impl FnOnce(&mut super::action_contracts::VerificationState) -> anyhow::Result<T>,
+) -> anyhow::Result<T> {
+    let task = TASKS
+        .get(user)
+        .ok_or_else(|| anyhow::anyhow!("Verification requires an active task"))?;
+    let mut ledger = task
+        .verification
+        .lock()
+        .map_err(|_| anyhow::anyhow!("Verification lock unavailable"))?;
     f(&mut ledger)
 }
 pub(crate) fn invalidate_workspace(root: &std::path::Path) -> anyhow::Result<()> {
@@ -53,33 +150,57 @@ pub(crate) fn invalidate_workspace(root: &std::path::Path) -> anyhow::Result<()>
     // and other ledger callers must remain free to access the task map.
     let tasks: Vec<_> = TASKS.iter().map(|task| task.value().clone()).collect();
     for task in tasks {
-        task.verification.lock().map_err(|_| anyhow::anyhow!("Verification lock unavailable"))?.invalidate_root(root);
+        task.verification
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Verification lock unavailable"))?
+            .invalidate_root(root);
     }
     Ok(())
 }
 pub const TEMPLATE_OMITTED_MARKER: &str = "--template not rendered context to big--";
 pub fn claim_decision_entry(user: &str) -> bool {
-    TASKS.get(user).is_some_and(|task| !task.decision_entry_claimed.swap(true,std::sync::atomic::Ordering::Relaxed))
+    TASKS.get(user).is_some_and(|task| {
+        !task
+            .decision_entry_claimed
+            .swap(true, std::sync::atomic::Ordering::Relaxed)
+    })
 }
 pub fn claim_compaction(user: &str) -> bool {
-    TASKS.get(user).is_some_and(|task| !task.compaction_claimed.swap(true,std::sync::atomic::Ordering::Relaxed))
+    TASKS.get(user).is_some_and(|task| {
+        !task
+            .compaction_claimed
+            .swap(true, std::sync::atomic::Ordering::Relaxed)
+    })
 }
 pub fn compaction_claimed(user: &str) -> bool {
-    TASKS.get(user).is_some_and(|task| task.compaction_claimed.load(std::sync::atomic::Ordering::Relaxed))
+    TASKS.get(user).is_some_and(|task| {
+        task.compaction_claimed
+            .load(std::sync::atomic::Ordering::Relaxed)
+    })
 }
 pub fn note_template_omitted(user: &str) {
-    if let Some(task) = TASKS.get(user) { task.template_omitted.store(true, std::sync::atomic::Ordering::Relaxed); }
+    if let Some(task) = TASKS.get(user) {
+        task.template_omitted
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 pub fn template_omitted(user: &str) -> bool {
-    TASKS.get(user).is_some_and(|task| task.template_omitted.load(std::sync::atomic::Ordering::Relaxed))
+    TASKS.get(user).is_some_and(|task| {
+        task.template_omitted
+            .load(std::sync::atomic::Ordering::Relaxed)
+    })
 }
 pub fn set_show_thinking(user: &str, enabled: bool) {
     if let Some(task) = TASKS.get(user) {
-        task.show_thinking.store(enabled, std::sync::atomic::Ordering::Relaxed);
+        task.show_thinking
+            .store(enabled, std::sync::atomic::Ordering::Relaxed);
     }
 }
 pub fn show_thinking(user: &str) -> bool {
-    TASKS.get(user).is_some_and(|task| task.show_thinking.load(std::sync::atomic::Ordering::Relaxed))
+    TASKS.get(user).is_some_and(|task| {
+        task.show_thinking
+            .load(std::sync::atomic::Ordering::Relaxed)
+    })
 }
 pub fn cancellation(user: &str) -> Option<CancellationToken> {
     TASKS.get(user).map(|entry| entry.token.clone())
@@ -98,14 +219,26 @@ impl Drop for TaskGuard {
 
 /// Discovered schemas belong to this owned task, never to persisted settings.
 pub fn selected_tools(user: &str) -> HashSet<String> {
-    TASKS.get(user).and_then(|task| task.tools.lock().ok().map(|tools| tools.clone())).unwrap_or_default()
+    TASKS
+        .get(user)
+        .and_then(|task| task.tools.lock().ok().map(|tools| tools.clone()))
+        .unwrap_or_default()
 }
 
 pub fn select_tools(user: &str, names: Vec<String>, replace: bool) -> anyhow::Result<()> {
-    let task = TASKS.get(user).ok_or_else(|| anyhow::anyhow!("Tool discovery requires an active task"))?;
+    let task = TASKS
+        .get(user)
+        .ok_or_else(|| anyhow::anyhow!("Tool discovery requires an active task"))?;
     anyhow::ensure!(!task.token.is_cancelled(), "Task cancelled");
-    let mut tools = task.tools.lock().map_err(|_| anyhow::anyhow!("Tool selection lock unavailable"))?;
-    let mut next = if replace { HashSet::new() } else { tools.clone() };
+    let mut tools = task
+        .tools
+        .lock()
+        .map_err(|_| anyhow::anyhow!("Tool selection lock unavailable"))?;
+    let mut next = if replace {
+        HashSet::new()
+    } else {
+        tools.clone()
+    };
     next.extend(names);
     anyhow::ensure!(next.len() <= 24, "At most 24 additional tools per task; search again with replace=true to replace earlier discoveries");
     *tools = next;

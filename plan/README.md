@@ -40,14 +40,16 @@ changes implement part of PR 1; VM is the first feature to move.
 - [x] Shared chat/agent dispatcher, including lowered Decision IR and WebSocket tasks.
 - [x] Live enable/cancellation checks and authenticated cron/background ownership.
 - [x] Native background-service API v1: owner/version checks, drain and bounded stop.
-- [ ] Versioned service API and registry revision pinning for feature hosts.
+- [x] Task-owned registry snapshots and revision evidence in action receipts.
+- [ ] Service-backed feature handles and versioned invocation/context API.
 - [x] Runtime events, template synchronization and independent housekeeping services.
 - [x] Headless fixture-service lifecycle and plugin-free POML/context/SM coverage.
-- [ ] Provider-independent management startup.
+- [x] Provider-independent management startup and lazy inference clients.
 
 The native worker API does not yet host service-backed tool calls or the proposed
-v2 IPC packages. Feature-host handles, pinned registry revisions and
-provider-independent management startup remain before the first VM extraction.
+v2 IPC packages. Service-backed feature handles and the invocation/context API
+remain before the first VM extraction. Registry pins cover resolved declarations,
+not immutable package/script bytes; atomic package publication is later work.
 
 See [the current execution boundary](../docs/PLUGIN_RUNTIME.md) for implemented
 behavior and compatibility limits. Milestone PR 1 remains incomplete until its

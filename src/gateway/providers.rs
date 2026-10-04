@@ -99,7 +99,7 @@ fn secret_slot<'a>(secrets: &'a mut crate::db::secrets::Secrets, provider: &str)
     })
 }
 
-fn has_credential(secrets: &crate::db::secrets::Secrets, provider: &str) -> bool {
+pub(crate) fn has_credential(secrets: &crate::db::secrets::Secrets, provider: &str) -> bool {
     let mut s = secrets.clone();
     match provider {
         "codex" => CodexAuth::from_secrets(secrets).is_some(),
@@ -162,7 +162,7 @@ fn api_base(config: &crate::config::Config, provider: &str) -> String {
 pub fn statuses(state: &GatewayState) -> Vec<ProviderStatus> {
     let secrets = crate::db::secrets::get_secrets();
     let config = effective_config(&state.config, &secrets);
-    let active = state.llm.get().provider_names();
+    let active = state.llm.provider_names();
     PROVIDERS.iter().map(|p| {
         let configured = has_credential(&secrets, p.name);
         let detail = match p.kind {

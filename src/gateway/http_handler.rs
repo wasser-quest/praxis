@@ -17,6 +17,7 @@ pub struct StatusResponse {
     pub uptime_secs: u64,
     pub llm_providers: Vec<String>,
     pub default_provider: String,
+    pub inference: super::inference::Readiness,
 }
 
 #[derive(serde::Deserialize)]
@@ -41,8 +42,8 @@ pub async fn health_check(State(state): State<GatewayState>) -> Json<HealthRespo
 }
 
 pub async fn status(State(state): State<GatewayState>) -> Json<StatusResponse> {
-    let providers: Vec<String> = state.llm.get().provider_names();
-    let default_provider = state.config.use_provider.clone();
+    let providers: Vec<String> = state.llm.provider_names();
+    let default_provider = state.llm.default_provider();
 
     Json(StatusResponse {
         status: "ok".to_string(),
@@ -50,6 +51,7 @@ pub async fn status(State(state): State<GatewayState>) -> Json<StatusResponse> {
         uptime_secs: state.start_time.elapsed().as_secs(),
         llm_providers: providers,
         default_provider,
+        inference: super::inference::readiness(&state),
     })
 }
 
@@ -85,7 +87,7 @@ pub async fn events(
 pub async fn chat_handler(
     State(state): State<GatewayState>,
     Json(req): Json<ChatRequest>,
-) -> Json<ChatResponse> {
+) -> (axum::http::StatusCode, Json<ChatResponse>) {
     tracing::info!(user_id = %req.user_id, "[GATEWAY] Web chat message received");
 
     match crate::gateway::message_handler::handle_message(
@@ -98,19 +100,22 @@ pub async fn chat_handler(
     {
         Ok(reply) => {
             tracing::info!(user_id = %req.user_id, reply_len = reply.len(), "[GATEWAY] handle_message returned OK");
-            Json(ChatResponse {
+            (axum::http::StatusCode::OK, Json(ChatResponse {
                 success: true,
                 response: Some(reply),
                 error: None,
-            })
+            }))
         },
         Err(e) => {
             tracing::warn!(user_id = %req.user_id, "[GATEWAY] handle_message failed: {}", e);
-            Json(ChatResponse {
+            let status = if e.downcast_ref::<super::inference::SetupError>().is_some() {
+                axum::http::StatusCode::SERVICE_UNAVAILABLE
+            } else { axum::http::StatusCode::OK };
+            (status, Json(ChatResponse {
                 success: false,
                 response: None,
                 error: Some(e.to_string()),
-            })
+            }))
         },
     }
 }

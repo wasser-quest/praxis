@@ -19,6 +19,7 @@ pub(crate) async fn handle_message_inner(
     content: &str,
     channel_id: Option<&str>,
 ) -> anyhow::Result<String> {
+    super::inference::check_task(state, user_id, content, channel_id, None)?;
     // A prior agent_complete must not stop this independent task after one tool.
     crate::gateway::prompt::reset_task_completion_in(&state.db, std::path::Path::new(&state.config.root_dir), user_id)?;
     // Route before deciding the path and before either prompt is rendered.

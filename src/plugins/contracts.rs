@@ -70,6 +70,8 @@ pub struct ActionReceipt {
     pub call_id: String,
     pub action: String,
     pub contract_sha256: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub registry_revision: Option<String>,
     pub effect: EffectClass,
     pub idempotency: Idempotency,
     pub revision: u64,
@@ -524,6 +526,7 @@ pub(crate) fn start_receipt(
     user: &str,
     call: &str,
 ) -> anyhow::Result<(action_contracts::ActionTicket, ActionReceipt)> {
+    crate::gateway::task_control::check_capability(user, plugin, tool)?;
     let contract = tool
         .contract
         .as_ref()
@@ -544,6 +547,7 @@ pub(crate) fn start_receipt(
         call_id: call.into(),
         action: key,
         contract_sha256: fingerprint,
+        registry_revision: crate::gateway::task_control::registry_revision(user),
         effect: contract.effect,
         idempotency: contract.idempotency,
         revision: ticket.revision,
