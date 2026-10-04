@@ -82,6 +82,18 @@ impl PluginRegistry {
         self.plugins.insert(plugin.name.clone(), plugin);
     }
 
+    /// Activate a declaration only after checking the candidate owner catalog.
+    /// Keep the previous registry unchanged if a package ID or tool conflicts.
+    pub fn try_register(&mut self, plugin: Plugin) -> anyhow::Result<()> {
+        anyhow::ensure!(!self.plugins.contains_key(&plugin.name), "Plugin owner_conflict: duplicate package '{}'", plugin.name);
+        for tool in &plugin.tools { contracts::validate_tool(&plugin.name, tool)?; }
+        let mut candidate = Self { plugins: self.plugins.clone() };
+        candidate.register(plugin);
+        crate::tools::catalog::validate(&candidate)?;
+        self.plugins = candidate.plugins;
+        Ok(())
+    }
+
     pub fn get(&self, name: &str) -> Option<&Plugin> {
         self.plugins.get(name)
     }
@@ -164,22 +176,8 @@ impl PluginRegistry {
     }
 
     pub fn manages_contract(&self, name: &str) -> bool {
-        static BUILTINS: std::sync::LazyLock<std::collections::HashSet<String>> =
-            std::sync::LazyLock::new(|| {
-                crate::db::tools::get_default_tools()
-                    .into_iter()
-                    .map(|t| t.name)
-                    .collect()
-            });
-        if name.starts_with("vm_") || BUILTINS.contains(name) {
-            return false;
-        }
-        let owners: Vec<_> = self
-            .enabled_tools()
-            .into_iter()
-            .filter(|tool| tool.name == name)
-            .collect();
-        owners.len() == 1 && owners[0].contract.is_some()
+        matches!(crate::tools::catalog::owner(self, name),
+            Ok(crate::tools::catalog::ToolOwner::Plugin { tool, .. }) if tool.contract.is_some())
     }
 
     pub async fn execute_tool_for_task(
@@ -191,22 +189,10 @@ impl PluginRegistry {
         context: Option<&serde_json::Value>,
         secrets: Option<&HashMap<String, String>>,
     ) -> anyhow::Result<String> {
-        let owners: Vec<_> = self
-            .plugins
-            .values()
-            .filter(|p| p.enabled)
-            .flat_map(|p| {
-                p.tools
-                    .iter()
-                    .filter(move |t| t.name == name)
-                    .map(move |t| (p, t))
-            })
-            .collect();
-        anyhow::ensure!(
-            owners.len() == 1,
-            "Plugin tool must have exactly one enabled owner"
-        );
-        let (plugin, tool) = owners[0];
+        let crate::tools::catalog::ToolOwner::Plugin { plugin, tool } =
+            crate::tools::catalog::owner(self, name)? else {
+                anyhow::bail!("Capability cannot shadow a built-in tool");
+            };
         if tool.contract.is_some() {
             anyhow::ensure!(
                 self.manages_contract(name),
@@ -225,43 +211,24 @@ impl PluginRegistry {
         context: Option<&serde_json::Value>,
         secrets: Option<&HashMap<String, String>>,
     ) -> anyhow::Result<String> {
-        for plugin in self.plugins.values() {
-            if !plugin.enabled {
-                continue;
+        let crate::tools::catalog::ToolOwner::Plugin { plugin, tool } =
+            crate::tools::catalog::owner(self, tool_name)? else {
+                anyhow::bail!("Capability cannot shadow a built-in tool");
+            };
+        anyhow::ensure!(tool.contract.is_none(), "Contracted tools require task-owned execution");
+        match &tool.handler {
+            PluginHandler::Verification(_) | PluginHandler::SourceEdit(_) => {
+                anyhow::bail!("Native verification requires an action contract")
             }
-            for tool in &plugin.tools {
-                if tool.name == tool_name {
-                    anyhow::ensure!(
-                        tool.contract.is_none(),
-                        "Contracted tools require task-owned execution"
-                    );
-                    return match &tool.handler {
-                        PluginHandler::Verification(_) | PluginHandler::SourceEdit(_) => {
-                            anyhow::bail!("Native verification requires an action contract")
-                        }
-                        PluginHandler::Builtin { name } => {
-                            minimax_image::execute_builtin(name, args).await
-                        }
-                        PluginHandler::Http { url, method } => {
-                            execute_http_tool(url, method, args).await
-                        }
-                        PluginHandler::Script { path, interpreter } => {
-                            let scoped: HashMap<String, String> = plugin
-                                .secrets
-                                .iter()
-                                .filter_map(|key| {
-                                    secrets
-                                        .and_then(|values| values.get(key))
-                                        .map(|value| (key.clone(), value.clone()))
-                                })
-                                .collect();
-                            execute_script(path, interpreter, args, context, Some(&scoped)).await
-                        }
-                    };
-                }
+            PluginHandler::Builtin { name } => minimax_image::execute_builtin(name, args).await,
+            PluginHandler::Http { url, method } => execute_http_tool(url, method, args).await,
+            PluginHandler::Script { path, interpreter } => {
+                let scoped: HashMap<String, String> = plugin.secrets.iter().filter_map(|key| {
+                    secrets.and_then(|values| values.get(key)).map(|value| (key.clone(), value.clone()))
+                }).collect();
+                execute_script(path, interpreter, args, context, Some(&scoped)).await
             }
         }
-        Err(anyhow::anyhow!("Plugin tool not found: {}", tool_name))
     }
 }
 
@@ -466,7 +433,9 @@ pub fn load_all_plugins(plugins_dir: &Path) -> PluginRegistry {
     match load_plugins_from_dir(plugins_dir) {
         Ok(plugins) => {
             for plugin in plugins {
-                registry.register(plugin);
+                if let Err(error) = registry.try_register(plugin) {
+                    tracing::warn!(%error, "Plugin activation rejected; previous owners preserved");
+                }
             }
         }
         Err(e) => {
@@ -495,6 +464,25 @@ mod plugin_tests {
         });
         assert!(registry.get("test").is_some());
         assert_eq!(registry.list().len(), 1);
+    }
+
+    #[test]
+    fn plugin_registration_rejects_conflicts_atomically() {
+        let fixture = |owner: &str, name: &str| serde_json::from_value::<Plugin>(serde_json::json!({
+            "name":owner,"description":"fixture","version":"1","tools":[{
+                "name":name,"description":"fixture","parameters":{},
+                "handler":{"type":"builtin","name":"fixture"}
+            }]
+        })).unwrap();
+        let mut registry = PluginRegistry::new();
+        registry.try_register(fixture("one", "probe")).unwrap();
+        for candidate in [fixture("one", "other"), fixture("two", "probe"), fixture("two", "write_file")] {
+            assert!(registry.try_register(candidate).is_err());
+            assert_eq!(registry.list().len(), 1);
+            assert_eq!(registry.get("one").unwrap().tools[0].name, "probe");
+        }
+        registry.try_register(fixture("two", "vm_probe")).unwrap();
+        assert_eq!(registry.list().len(), 2);
     }
 
     #[test]

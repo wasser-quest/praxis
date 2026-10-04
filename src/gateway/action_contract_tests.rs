@@ -197,24 +197,34 @@ async fn contract_timeout_and_cancellation_never_produce_verified_receipts() {
         let root = tempfile::tempdir().unwrap();
         let mut workflow = policy();
         let check = workflow.checks.get_mut("tests").unwrap();
-        check.program = "/bin/sleep".into();
-        check.args = vec!["10".into()];
-        check.timeout_secs = 1;
+        check.program = if cancelled { "/bin/sh" } else { "/bin/sleep" }.into();
+        check.args = if cancelled {
+            vec!["-c".into(), "touch started; exec /bin/sleep 10".into()]
+        } else { vec!["10".into()] };
+        check.timeout_secs = if cancelled { 3 } else { 1 };
         let _task = super::task_control::begin(user).unwrap();
         bind(user, "guarded", &workflow, root.path()).unwrap();
-        if cancelled {
+        let cancellation = if cancelled {
+            // Other tests can hold FILE_OPERATIONS for longer than a timer.
+            // Cancel after the check process starts, not while waiting for it.
             let token = super::task_control::cancellation(user).unwrap();
-            tokio::spawn(async move {
-                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            let marker = root.path().join("started");
+            Some(tokio::spawn(async move {
+                tokio::time::timeout(std::time::Duration::from_secs(30), async {
+                    while !marker.exists() {
+                        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                    }
+                }).await.expect("check process did not start");
                 token.cancel();
-            });
-        }
+            }))
+        } else { None };
         let result: serde_json::Value = serde_json::from_str(
             &run(user, "bounded", &json!({"name":"tests"}))
                 .await
                 .unwrap(),
         )
         .unwrap();
+        if let Some(observer) = cancellation { observer.await.unwrap(); }
         assert_eq!(result["receipt"]["verified"], false);
         assert_eq!(
             result["receipt"]["outcome"],

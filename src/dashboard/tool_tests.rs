@@ -75,7 +75,7 @@ fn backend_tool_toggle_builtin_ownership_is_preserved() {
     let db = crate::db::Database::new(data.path()).unwrap();
     tools::init_default_tools(&db).unwrap();
     let mut plugins = PluginRegistry::new();
-    plugins.register(crate::plugins::Plugin {
+    assert!(plugins.try_register(crate::plugins::Plugin {
         name: "shadow".into(),
         description: "Synthetic name collision".into(),
         version: "1.0.0".into(),
@@ -91,7 +91,8 @@ fn backend_tool_toggle_builtin_ownership_is_preserved() {
         context: HashMap::new(),
         secrets: vec![],
         enabled: true,
-    });
+    }).is_err());
+    assert!(plugins.list().is_empty());
     for enabled in [false, true] {
         set_dashboard_tool_enabled(&db, &plugins, "execute_decision", enabled).unwrap();
         assert_eq!(

@@ -5,7 +5,8 @@ The detailed [app-wide migration roadmap](../plan/PLUGINIZATION.md) and
 modules and all 73 default tools to target owners, starting with VM support,
 then the dashboard, then the remaining feature packages.
 
-This is proposed work. Current manifests install tools with existing handler
+The [first implementation slice](PLUGIN_RUNTIME.md) now shares ownership and
+execution across ingress paths. Current manifests install tools with existing handler
 types and contracts; they do not yet install service, route, UI, provider or
 workflow packages. The new manifest and host API examples in the roadmap are
 designs, not supported installer syntax.

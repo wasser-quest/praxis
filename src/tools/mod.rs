@@ -15,6 +15,7 @@ pub mod get_context;
 pub mod rag_ingest;
 pub mod rag_query;
 pub mod registry;
+pub mod catalog;
 pub mod understand_image;
 pub mod update_template;
 pub mod use_skill;

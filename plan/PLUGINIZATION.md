@@ -1,8 +1,10 @@
 # Pluginize the Praxis application
 
-Status: proposed migration, based on merged main `a037f21`.
-This document creates no new runtime behavior. Manifest v2, service hosting,
-route/UI registration and minimal startup below are implementation targets.
+Status: migration started; the roadmap baseline is merged main `a037f21`.
+The [first implementation slice](../docs/PLUGIN_RUNTIME.md) adds shared tool
+ownership and dispatch. The [progress checklist](README.md) tracks PR 1's
+remaining work. Manifest v2, service hosting, route/UI registration and minimal
+startup below remain implementation targets.
 
 ## 1. Decision and scope
 
@@ -36,7 +38,7 @@ but it does not register providers, long-running services, routes, UI pages or
 workflow/template packages. A manifest referring to a Rust builtin still leaves
 that implementation compiled into Praxis.
 
-Important coupling to remove:
+Coupling identified at the roadmap baseline:
 
 | Current location | Coupling | Required seam |
 | --- | --- | --- |
@@ -53,6 +55,12 @@ Important coupling to remove:
 
 Move behavior as well as names. An absent plugin must contribute no tools,
 workers, routes, assets, imports or mandatory heavy dependencies.
+
+The first slice now routes chat/agent/IR execution through `tool_dispatch.rs`
+and uses `tools/catalog.rs` for owner validation. WebSocket tasks already enter
+through these message paths. Explicit native names replace the blanket `vm_`
+reservation. Native feature adapters and defaults remain until extraction;
+this is a shared execution seam, not completed VM or minimal-runtime packaging.
 
 ## 3. Runtime boundary and builtin file operations
 

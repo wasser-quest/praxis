@@ -44,6 +44,7 @@ mod learning_flow_tests;
 mod resource_contract_tests;
 pub mod templates;
 pub mod tool_results;
+pub(crate) mod tool_dispatch;
 pub mod ws_handler;
 
 use std::sync::Arc;

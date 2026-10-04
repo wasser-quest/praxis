@@ -1,8 +1,8 @@
 # Praxis pluginization plan
 
 This folder contains the implementation roadmap for turning Praxis into a small
-runtime with optional feature plugins. It describes planned work, not features
-already available in the installer.
+runtime with optional feature plugins. Feature packaging is planned; the PR 1
+progress section records the implemented execution boundary.
 
 Start with [the full app roadmap](PLUGINIZATION.md). The order is:
 
@@ -29,7 +29,21 @@ can be supplied by a `runtime_control` plugin.
 
 These are ordered reviewable milestones, not time estimates. Each milestone
 includes migration and acceptance checks in the full roadmap. The first code
-change should be PR 1; VM is the first feature to move.
+changes implement part of PR 1; VM is the first feature to move.
+
+## PR 1 progress
+
+- [x] Shared owner catalog for discovery, preflight and execution.
+- [x] Atomic rejection of duplicate package/tool owners on activation.
+- [x] Shared chat/agent dispatcher, including lowered Decision IR and WebSocket tasks.
+- [x] Live enable/cancellation checks and authenticated cron/background ownership.
+- [ ] Versioned service API and registry revision pinning for feature hosts.
+- [ ] Runtime events, template synchronization and independent housekeeping services.
+- [ ] Provider-independent startup and headless fixture-service lifecycle coverage.
+
+See [the current execution boundary](../docs/PLUGIN_RUNTIME.md) for implemented
+behavior and compatibility limits. Milestone PR 1 remains incomplete until its
+remaining items pass.
 
 Existing setup guides remain applicable during migration:
 
