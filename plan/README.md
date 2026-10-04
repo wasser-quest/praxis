@@ -165,11 +165,17 @@ clipboard) remains an operator smoke check.
   usage limits, agent-loop control. Dashboard routes are thin adapters.
 - [x] Core no longer imports `dashboard` (runtime tests use `runtime::events`).
 - [x] Builds checked: minimal, VM-only, dashboard-only and default.
+- [x] Host API v1 (`/host/v1`, loopback, per-launch token, declared scopes):
+  sessions, messages, graphs, execution, usage, agent control, SSE events, auth.
+- [x] Replaceable dashboard packages: `"dashboard"` manifest block,
+  `DASHBOARD_PACKAGE` selection, single active dashboard, process supervision,
+  no silent fallback. Example package in `examples/dashboard-package`. See
+  [dashboard packages](../docs/DASHBOARD_PACKAGES.md).
 - [ ] Move remaining administration APIs (tools, secrets, pairings, templates,
   profiles, memory, skills, cron) into services.
 - [ ] Package the frontend/static assets with the dashboard package and add
   navigation slots for absent features.
-- [ ] Gateway-hosted headless API over the services. Runtime-control and the remaining
+- [ ] Convert the built-in dashboard into a package on Host API v1. Runtime-control and the remaining
 feature/tool packages follow; POML/context/SM/IR verification stays in core.
 
 Existing setup guides remain applicable during migration:

@@ -8,6 +8,7 @@ pub mod context_cmd;
 #[cfg(feature = "dashboard")]
 pub mod dashboard;
 pub mod services;
+pub mod host_api;
 pub mod db;
 pub mod discord;
 pub mod event_channel;

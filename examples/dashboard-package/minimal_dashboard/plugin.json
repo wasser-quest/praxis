@@ -1,0 +1,12 @@
+{
+  "name": "minimal_dashboard",
+  "version": "0.1.0",
+  "description": "Example replaceable dashboard using Host API v1 (Python standard library only).",
+  "enabled": true,
+  "tools": [],
+  "dashboard": {
+    "executable": "dashboard.py",
+    "args": [],
+    "scopes": ["sessions:read", "sessions:write", "agent", "events", "auth"]
+  }
+}

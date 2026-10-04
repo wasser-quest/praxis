@@ -560,9 +560,36 @@ async fn run_services(
         }
     });
 
-    // Dashboard (optional)
-    #[cfg(feature = "dashboard")]
+    // Dashboard (optional). DASHBOARD_PACKAGE selects an installed dashboard
+    // package instead of the built-in one; only one dashboard is active.
+    let dashboard_package = std::env::var("DASHBOARD_PACKAGE")
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty());
     if enable_dashboard {
+        if let Some(name) = dashboard_package.clone() {
+            let options = praxis::runtime::dashboard_package::Launch {
+                db: db.clone(),
+                plugins_dir: std::path::Path::new(&plugins_dir),
+                name: &name,
+                listen: format!("0.0.0.0:{}", config.dashboard_port),
+                tls: config.dashboard_tls,
+                data_dir: std::path::Path::new(&config.data_dir),
+                gateway_port: config.gateway_port,
+            };
+            match praxis::runtime::dashboard_package::launch(options).await {
+                Ok(package) => {
+                    tokio::spawn(praxis::runtime::dashboard_package::supervise(package));
+                }
+                Err(error) => tracing::error!(
+                    %error, package = %name,
+                    "Dashboard package failed to start; gateway and workflows continue"
+                ),
+            }
+        }
+    }
+    #[cfg(feature = "dashboard")]
+    if enable_dashboard && dashboard_package.is_none() {
         let dashboard_db = db.clone();
         let dashboard_port = config.dashboard_port;
         let dashboard_plugins = feature_plugins.clone();
@@ -576,10 +603,10 @@ async fn run_services(
     }
 
     #[cfg(not(feature = "dashboard"))]
-    if enable_dashboard {
+    if enable_dashboard && dashboard_package.is_none() {
         tracing::warn!(
-            "Dashboard requested but this build excludes the `dashboard` package; \
-             gateway, CLI and workflows continue without it"
+            "Built-in dashboard not compiled; set DASHBOARD_PACKAGE to an installed \
+             dashboard package. Gateway, CLI and workflows continue without it"
         );
     }
 
