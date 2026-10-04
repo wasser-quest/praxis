@@ -1,0 +1,23 @@
+[package]
+name = "praxis-vm-web"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "VM-owned administration, VNC and dashboard contribution"
+
+[dependencies]
+praxis-vm = { path = "../praxis-vm" }
+praxis-plugin-api = { path = "../praxis-plugin-api" }
+anyhow = "1"
+axum = { version = "0.7", features = ["ws", "json"] }
+tokio = { version = "1", features = ["net", "sync", "rt", "io-util", "time"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+futures-util = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+tokio-tungstenite = "0.24"
+tempfile = "3"
+reqwest = { version = "0.12.28", default-features = false, features = ["json"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

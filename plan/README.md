@@ -89,7 +89,7 @@ responses; no live model inference was used. The compiled preset CLI was checked
 for fresh install, upgrade/backups, complete plugin helpers, separate `DATA_DIR`
 and preservation of disabled tools. The no-VM dependency tree excludes `praxis-vm`.
 
-## PR 3 progress — headless process slice
+## PR 3 progress — process and web contributions
 
 - [x] Versioned local pipe protocol and reusable host/worker API crate.
 - [x] Installed `praxis-vm-service` for all 25 tools, without a QEMU dependency in the host.
@@ -98,12 +98,14 @@ and preservation of disabled tools. The no-VM dependency tree excludes `praxis-v
 - [x] Bounded calls, cooperative cancellation, owned-child cleanup and crash detection.
 - [x] No automatic replay, native fallback or reactivation of a stopped binding.
 - [x] Installation/upgrade instructions; existing native compatibility stays the default.
-- [ ] Package-owned VM routes, authenticated VNC sessions and noVNC assets.
-- [ ] VM dashboard page and screenshot delivery over the process boundary.
+- [x] Package-owned VM routes, authenticated VNC sessions and embedded noVNC assets/licenses.
+- [x] VM dashboard contribution via generic host extension slots, with native or process backend.
+- [x] HTTP/VNC sessions participate in service drain/forced disconnect; guests/disks survive.
+- [ ] Automatic screenshot delivery over the process boundary.
 - [ ] Independent CLI contributions and complete VM ownership/upgrade recovery policy.
 
 See [process hosting](../docs/PLUGIN_PROCESS_PROTOCOL.md). The full PR 3 checkbox
-remains open until route/UI combinations pass their acceptance checks. Generic v2
+remains open for independent CLI, guest ownership and full upgrade/recovery policy. Generic v2
 process declarations and immutable package publication are still future work.
 
 Verification: 978 library tests with the native VM engine and 971 without it,
@@ -114,6 +116,19 @@ rollback/completion and retry/WebSocket behavior. The compiled no-VM CLI install
 the preset/VM flags, handshook an actual installed worker, and served management
 without provider credentials; missing-QEMU autostart remained non-fatal. The
 no-VM host dependency tree excludes `praxis-vm`. No live inference was used.
+
+The web slice passed 980 native-build library tests, 975 core-only library tests,
+28 protocol/engine/web/worker tests, 16 CLI tests in each build, all four browser
+helper test scripts, and two real-POML/Cargo workflow integrations with scripted
+providers. A compiled core-only host plus the actual installed worker passed VM
+API/UI/assets and legacy-alias smoke checks without provider credentials.
+The actual worker serves its embedded UI, and a TCP/QMP fixture verifies binary
+VNC relay and forced disconnect without stopping a committed guest. See
+[web contribution architecture and migration](../docs/PLUGIN_WEB_CONTRIBUTIONS.md).
+
+Next: finish PR 3's independent VM CLI and guest ownership/upgrade policy, then
+make the whole dashboard optional in PR 4. Runtime-control and the remaining
+feature/tool packages follow; POML/context/SM/IR verification stays in core.
 
 Existing setup guides remain applicable during migration:
 

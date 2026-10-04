@@ -146,7 +146,9 @@ empty plugin registries and synthetic providers; it makes no paid inference call
 
 Most current native tools remain. The shared boundary does not yet reduce them
 to the three planned builtin file operations. VM supports an installed headless
-worker; VM/dashboard route and UI packaging remain incomplete. The shared dispatcher temporarily contains their native adapters.
+worker with package-owned administration/VNC/assets and a contributed dashboard
+page. The whole dashboard listener/UI is still mandatory; its optional extraction
+is PR 4. Independent VM CLI/ownership remain. See [web contributions](PLUGIN_WEB_CONTRIBUTIONS.md).
 Agent VM redirection and chat host-file/terminal behavior remain distinct through
 an explicit dispatch mode, ready for the later execution-backend extraction.
 

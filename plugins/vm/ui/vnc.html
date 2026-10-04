@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Praxis VNC</title>
+<style>
+  body { margin:0; background:#1a1a2e; display:flex; flex-direction:column; height:100vh; font-family:monospace; }
+  #toolbar { padding:8px 12px; background:#16213e; display:flex; align-items:center; gap:12px; }
+  #status { color:#e94560; font-size:14px; }
+  #status.connected { color:#4ecca3; }
+  #vm-name { color:#eee; font-size:14px; font-weight:bold; }
+  #screen { flex:1; display:flex; align-items:center; justify-content:center; }
+  canvas { max-width:100%; max-height:100%; }
+  .btn { padding:4px 12px; background:#0f3460; color:white; border:none; border-radius:4px; cursor:pointer; font-size:12px; }
+  .btn:hover { background:#e94560; }
+</style>
+</head>
+<body>
+<div id="toolbar">
+  <span id="vm-name"></span>
+  <span id="status">Connecting...</span>
+  <button class="btn" onclick="location.reload()">Reconnect</button>
+  <button class="btn" onclick="toggleFullscreen()">Fullscreen</button>
+</div>
+<div id="screen"></div>
+<script type="module">
+  import RFB from '/plugins/vm/novnc/core/rfb.js';
+  const screen = document.getElementById('screen');
+  const status = document.getElementById('status');
+  const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const params = new URLSearchParams(location.search);
+  const token = params.get('token') || localStorage.getItem('praxis_token') || '';
+  const vmName = params.get('vm') || 'praxis-vm';
+  document.getElementById('vm-name').textContent = vmName;
+  document.title = `Praxis VNC - ${vmName}`;
+  const wsUrl = `${wsProto}//${location.host}/api/plugins/vm/vnc/ws?token=${encodeURIComponent(token)}&vm=${encodeURIComponent(vmName)}`;
+
+  let currentRFB = null;
+  function connectRFB() {
+    if (currentRFB && currentRFB._rfb_connection_state === 'connected') return;
+    currentRFB = new RFB(screen, wsUrl, { shared: true, credentials: {} });
+    currentRFB.scaleViewport = true;
+    currentRFB.resizeSession = false;
+    currentRFB.addEventListener('connect', () => {
+      status.textContent = 'Connected';
+      status.className = 'connected';
+    });
+    currentRFB.addEventListener('disconnect', (e) => {
+      if (e.detail.clean) { status.textContent = 'Disconnected cleanly'; }
+      else {
+        status.textContent = 'Disconnected, reconnecting in 2s...';
+        status.className = '';
+        setTimeout(connectRFB, 2000);
+      }
+    });
+  }
+  connectRFB();
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') connectRFB();
+  });
+
+  window.toggleFullscreen = function() {
+    const el = document.getElementById('screen');
+    if (document.fullscreenElement) {
+      document.exitFullscreen();
+    } else {
+      el.requestFullscreen();
+    }
+  };
+</script>
+</body>
+</html>

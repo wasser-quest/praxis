@@ -33,6 +33,32 @@ fn compatibility_preset_preflights_all_plugin_destinations_before_any_write() {
     assert!(!dir.path().join("plugins/brave_search").exists());
 }
 
+#[cfg(feature = "vm")]
+#[test]
+fn compatibility_preset_updates_package_ui_with_backups_and_preserves_manifest() {
+    let dir = tempfile::tempdir().unwrap();
+    install_compatibility(dir.path(), false).unwrap();
+    std::fs::write(dir.path().join("plugins/vm/ui/vm.js"), "// previous VM UI").unwrap();
+    std::fs::write(dir.path().join("plugins/vm/plugin.json"), r#"{"enabled":false}"#).unwrap();
+    let report = install_compatibility(dir.path(), true).unwrap();
+    assert_eq!(report.updated, vec!["plugins/vm/ui/vm.js"]);
+    assert_eq!(std::fs::read_to_string(report.backup_dir.unwrap().join("plugins/vm/ui/vm.js")).unwrap(), "// previous VM UI");
+    assert_eq!(std::fs::read_to_string(dir.path().join("plugins/vm/plugin.json")).unwrap(), r#"{"enabled":false}"#);
+    assert!(dir.path().join("plugins/vm/novnc/docs/LICENSE.MPL-2.0").is_file());
+    assert!(!dir.path().join("static/novnc").exists());
+}
+
+#[cfg(not(feature = "vm"))]
+#[test]
+fn compatibility_preset_without_vm_does_not_bundle_vm_ui_or_engine() {
+    let dir = tempfile::tempdir().unwrap();
+    install_compatibility(dir.path(), false).unwrap();
+    assert!(dir.path().join("plugins/vm/plugin.json").is_file());
+    assert!(!dir.path().join("plugins/vm/ui").exists());
+    assert!(!dir.path().join("static/novnc").exists());
+    assert!(dir.path().join("static/extensions.js").is_file());
+}
+
 #[test]
 fn onboarding_assets_install_every_bundled_file_and_executable() {
     let dir = tempfile::tempdir().unwrap();

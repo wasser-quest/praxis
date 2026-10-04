@@ -38,8 +38,8 @@ pub fn is_vm_tool(name: &str) -> bool {
     TOOL_NAMES.contains(&name)
 }
 
-/// A temporary host-side bridge for dashboard and delivery adapters. It cannot
-/// initialize a service. Independent service/UI packaging replaces it in PR 3.
+/// Native-only delivery/CLI bridge. Web contributions use the generic proxy
+/// with either backend and never initialize a service lazily.
 pub struct VmAccess {
     #[cfg(feature = "vm")]
     pub inner: Arc<praxis_vm::runtime::VmRuntime>,
@@ -215,7 +215,7 @@ pub fn configure(
             "vm",
             crate::runtime::features::INVOCATION_API_VERSION,
             TOOL_NAMES,
-            Arc::new(VmAdapter { access, grants }),
+            Arc::new(VmAdapter { access, grants, web: tokio::sync::OnceCell::new(), web_key: uuid::Uuid::new_v4().simple().to_string() }),
         )?;
         Ok(())
     }
@@ -296,6 +296,8 @@ pub async fn initialize_service(config: &Config, plugins: &PluginRegistry) -> an
 struct VmAdapter {
     access: Arc<VmAccess>,
     grants: Grants,
+    web: tokio::sync::OnceCell<praxis_vm_web::WebServer>,
+    web_key: String,
 }
 
 #[cfg(feature = "vm")]
@@ -304,6 +306,18 @@ impl crate::runtime::features::NativeService for VmAdapter {
     fn as_any(&self) -> Option<&dyn std::any::Any> {
         Some(self)
     }
+    fn web_descriptor(&self) -> Option<praxis_plugin_api::web::WebDescriptor> { Some(web_descriptor()) }
+    fn web_aliases(&self) -> Vec<super::web::WebAlias> { legacy_web_aliases() }
+    fn web_endpoint(&self) -> Option<super::web::WebEndpoint> {
+        let web = self.web.get()?;
+        Some(super::web::WebEndpoint::new(web.info(), self.web_key.clone()))
+    }
+    async fn initialize(&self) -> anyhow::Result<()> {
+        self.web.set(praxis_vm_web::WebServer::start(self.access.inner.clone(), self.web_key.clone()).await?).map_err(|_| anyhow::anyhow!("VM web binding already initialized"))?;
+        Ok(())
+    }
+    fn force_stop(&self) { if let Some(web) = self.web.get() { web.stop(); } }
+    async fn shutdown(&self) -> anyhow::Result<()> { self.force_stop(); Ok(()) }
     async fn invoke(
         &self,
         context: crate::runtime::features::InvocationContext,
@@ -399,4 +413,18 @@ pub async fn autostart(
         let _ = (plugins, secrets);
         anyhow::bail!("VM package not compiled")
     }
+}
+
+fn web_descriptor() -> praxis_plugin_api::web::WebDescriptor {
+    let mut descriptor = praxis_plugin_api::web::WebDescriptor::for_package("vm", "Virtual machines");
+    descriptor.websockets.push("/api/plugins/vm/vnc/ws".into());
+    descriptor
+}
+fn legacy_web_aliases() -> Vec<super::web::WebAlias> {
+    use super::web::WebAlias;
+    vec![WebAlias::api("/api/vm", "/api/plugins/vm"),
+        WebAlias::api("/api/vm/activity", "/api/tool-activity"),
+        WebAlias::api("/websockify", "/api/plugins/vm/vnc/ws"),
+        WebAlias::assets("/vnc", "/plugins/vm/ui/vnc.html"),
+        WebAlias::assets("/static/novnc", "/plugins/vm/novnc")]
 }

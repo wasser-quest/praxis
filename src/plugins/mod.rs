@@ -217,6 +217,12 @@ impl PluginRegistry {
             }
         }
         anyhow::ensure!(matched, "Native service is not declared by its owner");
+        if let Some(web) = &candidate.descriptor().web {
+            anyhow::ensure!(!self.services.values().any(|handle| handle.descriptor().web.as_ref().is_some_and(|other| other.id == web.id)), "Dashboard contribution owner conflict");
+        }
+        for alias in candidate.web_aliases() {
+            anyhow::ensure!(!self.services.values().any(|handle| handle.web_aliases().iter().any(|other| other.source == alias.source)), "Host web alias owner conflict");
+        }
         self.services.insert(key, candidate);
         Ok(())
     }
@@ -227,6 +233,10 @@ impl PluginRegistry {
         id: &str,
     ) -> Option<crate::runtime::features::ServiceHandle> {
         self.services.get(&format!("{owner}/{id}")).cloned()
+    }
+    pub(crate) fn web_services(&self) -> Vec<crate::runtime::features::ServiceHandle> {
+        self.services.values().filter(|handle| handle.descriptor().web.is_some()
+            && self.get(&handle.descriptor().owner).is_some_and(|plugin| plugin.enabled)).cloned().collect()
     }
 
     pub(crate) fn require_service(&self, name: &str) -> anyhow::Result<()> {

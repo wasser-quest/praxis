@@ -35,6 +35,7 @@ const OPERATIONS: &[&str] = &[
 
 struct Worker {
     runtime: Option<Arc<VmRuntime>>,
+    web: Option<praxis_vm_web::WebServer>,
 }
 impl Worker {
     fn runtime(&self) -> anyhow::Result<&VmRuntime> {
@@ -51,16 +52,23 @@ impl Service for Worker {
             owner: "vm".into(),
             service: "vm".into(),
             operations: OPERATIONS.iter().map(|op| (*op).into()).collect(),
-            controls: vec!["autostart".into()],
+            controls: vec!["autostart".into(), "web_info".into()],
         }
     }
-    async fn initialize(&mut self, initialization: Value) -> anyhow::Result<()> {
+    async fn initialize(&mut self, mut initialization: Value) -> anyhow::Result<()> {
+        let key = initialization
+            .as_object_mut()
+            .and_then(|input| input.remove("web_token"))
+            .and_then(|value| value.as_str().map(str::to_owned))
+            .ok_or_else(|| anyhow::anyhow!("Missing host web nonce"))?;
         let settings: VmSettings = serde_json::from_value(initialization)?;
         anyhow::ensure!(
             std::path::Path::new(&settings.data_dir).is_absolute(),
             "VM data directory must be host resolved"
         );
-        self.runtime = Some(Arc::new(VmRuntime::new(settings)?));
+        let runtime = Arc::new(VmRuntime::new(settings)?);
+        self.web = Some(praxis_vm_web::WebServer::start(runtime.clone(), key).await?);
+        self.runtime = Some(runtime);
         Ok(())
     }
     async fn invoke(
@@ -98,6 +106,14 @@ impl Service for Worker {
             .await
     }
     async fn control(&self, operation: &str, input: Value) -> anyhow::Result<Value> {
+        if operation == "web_info" {
+            return Ok(serde_json::to_value(
+                self.web
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("VM web service unavailable"))?
+                    .info(),
+            )?);
+        }
         anyhow::ensure!(operation == "autostart", "Unsupported VM control");
         let grants: BTreeMap<String, String> = serde_json::from_value(input)?;
         praxis_vm::secrets_inject::validate_grants(&grants)?;
@@ -119,7 +135,10 @@ async fn main() -> std::process::ExitCode {
     match praxis_plugin_api::serve(
         tokio::io::stdin(),
         tokio::io::stdout(),
-        Worker { runtime: None },
+        Worker {
+            runtime: None,
+            web: None,
+        },
     )
     .await
     {

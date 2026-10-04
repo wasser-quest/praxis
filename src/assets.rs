@@ -5,11 +5,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-struct Asset {
-    path: &'static str,
-    bytes: &'static [u8],
-    executable: bool,
-}
+use praxis_plugin_api::web::PackagedAsset as Asset;
 
 macro_rules! asset {
     ($path:literal) => {
@@ -17,6 +13,7 @@ macro_rules! asset {
             path: $path,
             bytes: include_bytes!(concat!("../", $path)),
             executable: false,
+            dashboard: false,
         }
     };
     ($path:literal, executable) => {
@@ -24,6 +21,7 @@ macro_rules! asset {
             path: $path,
             bytes: include_bytes!(concat!("../", $path)),
             executable: true,
+            dashboard: false,
         }
     };
 }
@@ -129,6 +127,7 @@ const BUNDLED_ASSETS: &[Asset] = &[
     asset!("static/index.html"),
     asset!("static/style.css"),
     asset!("static/app.js"),
+    asset!("static/extensions.js"),
     asset!("static/workflow-dashboard.js"),
     asset!("static/chat-audio.js"),
     asset!("static/logo.svg"),
@@ -147,6 +146,8 @@ const BUNDLED_ASSETS: &[Asset] = &[
     asset!("docs/PLUGIN_FIRST_PLAN.md"),
     asset!("docs/INSTALLATION_PRESETS.md"),
     asset!("docs/VM_PLUGIN.md"),
+    asset!("docs/PLUGIN_PROCESS_PROTOCOL.md"),
+    asset!("docs/PLUGIN_WEB_CONTRIBUTIONS.md"),
     asset!("docs/BRANDING.md"),
     asset!("docs/SKILLS.md"),
     asset!("docs/POML_WORKFLOWS.md"),
@@ -167,63 +168,6 @@ const BUNDLED_ASSETS: &[Asset] = &[
 
 // First-party compatibility packages shipped with the full distribution.
 const COMPATIBILITY_ASSETS: &[Asset] = &[
-    asset!("static/novnc/core/base64.js"),
-    asset!("static/novnc/core/crypto/aes.js"),
-    asset!("static/novnc/core/crypto/bigint.js"),
-    asset!("static/novnc/core/crypto/crypto.js"),
-    asset!("static/novnc/core/crypto/des.js"),
-    asset!("static/novnc/core/crypto/dh.js"),
-    asset!("static/novnc/core/crypto/md5.js"),
-    asset!("static/novnc/core/crypto/rsa.js"),
-    asset!("static/novnc/core/decoders/copyrect.js"),
-    asset!("static/novnc/core/decoders/hextile.js"),
-    asset!("static/novnc/core/decoders/jpeg.js"),
-    asset!("static/novnc/core/decoders/raw.js"),
-    asset!("static/novnc/core/decoders/rre.js"),
-    asset!("static/novnc/core/decoders/tight.js"),
-    asset!("static/novnc/core/decoders/tightpng.js"),
-    asset!("static/novnc/core/decoders/zrle.js"),
-    asset!("static/novnc/core/deflator.js"),
-    asset!("static/novnc/core/display.js"),
-    asset!("static/novnc/core/encodings.js"),
-    asset!("static/novnc/core/inflator.js"),
-    asset!("static/novnc/core/input/domkeytable.js"),
-    asset!("static/novnc/core/input/fixedkeys.js"),
-    asset!("static/novnc/core/input/gesturehandler.js"),
-    asset!("static/novnc/core/input/keyboard.js"),
-    asset!("static/novnc/core/input/keysym.js"),
-    asset!("static/novnc/core/input/keysymdef.js"),
-    asset!("static/novnc/core/input/util.js"),
-    asset!("static/novnc/core/input/vkeys.js"),
-    asset!("static/novnc/core/input/xtscancodes.js"),
-    asset!("static/novnc/core/ra2.js"),
-    asset!("static/novnc/core/rfb.js"),
-    asset!("static/novnc/core/util/browser.js"),
-    asset!("static/novnc/core/util/cursor.js"),
-    asset!("static/novnc/core/util/element.js"),
-    asset!("static/novnc/core/util/events.js"),
-    asset!("static/novnc/core/util/eventtarget.js"),
-    asset!("static/novnc/core/util/int.js"),
-    asset!("static/novnc/core/util/logging.js"),
-    asset!("static/novnc/core/util/strings.js"),
-    asset!("static/novnc/core/websock.js"),
-    asset!("static/novnc/vendor/pako/LICENSE"),
-    asset!("static/novnc/vendor/pako/README.md"),
-    asset!("static/novnc/vendor/pako/lib/utils/common.js"),
-    asset!("static/novnc/vendor/pako/lib/zlib/adler32.js"),
-    asset!("static/novnc/vendor/pako/lib/zlib/constants.js"),
-    asset!("static/novnc/vendor/pako/lib/zlib/crc32.js"),
-    asset!("static/novnc/vendor/pako/lib/zlib/deflate.js"),
-    asset!("static/novnc/vendor/pako/lib/zlib/gzheader.js"),
-    asset!("static/novnc/vendor/pako/lib/zlib/inffast.js"),
-    asset!("static/novnc/vendor/pako/lib/zlib/inflate.js"),
-    asset!("static/novnc/vendor/pako/lib/zlib/inftrees.js"),
-    asset!("static/novnc/vendor/pako/lib/zlib/messages.js"),
-    asset!("static/novnc/vendor/pako/lib/zlib/trees.js"),
-    asset!("static/novnc/vendor/pako/lib/zlib/zstream.js"),
-    asset!("static/novnc/LICENSE.txt"),
-    asset!("static/novnc/docs/LICENSE.MPL-2.0"),
-    asset!("static/novnc/docs/LICENSE.BSD-3-Clause"),
     asset!("plugins/comfyui/.gitignore"),
     asset!("plugins/comfyui/README.md"),
     asset!("plugins/comfyui/common.py", executable),
@@ -282,7 +226,10 @@ pub fn install(directory: &Path, update_dashboard: bool, overwrite: bool) -> any
 /// Restore the source distribution's plugin set, without changing existing
 /// manifests, operator configuration, credentials, flags or service state.
 pub fn install_compatibility(directory: &Path, update_dashboard: bool) -> anyhow::Result<InstallReport> {
-    install_selected(directory, BUNDLED_ASSETS.iter().chain(COMPATIBILITY_ASSETS).collect(), update_dashboard, false)
+    let assets = BUNDLED_ASSETS.iter().chain(COMPATIBILITY_ASSETS);
+    #[cfg(feature = "vm")]
+    let assets = assets.chain(praxis_vm_web::ASSETS);
+    install_selected(directory, assets.collect(), update_dashboard, false)
 }
 
 fn install_selected(directory: &Path, assets: Vec<&Asset>, update_dashboard: bool, overwrite: bool) -> anyhow::Result<InstallReport> {
@@ -309,7 +256,7 @@ fn install_selected(directory: &Path, assets: Vec<&Asset>, update_dashboard: boo
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
             Err(error) => return Err(error.into()),
         };
-        let update = existing && (update_dashboard && asset.path.starts_with("static/") || overwrite);
+        let update = existing && (update_dashboard && (asset.path.starts_with("static/") || asset.dashboard) || overwrite);
         if existing && !update {
             report.preserved.push(asset.path);
             continue;

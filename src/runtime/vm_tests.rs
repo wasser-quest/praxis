@@ -29,6 +29,25 @@ fn vm_disabled_contributes_no_tools_and_creates_no_storage() {
     assert!(!dir.path().join("shared").exists());
 }
 
+#[cfg(feature = "vm")]
+#[tokio::test]
+async fn vm_web_binding_initializes_without_creating_guest_storage() {
+    let (dir, db, mut config, mut registry) = fixture();
+    config.vm_enabled = true;
+    super::vm::configure(&db, &config, &mut registry).unwrap();
+    let handle = registry.service_handle("vm", "vm").unwrap();
+    assert!(handle.web_endpoint().is_none());
+    super::vm::initialize_service(&config, &registry).await.unwrap();
+    let endpoint = handle.web_endpoint().unwrap();
+    let response = reqwest::Client::new().get(format!("http://127.0.0.1:{}/api/plugins/vm", endpoint.info.port))
+        .header(praxis_plugin_api::web::PRIVATE_HEADER, &endpoint.key).send().await.unwrap();
+    assert_eq!(response.status(), 200);
+    assert!(!dir.path().join("vm").exists());
+    assert!(!dir.path().join("shared").exists());
+    handle.disable(std::time::Duration::from_secs(1)).await.unwrap();
+    assert!(handle.web_endpoint().is_none());
+}
+
 #[test]
 fn vm_compatibility_activation_is_explicit_and_preserves_other_tool_flags() {
     let (_dir, db, config, mut registry) = fixture();

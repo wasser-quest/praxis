@@ -1,0 +1,24 @@
+[package]
+name = "praxis-vm-worker"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Independently installed Praxis VM service"
+
+[dependencies]
+praxis-vm = { path = "../praxis-vm" }
+praxis-vm-web = { path = "../praxis-vm-web" }
+praxis-plugin-api = { path = "../praxis-plugin-api" }
+async-trait = "0.1"
+anyhow = "1"
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt", "io-std"] }
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "process", "time"] }
+reqwest = { version = "0.12.28", default-features = false, features = ["json"] }
+
+[[bin]]
+name = "praxis-vm-service"
+path = "src/main.rs"

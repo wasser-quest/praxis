@@ -5,7 +5,6 @@ use axum::middleware;
 use axum::response::IntoResponse;
 use axum::Json;
 use axum::Router;
-use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -169,6 +168,10 @@ pub fn routes_with_plugins(db: crate::db::Database, plugins: Arc<crate::plugins:
             .unwrap_or(config.dashboard_admin_password),
     });
 
+    router_with_state(state)
+}
+
+pub(crate) fn router_with_state(state: Arc<DashboardState>) -> Router {
     // Protected API routes with auth middleware
     let protected = Router::new()
         .route("/contexts", axum::routing::get(list_contexts))
@@ -220,17 +223,7 @@ pub fn routes_with_plugins(db: crate::db::Database, plugins: Arc<crate::plugins:
         .route("/sm-files/:name", axum::routing::get(get_sm_file))
         .route("/sm-files/:name", axum::routing::put(save_sm_file))
         .route("/cron-jobs", axum::routing::get(list_cron_jobs))
-        .route("/vm", axum::routing::get(list_vm_status))
-        .route("/vm/start", axum::routing::post(vm_start))
-        .route("/vm/stop", axum::routing::post(vm_stop))
-        .route("/vm/reboot", axum::routing::post(vm_reboot))
-        .route("/vm/snapshot", axum::routing::post(vm_snapshot))
-        .route("/vm/shared-folder", axum::routing::post(vm_shared_folder))
-        .route("/vm/cd", axum::routing::post(vm_cd))
-        .route("/vm/clipboard/set", axum::routing::post(vm_clipboard_set))
-        .route("/vm/clipboard/get", axum::routing::get(vm_clipboard_get))
-        .route("/vm/activity", axum::routing::get(vm_activity))
-        .route("/vm/vnc", axum::routing::get(vm_vnc_viewer))
+        .route("/tool-activity", axum::routing::get(tool_activity))
         .route("/agent/input", axum::routing::post(send_agent_input))
         .route("/agent/begin", axum::routing::post(begin_agent))
         .route("/agent/status/:user_id", axum::routing::get(get_agent_status))
@@ -273,9 +266,6 @@ pub fn routes_with_plugins(db: crate::db::Database, plugins: Arc<crate::plugins:
         .route("/api/auth/login", axum::routing::post(login_handler))
         .route("/api/chat/stream/:user_id", axum::routing::get(chat_stream_auth))
         .route("/api/chat/stream/:user_id/tts", axum::routing::get(chat_stream_tts_only))
-        .route("/api/vm/vnc/ws", axum::routing::get(vnc_ws_proxy))
-        .route("/websockify", axum::routing::get(vnc_ws_proxy_noauth))
-        .route("/vnc", axum::routing::get(vnc_viewer_page))
         .route("/api/avatar/:name", axum::routing::get(get_avatar))
         .route("/api/files/:name", axum::routing::get(get_chat_file))
         .route("/api/screenshots/*path", axum::routing::get(get_screenshot))
@@ -286,6 +276,7 @@ pub fn routes_with_plugins(db: crate::db::Database, plugins: Arc<crate::plugins:
         .layer(middleware::from_fn(static_no_cache_middleware))
         .nest("/api", protected)
         .with_state(state.clone())
+        .merge(super::extensions::router(state.clone()))
 }
 
 /// Serve static UI files with Cache-Control: no-store so browser caches
@@ -320,24 +311,12 @@ async fn dashboard_auth_middleware(
         None => return Err(StatusCode::UNAUTHORIZED),
     };
 
-    // Try JWT first
-    use jsonwebtoken::{decode, DecodingKey, Validation};
-    let jwt_result = decode::<crate::gateway::auth::Claims>(
-        token,
-        &DecodingKey::from_secret(state.gateway_api_key.as_bytes()),
-        &Validation::default(),
-    );
-
-    if jwt_result.is_ok() {
-        return Ok(next.run(req).await);
-    }
-
-    // Fall back to raw API key
-    if token == state.gateway_api_key {
-        return Ok(next.run(req).await);
-    }
-
+    if dashboard_token_valid(&state, token) { return Ok(next.run(req).await); }
     Err(StatusCode::UNAUTHORIZED)
+}
+
+pub(crate) fn dashboard_token_valid(state: &DashboardState, token: &str) -> bool {
+    !state.gateway_api_key.is_empty() && !token.is_empty() && (token == state.gateway_api_key || jsonwebtoken::decode::<crate::gateway::auth::Claims>(token, &jsonwebtoken::DecodingKey::from_secret(state.gateway_api_key.as_bytes()), &jsonwebtoken::Validation::default()).is_ok())
 }
 
 async fn login_handler(
@@ -1206,13 +1185,6 @@ fn apply_codex_secret(secrets: &mut crate::db::secrets::Secrets, value: &str) ->
     Ok(())
 }
 
-#[cfg(not(feature = "vm"))]
-macro_rules! unavailable_vm_routes {
-    ($($name:ident),* $(,)?) => { $(async fn $name() -> StatusCode { StatusCode::SERVICE_UNAVAILABLE })* };
-}
-#[cfg(not(feature = "vm"))]
-unavailable_vm_routes!(vm_start, vm_stop, vm_reboot, vm_snapshot, vm_shared_folder, vm_cd, vm_clipboard_set, vm_clipboard_get, vnc_viewer_page, vm_vnc_viewer, vnc_ws_proxy, vnc_ws_proxy_noauth);
-
 #[cfg(test)]
 mod codex_secret_tests {
     use super::*;
@@ -1441,185 +1413,12 @@ async fn list_cron_jobs(
     Ok(Json(serde_json::json!({ "cron_jobs": jobs })))
 }
 
-// ── VM ────────────────────────────────────────────────────────────────────
-
-#[derive(Deserialize)]
-pub struct VmStartRequest {
-    pub name: Option<String>,
-    pub cpu_cores: Option<u32>,
-    pub ram_mb: Option<u32>,
-    pub disk_size: Option<String>,
-    pub iso_path: Option<String>,
-    pub arch: Option<String>,
-    pub keyboard_layout: Option<String>,
-}
-
-#[derive(Deserialize)]
-pub struct VmStopRequest {
-    pub name: Option<String>,
-}
-
-#[derive(Deserialize)]
-pub struct VmSnapshotRequest {
-    pub snapshot_name: String,
-    pub name: Option<String>,
-}
-
-#[derive(Deserialize)]
-pub struct VmSharedFolderRequest {
-    pub host_path: String,
-    pub mount_point: Option<String>,
-    pub readonly: Option<bool>,
-    pub name: Option<String>,
-}
-
-async fn list_vm_status(State(state): State<Arc<DashboardState>>) -> Json<serde_json::Value> {
-    #[cfg(feature = "vm")]
-    if let Some(access) = crate::runtime::vm::runtime(&state.plugins) {
-        let settings = access.inner.settings();
-        return Json(serde_json::json!({"vms":access.inner.manager().list_vms().await,"config":{
-            "vm_enabled":true,"vm_compiled":true,"vm_cpu_cores":settings.cpu_cores,
-            "vm_ram_mb":settings.ram_mb,"vm_disk_size":settings.disk_size,"vm_arch":settings.arch,
-        }}));
-    }
-    let _ = state;
-    Json(serde_json::json!({"vms":[],"config":{"vm_enabled":false,"vm_compiled":cfg!(feature="vm")}}))
-}
-
-#[cfg(feature = "vm")]
-async fn vm_start(State(state): State<Arc<DashboardState>>, Json(req): Json<VmStartRequest>) -> Result<Json<serde_json::Value>, StatusCode> {
-    let access = crate::runtime::vm::runtime(&state.plugins).ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-    let config = access.inner.settings();
-    let manager = access.inner.manager();
-
-    let name = req.name.unwrap_or_else(|| "praxis-vm".to_string());
-    let data_dir = config.data_dir.clone();
-    let vnc_offset = manager.list_vms().await.len() as u16 + 1;
-
-    let mut vm_config =
-        crate::vm::VmConfig::default_for_name(&name, &data_dir, vnc_offset, &config.arch);
-    if let Some(cpu) = req.cpu_cores {
-        vm_config.cpu_cores = cpu;
-    }
-    if let Some(ram) = req.ram_mb {
-        vm_config.ram_mb = ram;
-    }
-    if let Some(size) = req.disk_size {
-        vm_config.disk_size = size;
-    }
-    vm_config.iso_path = req.iso_path;
-
-    // Get keyboard layout: from request, or from context settings, or default "us"
-    let keyboard_layout = req.keyboard_layout.unwrap_or_else(|| {
-        // Try to load from context settings (default user)
-        if let Ok(db) = crate::db::Database::new(std::path::Path::new(&data_dir)) {
-            if let Ok(ctx) = db.load_context("default") {
-                return ctx.settings.vm_keyboard_layout;
-            }
-        }
-        "us".to_string()
-    });
-    vm_config.set_socket_mode(&config.socket_mode).map_err(|_| StatusCode::BAD_REQUEST)?;
-    vm_config.keyboard_layout = crate::vm::KeyboardLayout::from_str(&keyboard_layout);
-
-    match manager.start_vm(vm_config).await {
-        Ok(msg) => Ok(Json(serde_json::json!({"message": msg}))),
-        Err(e) => Ok(Json(serde_json::json!({"error": e.to_string()}))),
-    }
-}
-
-#[cfg(feature = "vm")]
-async fn vm_stop(State(state): State<Arc<DashboardState>>, Json(req): Json<VmStopRequest>) -> Result<Json<serde_json::Value>, StatusCode> {
-    let access = crate::runtime::vm::runtime(&state.plugins).ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-    let manager = access.inner.manager();
-
-    let name = req.name.unwrap_or_else(|| "praxis-vm".to_string());
-    match manager.stop_vm(&name).await {
-        Ok(msg) => Ok(Json(serde_json::json!({"message": msg}))),
-        Err(e) => Ok(Json(serde_json::json!({"error": e.to_string()}))),
-    }
-}
-
-#[cfg(feature = "vm")]
-async fn vm_reboot(State(state): State<Arc<DashboardState>>, Json(req): Json<VmStopRequest>) -> Result<Json<serde_json::Value>, StatusCode> {
-    let access = crate::runtime::vm::runtime(&state.plugins).ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-    let manager = access.inner.manager();
-
-    let name = req.name.unwrap_or_else(|| "praxis-vm".to_string());
-    match manager.reboot_vm(&name).await {
-        Ok(msg) => Ok(Json(serde_json::json!({"message": msg}))),
-        Err(e) => Ok(Json(serde_json::json!({"error": e.to_string()}))),
-    }
-}
-
-#[cfg(feature = "vm")]
-async fn vm_snapshot(State(state): State<Arc<DashboardState>>,
-    Json(req): Json<VmSnapshotRequest>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    let access = crate::runtime::vm::runtime(&state.plugins).ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-    let manager = access.inner.manager();
-
-    let name = req.name.unwrap_or_else(|| "praxis-vm".to_string());
-    match manager.create_snapshot(&name, &req.snapshot_name).await {
-        Ok(msg) => Ok(Json(serde_json::json!({"message": msg}))),
-        Err(e) => Ok(Json(serde_json::json!({"error": e.to_string()}))),
-    }
-}
-
-#[cfg(feature = "vm")]
-async fn vm_shared_folder(State(state): State<Arc<DashboardState>>,
-    Json(req): Json<VmSharedFolderRequest>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    let access = crate::runtime::vm::runtime(&state.plugins).ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-    let manager = access.inner.manager();
-
-    let name = req.name.unwrap_or_else(|| "praxis-vm".to_string());
-    let tag = format!(
-        "shared-{}",
-        std::path::Path::new(&req.host_path)
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-    );
-
-    let folder = crate::vm::SharedFolder {
-        host_path: req.host_path,
-        mount_tag: tag,
-        mount_point: req.mount_point.unwrap_or_else(|| "/mnt/shared".to_string()),
-        readonly: req.readonly.unwrap_or(false),
-    };
-
-    match manager.add_shared_folder(&name, folder).await {
-        Ok(msg) => Ok(Json(serde_json::json!({"message": msg}))),
-        Err(e) => Ok(Json(serde_json::json!({"error": e.to_string()}))),
-    }
-}
-
-#[derive(Deserialize)]
-pub struct VmCdRequest {
-    pub name: Option<String>,
-    pub iso_path: Option<String>,
-}
-
-#[cfg(feature = "vm")]
-async fn vm_cd(State(state): State<Arc<DashboardState>>, Json(req): Json<VmCdRequest>) -> Result<Json<serde_json::Value>, StatusCode> {
-    let access = crate::runtime::vm::runtime(&state.plugins).ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-    let manager = access.inner.manager();
-
-    let name = req.name.unwrap_or_else(|| "praxis-vm".to_string());
-
-    match manager.change_cd(&name, req.iso_path.as_deref()).await {
-        Ok(msg) => Ok(Json(serde_json::json!({"message": msg}))),
-        Err(e) => Ok(Json(serde_json::json!({"error": e.to_string()}))),
-    }
-}
-
-async fn vm_activity(
+pub(crate) async fn tool_activity(
     State(state): State<Arc<DashboardState>>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let conn = state.db.conn();
-    let limit = params.get("limit").and_then(|v| v.parse::<i64>().ok()).unwrap_or(50);
+    let limit = params.get("limit").and_then(|v| v.parse::<i64>().ok()).unwrap_or(50).clamp(1, 500);
     let mut stmt = conn
         .prepare("SELECT vm_id, action, input, output, created_at FROM vm_activity_log ORDER BY id DESC LIMIT ?1")
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -1702,33 +1501,6 @@ async fn begin_agent(
         "success": true,
         "message": "Agent dispatched to gateway"
     })))
-}
-
-#[cfg(feature = "vm")]
-async fn vm_clipboard_set(State(state): State<Arc<DashboardState>>,
-    Json(req): Json<serde_json::Value>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    let access = crate::runtime::vm::runtime(&state.plugins).ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-    let manager = access.inner.manager();
-    let name = req["name"].as_str().unwrap_or("praxis-vm");
-    let content = req["content"].as_str().unwrap_or("");
-    match manager.clipboard_set(name, content).await {
-        Ok(msg) => Ok(Json(serde_json::json!({"success": true, "message": msg}))),
-        Err(e) => Ok(Json(serde_json::json!({"success": false, "error": e.to_string()}))),
-    }
-}
-
-#[cfg(feature = "vm")]
-async fn vm_clipboard_get(State(state): State<Arc<DashboardState>>,
-    Query(params): Query<HashMap<String, String>>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    let access = crate::runtime::vm::runtime(&state.plugins).ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-    let manager = access.inner.manager();
-    let name = params.get("name").map(|s| s.as_str()).unwrap_or("praxis-vm");
-    match manager.clipboard_get(name).await {
-        Ok(content) => Ok(Json(serde_json::json!({"success": true, "content": content}))),
-        Err(e) => Ok(Json(serde_json::json!({"success": false, "error": e.to_string()}))),
-    }
 }
 
 async fn get_agent_status(
@@ -2251,253 +2023,6 @@ async fn get_sm_info(
         "active_templates": templates,
         "sm_data": sm_data,
     })))
-}
-
-#[cfg(feature = "vm")]
-async fn vnc_viewer_page() -> axum::response::Html<&'static str> {
-    axum::response::Html(
-        r#"<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<title>Praxis VNC</title>
-<style>
-  body { margin:0; background:#1a1a2e; display:flex; flex-direction:column; height:100vh; }
-  #status { padding:8px; background:#16213e; color:#e94560; font-family:monospace; font-size:14px; }
-  #status.connected { color:#0f3460; background:#e94560; color:white; }
-  #screen { flex:1; display:flex; align-items:center; justify-content:center; }
-  canvas { max-width:100%; max-height:100%; }
-</style>
-</head>
-<body>
-<div id="status">Connecting...</div>
-<div id="screen"></div>
-<script type="module">
-  import RFB from '/static/novnc/core/rfb.js';
-  const screen = document.getElementById('screen');
-  const status = document.getElementById('status');
-
-  function connectRFB() {
-    const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const token = new URLSearchParams(location.search).get('token') || localStorage.getItem('praxis_token') || '';
-    const wsUrl = `${wsProto}//${location.host}/websockify?token=${encodeURIComponent(token)}`;
-    const rfb = new RFB(screen, wsUrl, { shared: true, credentials: {} });
-    rfb.scaleViewport = true;
-    rfb.resizeSession = false;
-    rfb.addEventListener('connect', () => {
-      status.textContent = 'Connected to VM';
-      status.className = 'connected';
-    });
-    rfb.addEventListener('disconnect', (e) => {
-      if (e.detail.clean) { status.textContent = 'Disconnected cleanly'; }
-      else {
-        status.textContent = 'Disconnected, reconnecting in 2s...';
-        status.className = '';
-        setTimeout(connectRFB, 2000);
-      }
-    });
-  }
-  connectRFB();
-
-  let wasDisconnected = false;
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && wasDisconnected) {
-      wasDisconnected = false;
-      status.textContent = 'Reconnecting...';
-      connectRFB();
-    }
-  });
-</script>
-</body>
-</html>"#,
-    )
-}
-
-#[cfg(feature = "vm")]
-async fn vm_vnc_viewer(
-    Query(_params): Query<HashMap<String, String>>,
-) -> axum::response::Html<&'static str> {
-    // Read URL values in the browser and use textContent/URL encoding. Never
-    // interpolate caller-controlled values into inline HTML or JavaScript.
-    axum::response::Html(r#"<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<title>Praxis VNC</title>
-<style>
-  body { margin:0; background:#1a1a2e; display:flex; flex-direction:column; height:100vh; font-family:monospace; }
-  #toolbar { padding:8px 12px; background:#16213e; display:flex; align-items:center; gap:12px; }
-  #status { color:#e94560; font-size:14px; }
-  #status.connected { color:#4ecca3; }
-  #vm-name { color:#eee; font-size:14px; font-weight:bold; }
-  #screen { flex:1; display:flex; align-items:center; justify-content:center; }
-  canvas { max-width:100%; max-height:100%; }
-  .btn { padding:4px 12px; background:#0f3460; color:white; border:none; border-radius:4px; cursor:pointer; font-size:12px; }
-  .btn:hover { background:#e94560; }
-</style>
-</head>
-<body>
-<div id="toolbar">
-  <span id="vm-name"></span>
-  <span id="status">Connecting...</span>
-  <button class="btn" onclick="location.reload()">Reconnect</button>
-  <button class="btn" onclick="toggleFullscreen()">Fullscreen</button>
-</div>
-<div id="screen"></div>
-<script type="module">
-  import RFB from '/static/novnc/core/rfb.js';
-  const screen = document.getElementById('screen');
-  const status = document.getElementById('status');
-  const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const params = new URLSearchParams(location.search);
-  const token = params.get('token') || localStorage.getItem('praxis_token') || '';
-  const vmName = params.get('vm') || 'praxis-vm';
-  document.getElementById('vm-name').textContent = vmName;
-  document.title = `Praxis VNC - ${vmName}`;
-  const wsUrl = `${wsProto}//${location.host}/api/vm/vnc/ws?token=${encodeURIComponent(token)}&vm=${encodeURIComponent(vmName)}`;
-
-  let currentRFB = null;
-  function connectRFB() {
-    if (currentRFB && currentRFB._rfb_connection_state === 'connected') return;
-    currentRFB = new RFB(screen, wsUrl, { shared: true, credentials: {} });
-    currentRFB.scaleViewport = true;
-    currentRFB.resizeSession = false;
-    currentRFB.addEventListener('connect', () => {
-      status.textContent = 'Connected';
-      status.className = 'connected';
-    });
-    currentRFB.addEventListener('disconnect', (e) => {
-      if (e.detail.clean) { status.textContent = 'Disconnected cleanly'; }
-      else {
-        status.textContent = 'Disconnected, reconnecting in 2s...';
-        status.className = '';
-        setTimeout(connectRFB, 2000);
-      }
-    });
-  }
-  connectRFB();
-
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') connectRFB();
-  });
-
-  window.toggleFullscreen = function() {
-    const el = document.getElementById('screen');
-    if (document.fullscreenElement) {
-      document.exitFullscreen();
-    } else {
-      el.requestFullscreen();
-    }
-  };
-</script>
-</body>
-</html>"#)
-}
-
-#[cfg(feature = "vm")]
-async fn vnc_ws_proxy(
-    State(state): State<Arc<DashboardState>>,
-    ws: axum::extract::ws::WebSocketUpgrade,
-    Query(params): Query<HashMap<String, String>>,
-) -> impl IntoResponse {
-    let token = params.get("token").cloned().unwrap_or_default();
-    let vm_name = params
-        .get("vm")
-        .cloned()
-        .unwrap_or_else(|| "praxis-vm".to_string());
-
-    let valid = !state.gateway_api_key.is_empty() && (token == state.gateway_api_key || jsonwebtoken::decode::<crate::gateway::auth::Claims>(&token, &jsonwebtoken::DecodingKey::from_secret(state.gateway_api_key.as_bytes()), &jsonwebtoken::Validation::default()).is_ok());
-    if !valid { return StatusCode::UNAUTHORIZED.into_response(); }
-    if crate::runtime::vm::runtime(&state.plugins).is_none() { return StatusCode::SERVICE_UNAVAILABLE.into_response(); }
-    ws.on_upgrade(move |socket| async move {
-        if let Err(e) = handle_vnc_proxy(socket, state.plugins.clone(), &vm_name).await {
-            tracing::warn!("VNC proxy error: {}", e);
-        }
-    }).into_response()
-}
-
-// Legacy noVNC alias uses the same authentication and registered VM service.
-#[cfg(feature = "vm")]
-async fn vnc_ws_proxy_noauth(state: State<Arc<DashboardState>>, ws: axum::extract::ws::WebSocketUpgrade, params: Query<HashMap<String, String>>) -> impl IntoResponse {
-    vnc_ws_proxy(state, ws, params).await
-}
-
-#[cfg(feature = "vm")]
-async fn handle_vnc_proxy(
-    socket: axum::extract::ws::WebSocket,
-    plugins: Arc<crate::plugins::PluginRegistry>,
-    vm_name: &str,
-) -> anyhow::Result<()> {
-    let manager = crate::runtime::vm::runtime(&plugins).ok_or_else(|| anyhow::anyhow!("VM feature unavailable"))?.inner.manager();
-
-    let vm_info = manager.get_vm_info(vm_name).await?;
-    let vnc_port = vm_info["vnc_port"]
-        .as_u64()
-        .ok_or_else(|| anyhow::anyhow!("VM has no VNC port"))? as u16;
-
-    let vnc_addr = format!("127.0.0.1:{}", vnc_port);
-    tracing::info!("VNC proxy connecting to {}", vnc_addr);
-
-    // Connect to QEMU VNC TCP port
-    let tcp = tokio::net::TcpStream::connect(&vnc_addr).await?;
-    let (tcp_read, tcp_write) = tcp.into_split();
-
-    let (ws_sink, ws_source) = socket.split();
-
-    // TCP -> WebSocket (binary frames)
-    let tcp_to_ws = async move {
-        let mut reader = tokio::io::BufReader::new(tcp_read);
-        let mut ws_sink = ws_sink;
-        let mut buf = vec![0u8; 65536];
-        loop {
-            use tokio::io::AsyncReadExt;
-            let n = match tokio::time::timeout(std::time::Duration::from_secs(55), reader.read(&mut buf)).await {
-                Ok(Ok(0)) => break,
-                Ok(Ok(n)) => n,
-                Ok(Err(_)) => break,
-                Err(_) => {
-                    if ws_sink.send(axum::extract::ws::Message::Ping(vec![])).await.is_err() {
-                        break;
-                    }
-                    continue;
-                }
-            };
-            if ws_sink
-                .send(axum::extract::ws::Message::Binary(buf[..n].to_vec()))
-                .await
-                .is_err()
-            {
-                break;
-            }
-        }
-    };
-
-    // WebSocket -> TCP (binary frames)
-    let ws_to_tcp = async move {
-        let mut writer = tokio::io::BufWriter::new(tcp_write);
-        let mut ws_source = ws_source;
-        while let Some(msg) = ws_source.next().await {
-            match msg {
-                Ok(axum::extract::ws::Message::Binary(data)) => {
-                    use tokio::io::AsyncWriteExt;
-                    if writer.write_all(&data).await.is_err() {
-                        break;
-                    }
-                    let _ = writer.flush().await;
-                }
-                Ok(axum::extract::ws::Message::Close(_)) => break,
-                Err(_) => break,
-                _ => {}
-            }
-        }
-    };
-
-    tokio::select! {
-        _ = tcp_to_ws => {},
-        _ = ws_to_tcp => {},
-    }
-
-    Ok(())
 }
 
 #[cfg(test)]

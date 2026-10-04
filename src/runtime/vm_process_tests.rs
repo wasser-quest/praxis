@@ -93,7 +93,7 @@ async fn vm_process_binding_is_read_only_until_host_initialization_and_keeps_sco
         .unwrap();
     assert_eq!(registry.tool_definitions().len(), 25);
     assert!(super::vm::guest_backend(&registry));
-    assert!(super::vm::runtime(&registry).is_none()); // UI bridge belongs to the next slice.
+    assert!(super::vm::runtime(&registry).is_none()); // Native screenshot/CLI bridge is not used in process mode.
     crate::db::tools::set_plugin_tool_enabled(&db, "vm_shell", true).unwrap();
     let user = format!("vm-process-{}", uuid::Uuid::new_v4());
     let _task = task(&db, &registry, dir.path(), &user);

@@ -5,6 +5,7 @@ pub mod retention;
 pub mod services;
 pub mod templates;
 pub mod vm;
+pub mod web;
 
 #[cfg(test)]
 mod vm_tests;

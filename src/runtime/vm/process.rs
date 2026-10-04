@@ -13,6 +13,7 @@ pub(super) struct VmProcessAdapter {
     spec: LaunchSpec,
     initialization: Value,
     client: OnceCell<Client>,
+    web: OnceCell<crate::runtime::web::WebEndpoint>,
     grants: super::Grants,
     preferences: Arc<dyn Fn(&str) -> anyhow::Result<Value> + Send + Sync>,
 }
@@ -60,16 +61,17 @@ impl VmProcessAdapter {
             owner: "vm".into(),
             service: "vm".into(),
             operations: super::TOOL_NAMES.iter().map(|op| (*op).into()).collect(),
-            controls: vec!["autostart".into()],
+            controls: vec!["autostart".into(), "web_info".into()],
             environment,
         };
         spec.validate()?;
-        let initialization = json!({"data_dir":data.to_string_lossy(), "arch":config.vm_arch, "socket_mode":config.vm_socket_mode, "cpu_cores":config.vm_cpu_cores, "ram_mb":config.vm_ram_mb, "disk_size":config.vm_disk_size});
+        let initialization = json!({"data_dir":data.to_string_lossy(), "arch":config.vm_arch, "socket_mode":config.vm_socket_mode, "cpu_cores":config.vm_cpu_cores, "ram_mb":config.vm_ram_mb, "disk_size":config.vm_disk_size, "web_token":uuid::Uuid::new_v4().simple().to_string()});
         let database = db.clone();
         Ok(Self {
             spec,
             initialization,
             client: OnceCell::new(),
+            web: OnceCell::new(),
             grants,
             preferences: Arc::new(move |user| {
                 let context = database.load_context(user)?;
@@ -104,8 +106,45 @@ impl NativeService for VmProcessAdapter {
     fn available(&self) -> bool {
         self.client.get().is_some_and(Client::available)
     }
+    fn web_descriptor(&self) -> Option<praxis_plugin_api::web::WebDescriptor> {
+        Some(super::web_descriptor())
+    }
+    fn web_aliases(&self) -> Vec<crate::runtime::web::WebAlias> {
+        super::legacy_web_aliases()
+    }
+    fn web_endpoint(&self) -> Option<crate::runtime::web::WebEndpoint> {
+        if !self.available() {
+            return None;
+        }
+        self.web.get().cloned()
+    }
     async fn initialize(&self) -> anyhow::Result<()> {
         let client = Client::launch(&self.spec, self.initialization.clone()).await?;
+        let info = async {
+            let info: praxis_plugin_api::web::WebInfo =
+                serde_json::from_value(client.control("web_info", serde_json::json!({})).await?)?;
+            info.validate("vm")?;
+            anyhow::ensure!(
+                info.descriptor == super::web_descriptor(),
+                "VM web contribution mismatch"
+            );
+            Ok::<_, anyhow::Error>(info)
+        }
+        .await;
+        let info = match info {
+            Ok(info) => info,
+            Err(error) => {
+                client.force_stop();
+                return Err(error);
+            }
+        };
+        let key = self.initialization["web_token"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Missing host web nonce"))?
+            .to_owned();
+        self.web
+            .set(crate::runtime::web::WebEndpoint::new(info, key))
+            .map_err(|_| anyhow::anyhow!("VM web binding is already initialized"))?;
         self.client
             .set(client)
             .map_err(|_| anyhow::anyhow!("VM binding is already initialized"))?;
