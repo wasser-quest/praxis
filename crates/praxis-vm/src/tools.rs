@@ -833,8 +833,6 @@ pub async fn save_screenshot_to_disk(
     let ss_dir = format!("{}/vm/{}/screenshots", data_dir, vm_name);
     std::fs::create_dir_all(&ss_dir).ok()?;
 
-    cleanup_screenshot_limit_dir(&ss_dir, limit);
-
     let ts = chrono::Local::now().format("%Y%m%d_%H%M%S_%f");
     let filename = format!("{}/screenshot_{}.png", ss_dir, ts);
 
@@ -844,6 +842,7 @@ pub async fn save_screenshot_to_disk(
             match ppm_to_png(&bytes) {
                 Ok(png_bytes) => {
                     std::fs::write(&filename, &png_bytes).ok()?;
+                    cleanup_screenshot_limit_dir(&ss_dir, limit.max(1));
                     // Clean up the temporary PPM file
                     let _ =
                         std::fs::remove_file(format!("{}/vm/{}/screenshot.ppm", data_dir, vm_name));
@@ -855,6 +854,7 @@ pub async fn save_screenshot_to_disk(
             }
             let ppm_filename = format!("{}/screenshot_{}.ppm", ss_dir, ts);
             std::fs::write(&ppm_filename, bytes).ok()?;
+            cleanup_screenshot_limit_dir(&ss_dir, limit.max(1));
             let _ = std::fs::remove_file(format!("{}/vm/{}/screenshot.ppm", data_dir, vm_name));
             return Some(ppm_filename);
         }
@@ -893,7 +893,9 @@ async fn handle_vm_look_screenshot(manager: &VmManager, args: &serde_json::Value
         .into_iter()
         .flatten()
         .filter_map(|e| e.ok())
-        .filter(|e| e.file_name().to_string_lossy().ends_with(".png"))
+        .filter(|e| {
+            matches!(e.path().extension().and_then(|s| s.to_str()), Some("png" | "ppm"))
+        })
         .map(|e| e.path().to_string_lossy().to_string())
         .collect();
 
@@ -948,7 +950,9 @@ fn cleanup_screenshot_limit_dir(ss_dir: &str, max_screenshots: usize) {
         .into_iter()
         .flatten()
         .filter_map(|e| e.ok())
-        .filter(|e| e.file_name().to_string_lossy().ends_with(".png"))
+        .filter(|e| {
+            matches!(e.path().extension().and_then(|s| s.to_str()), Some("png" | "ppm"))
+        })
         .filter_map(|e| {
             let time = e.metadata().and_then(|m| m.modified()).ok()?;
             Some((e.path(), time))
@@ -960,7 +964,7 @@ fn cleanup_screenshot_limit_dir(ss_dir: &str, max_screenshots: usize) {
     }
 
     // Sort oldest first
-    files.sort_by_key(|(_, t)| *t);
+    files.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
 
     // Delete oldest files to get back to limit
     let to_delete = files.len() - max_screenshots;

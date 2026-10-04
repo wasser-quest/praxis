@@ -94,7 +94,8 @@ cargo tree -p praxis --no-default-features
 Tests serve real package assets, launch the actual worker, relay binary VNC data
 against a local TCP/QMP fixture, check authentication and forced disconnect, and
 preserve existing storage. Real guest installation, keyboard/mouse interaction
-and desktop rendering remain operator smoke checks. Independent VM CLI support,
-guest ownership and complete upgrade/recovery policy finish PR 3; the whole
+and desktop rendering remain operator smoke checks. Independent VM CLI and
+screenshot delivery are implemented; guest ownership and complete upgrade/recovery
+policy finish PR 3. The whole
 dashboard listener/UI becomes optional in PR 4. POML, contexts, states, Decision
 IR and verified execution remain runtime services throughout.

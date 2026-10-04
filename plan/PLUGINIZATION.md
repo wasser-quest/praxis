@@ -13,7 +13,8 @@ configuration, native service ownership, guest-scoped results and credential
 grants. A compatibility installation preset preserves the shipped distribution.
 The VM also supports an installed headless worker through process protocol v1,
 with handshake/health, caller scope, deadlines, cancellation and crash handling.
-Manifest v2, generic process declarations, route/UI registration and
+VM routes/UI, standalone CLI and screenshot delivery are package-owned as well.
+Manifest v2, generic process declarations, guest ownership/recovery and
 minimal startup below remain implementation targets.
 
 ## 1. Decision and scope
@@ -456,7 +457,7 @@ manifest as finished pluginization.
 
 PR 1's native foundation and PR 2's headless VM adapter are implemented.
 PR 3's process transport and package-owned VM routes/VNC/dashboard contribution
-are implemented. Next finish independent CLI, guest ownership and upgrade/recovery
+and package-owned CLI/screenshot delivery are implemented. Next finish guest ownership and upgrade/recovery
 policy, then extract the whole dashboard in PR 4. The compatibility
 preset is available ahead of PR 7;
 the final minimal distribution still requires the remaining extractions.

@@ -85,10 +85,11 @@ enum Cli {
         action: PluginAction,
     },
     /// Manage QEMU virtual machines (optional native package)
-    #[cfg(feature = "vm")]
+    #[command(disable_help_flag = true)]
     Vm {
-        #[command(subcommand)]
-        action: praxis::runtime::vm::cli::VmAction,
+        /// Arguments interpreted by the installed VM package
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<std::ffi::OsString>,
     },
     /// Create a backup of all Praxis data
     Backup {
@@ -291,6 +292,9 @@ async fn run() -> anyhow::Result<()> {
         return Ok(());
     }
     load_dotenv();
+    if let Cli::Vm { args } = &cli {
+        return praxis::runtime::vm::cli::run(args).await;
+    }
 
     // Service and Plugin commands don't need logging setup
     if let Cli::Service { action } = &cli {
@@ -360,8 +364,7 @@ async fn run() -> anyhow::Result<()> {
         Cli::Onboard { interactive: false } => {
             anyhow::bail!("Onboard requires --interactive flag");
         }
-        #[cfg(feature = "vm")]
-        Cli::Vm { action } => return praxis::runtime::vm::cli::run(action).await,
+        Cli::Vm { .. } => unreachable!(),
         Cli::Backup {
             output,
             no_disks,
@@ -1127,6 +1130,16 @@ mod tests {
     fn test_cli_parsing_recover_patches() {
         let cli = Cli::try_parse_from(["praxis", "recover-patches", "--directory", "/synthetic/workspace"]).unwrap();
         assert!(matches!(cli, Cli::RecoverPatches { directory } if directory == PathBuf::from("/synthetic/workspace")));
+    }
+
+    #[test]
+    fn test_cli_forwards_vm_arguments_to_the_package_in_every_build() {
+        for args in [vec!["status"], vec!["--help"], vec!["start", "--iso", "/a path/to/install.iso"], vec!["shell", "--name", "desktop", "printf", "a b"]] {
+            let mut command = vec!["praxis", "vm"];
+            command.extend(&args);
+            let cli = Cli::try_parse_from(command).unwrap();
+            assert!(matches!(cli, Cli::Vm { args: forwarded } if forwarded == args.iter().map(std::ffi::OsString::from).collect::<Vec<_>>()));
+        }
     }
 
     #[test]

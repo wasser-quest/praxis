@@ -101,11 +101,12 @@ and preservation of disabled tools. The no-VM dependency tree excludes `praxis-v
 - [x] Package-owned VM routes, authenticated VNC sessions and embedded noVNC assets/licenses.
 - [x] VM dashboard contribution via generic host extension slots, with native or process backend.
 - [x] HTTP/VNC sessions participate in service drain/forced disconnect; guests/disks survive.
-- [ ] Automatic screenshot delivery over the process boundary.
-- [ ] Independent CLI contributions and complete VM ownership/upgrade recovery policy.
+- [x] Screenshot delivery and image-context loading with native or process backend.
+- [x] Package-owned VM CLI parsing/execution, with a core-only forwarding entry point.
+- [ ] Complete VM ownership/upgrade recovery policy.
 
 See [process hosting](../docs/PLUGIN_PROCESS_PROTOCOL.md). The full PR 3 checkbox
-remains open for independent CLI, guest ownership and full upgrade/recovery policy. Generic v2
+remains open for guest ownership and full upgrade/recovery policy. Generic v2
 process declarations and immutable package publication are still future work.
 
 Verification: 978 library tests with the native VM engine and 971 without it,
@@ -126,7 +127,16 @@ The actual worker serves its embedded UI, and a TCP/QMP fixture verifies binary
 VNC relay and forced disconnect without stopping a committed guest. See
 [web contribution architecture and migration](../docs/PLUGIN_WEB_CONTRIBUTIONS.md).
 
-Next: finish PR 3's independent VM CLI and guest ownership/upgrade policy, then
+The CLI/screenshot slice passed 984 native-build and 979 core-only library tests
+with real POML (48 integration tests remain opt-in), 17 CLI tests in each build,
+and 37 protocol/engine/web/worker tests. Actual-worker QMP fixtures cover PNG
+capture, PNG/PPM retention, media insertion, force-stop request acknowledgement,
+read-only attachment and unchanged guest credentials. A compiled core-only host
+and installed worker passed CLI help/status, QMP-to-PNG delivery, VM API/UI/assets
+and legacy-alias smoke checks without provider credentials. Its dependency tree
+excludes all three VM crates. No live model inference or real guest boot was used.
+
+Next: finish PR 3's guest ownership/upgrade policy, then
 make the whole dashboard optional in PR 4. Runtime-control and the remaining
 feature/tool packages follow; POML/context/SM/IR verification stays in core.
 

@@ -8,8 +8,9 @@ authenticated invocation identity, user preferences and explicit credentials.
 
 `plugins/vm/plugin.json` declares the tools through native invocation API v1.
 `src/runtime/vm.rs` binds the implementation, selects the legacy execution backend
-and supplies the user's keyboard/screenshot settings. CLI commands are contributed
-by `src/runtime/vm/cli.rs`; the entry point registers them only in builds with VM.
+and supplies the user's keyboard/screenshot settings. `crates/praxis-vm/src/cli.rs`
+owns CLI parsing and execution; `src/runtime/vm/cli.rs` forwards operator arguments
+to the selected package, including in builds without the engine.
 Creating/registering the backend does not create guest directories or processes.
 The optional `praxis-vm-service` worker initializes separately at host startup.
 Guest names use 1–80 ASCII letters, digits, underscores, hyphens or dots; storage
@@ -59,6 +60,59 @@ returned screenshot artifacts. `settings.vm_keyboard_layout`,
 `settings.vm_screenshot_enabled` and `settings.vm_screenshot_limit` are resolved
 for the authenticated caller, with no `default`-user database fallback.
 
+## Operator CLI and screenshots
+
+With the worker installation and `.env` from [installation presets](INSTALLATION_PRESETS.md#install-the-headless-vm-worker):
+
+```bash
+cd "$PRAXIS_INSTALL"
+./praxis vm --help
+./praxis vm status
+./praxis vm list-isos
+./praxis vm disk list
+./praxis vm add-iso /absolute/path/to/linux.iso --name linux
+./praxis vm start --name praxis-vm --iso linux
+./praxis vm screenshot --name praxis-vm --output /absolute/path/to/screenshot.png
+./praxis vm shell --name praxis-vm --timeout 30 "uname -a"
+./praxis vm shutdown --name praxis-vm
+# Immediate QMP quit request, if needed:
+./praxis vm stop --name praxis-vm --force
+```
+
+Use the same `DATA_DIR`, architecture and socket mode as the running service.
+The CLI does not start the dashboard, load the database, unlock credentials or
+initialize inference. It uses `praxis-vm-service --cli` with literal arguments and
+bounded public settings on stdin; no shell wrapper or provider/admin environment
+is forwarded. Without `VM_SERVICE_EXECUTABLE`, a compatibility build uses the same
+package implementation in-process. A configured worker failure never selects the
+native engine. Commands report failures through a nonzero exit status.
+
+Existing guests attach through their configured QMP endpoint after its name is
+checked. Missing guests are not started by status/screenshot/stop commands. Unix
+status discovers per-guest sockets in `DATA_DIR/vm`; TCP status currently checks
+the default `praxis-vm` endpoint. Per-guest TCP metadata/port allocation belongs to
+the remaining ownership/recovery work. Shutdown/force-stop acknowledge the QMP
+request; they do not claim independently verified guest termination. Manual
+starts receive no credential grants, while read-only attachment leaves existing
+guest credentials untouched. CLI screenshots save PNG bytes; CD commands execute
+the actual QMP media operation.
+
+Automatic screenshots work with either backend. Enable them for the user:
+
+```json
+{"settings":{"vm_screenshot_enabled":true,"vm_screenshot_limit":100}}
+```
+
+Explicit screenshot delivery can capture even when automatic capture is disabled.
+The worker receives that user's host-resolved preferences, never an operand-chosen
+identity or data directory. Capture/delivery shares the binding's drain and forced
+cancellation, has a ten-second capture budget, and cannot restart a dead worker.
+Returned files must stay in the selected guest's screenshot directory; traversal
+and escaped symlinks are rejected. Image context loading also checks the live
+binding and storage path, including with a core-only host. Retention runs after
+each saved image, counts PNG and PPM files, and keeps at least the current image
+when the configured limit is zero. Guest results remain `verified: false`.
+
 ## Credential grants
 
 Edit only these fields in the installed VM manifest, retaining its tool table:
@@ -102,10 +156,9 @@ and a generic bounded proxy keep public authority outside the worker. See
 backend, including a core built without the VM crates. Manual dashboard starts
 use explicit request layout (default `us`) and no implicit credential grants.
 
-Independent CLI, per-user VM ownership and complete upgrade/recovery policy are
-remaining PR 3 work. Automatic screenshot delivery through the native host bridge
-is still native-only; worker tool results retain screenshot paths. Update host
-and worker together and refresh dashboard assets; older workers lack `web_info`.
+Per-user VM ownership and complete upgrade/recovery policy are remaining PR 3
+work. Update host and worker together and refresh dashboard assets; older workers
+lack the required `capture` control or the independent `--cli` entry point.
 
 ## Verification
 

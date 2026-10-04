@@ -1,3 +1,4 @@
+pub mod cli;
 pub mod qmp;
 pub mod runtime;
 pub mod secrets_inject;
@@ -481,36 +482,27 @@ impl VmManager {
         self.set_installation_disks(&disks)
     }
 
-    /// Start a VM with the given config
-    pub async fn start_vm(&self, config: VmConfig) -> anyhow::Result<String> {
-        self.start_vm_with_grants(config, &std::collections::BTreeMap::new())
-            .await
+    /// Connect only to the configured existing QMP endpoint. This never starts
+    /// QEMU, creates storage, rewrites credentials or guesses process ownership.
+    pub async fn attach_existing(&self, config: VmConfig) -> anyhow::Result<bool> {
+        self.attach_with_grants(config, None).await
     }
 
-    pub async fn start_vm_with_grants(
+    async fn attach_with_grants(
         &self,
         config: VmConfig,
-        grants: &std::collections::BTreeMap<String, String>,
-    ) -> anyhow::Result<String> {
+        grants: Option<&std::collections::BTreeMap<String, String>>,
+    ) -> anyhow::Result<bool> {
         validate_vm_name(&config.name)?;
-        anyhow::ensure!(
-            config.cpu_cores > 0 && config.cpu_cores <= 128 && config.ram_mb >= 128,
-            "Invalid VM resources"
-        );
-        anyhow::ensure!(config.vnc_port >= 5900, "Invalid VNC port");
-        secrets_inject::validate_grants(grants)?;
         let mut instances = self.instances.write().await;
-        if let Some(inst) = instances.get(&config.name) {
-            if inst.status == VmStatus::Running {
-                return Ok(format!("VM '{}' is already running", config.name));
-            }
+        if instances
+            .get(&config.name)
+            .is_some_and(|vm| vm.status == VmStatus::Running)
+        {
+            return Ok(true);
         }
-
         // Reattach an existing guest instead of matching/killing arbitrary processes.
         // Startup does not delete disks or terminate an existing VM.
-        let vm_dir = format!("{}/vm/{}", self.data_dir, config.name);
-        let qmp_sock = format!("{}/qmp.sock", vm_dir);
-        let serial_sock = format!("{}/serial.sock", vm_dir);
         if let Ok(Ok(mut qmp)) = tokio::time::timeout(
             std::time::Duration::from_secs(2),
             qmp::QmpClient::connect(&config.qmp_connect_addr()),
@@ -528,11 +520,13 @@ impl VmManager {
                     actual_name == config.name,
                     "Existing QMP endpoint belongs to a different VM"
                 );
-                secrets_inject::inject_secrets(
-                    &config.name,
-                    std::path::Path::new(&self.data_dir),
-                    grants,
-                )?;
+                if let Some(grants) = grants {
+                    secrets_inject::inject_secrets(
+                        &config.name,
+                        std::path::Path::new(&self.data_dir),
+                        grants,
+                    )?;
+                }
                 let serial = tokio::time::timeout(
                     std::time::Duration::from_secs(1),
                     serial::SerialShell::connect(&config.serial_connect_addr()),
@@ -553,9 +547,55 @@ impl VmManager {
                         keyboard_layout: config.keyboard_layout.clone(),
                     },
                 );
-                return Ok(format!("VM '{}' reattached", config.name));
+                return Ok(true);
             }
         }
+        Ok(false)
+    }
+
+    /// Start a VM with the given config
+    pub async fn start_vm(&self, config: VmConfig) -> anyhow::Result<String> {
+        self.start_vm_with_grants(config, &std::collections::BTreeMap::new())
+            .await
+    }
+
+    pub async fn start_vm_with_grants(
+        &self,
+        config: VmConfig,
+        grants: &std::collections::BTreeMap<String, String>,
+    ) -> anyhow::Result<String> {
+        validate_vm_name(&config.name)?;
+        anyhow::ensure!(
+            config.cpu_cores > 0 && config.cpu_cores <= 128 && config.ram_mb >= 128,
+            "Invalid VM resources"
+        );
+        anyhow::ensure!(config.vnc_port >= 5900, "Invalid VNC port");
+        secrets_inject::validate_grants(grants)?;
+        let instances = self.instances.read().await;
+        if let Some(inst) = instances.get(&config.name) {
+            if inst.status == VmStatus::Running {
+                return Ok(format!("VM '{}' is already running", config.name));
+            }
+        }
+
+        drop(instances);
+        if self
+            .attach_with_grants(config.clone(), Some(grants))
+            .await?
+        {
+            return Ok(format!("VM '{}' reattached", config.name));
+        }
+        let mut instances = self.instances.write().await;
+        // Concurrent callers may have attached while this caller was connecting.
+        if instances
+            .get(&config.name)
+            .is_some_and(|vm| vm.status == VmStatus::Running)
+        {
+            return Ok(format!("VM '{}' is already running", config.name));
+        }
+        let vm_dir = format!("{}/vm/{}", self.data_dir, config.name);
+        let qmp_sock = format!("{}/qmp.sock", vm_dir);
+        let serial_sock = format!("{}/serial.sock", vm_dir);
         secrets_inject::inject_secrets(&config.name, std::path::Path::new(&self.data_dir), grants)?;
         self.prepare_storage()?;
         // Clean up stale sockets
@@ -762,6 +802,40 @@ impl VmManager {
             config.vnc_port,
             config.qmp_connect_addr(),
             config.serial_connect_addr()
+        ))
+    }
+
+    pub async fn request_shutdown(&self, name: &str) -> anyhow::Result<String> {
+        let mut instances = self.instances.write().await;
+        let instance = instances
+            .get_mut(name)
+            .ok_or_else(|| anyhow::anyhow!("VM not found"))?;
+        instance
+            .qmp
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("QMP unavailable"))?
+            .system_powerdown()
+            .await?;
+        Ok(format!(
+            "Shutdown requested for VM '{}'; completion is not yet verified",
+            name
+        ))
+    }
+
+    pub async fn force_stop_vm(&self, name: &str) -> anyhow::Result<String> {
+        let mut instances = self.instances.write().await;
+        let instance = instances
+            .get_mut(name)
+            .ok_or_else(|| anyhow::anyhow!("VM not found"))?;
+        instance
+            .qmp
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("QMP unavailable"))?
+            .quit()
+            .await?;
+        Ok(format!(
+            "Quit requested for VM '{}'; completion is not yet verified",
+            name
         ))
     }
 

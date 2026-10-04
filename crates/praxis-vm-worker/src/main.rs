@@ -52,7 +52,7 @@ impl Service for Worker {
             owner: "vm".into(),
             service: "vm".into(),
             operations: OPERATIONS.iter().map(|op| (*op).into()).collect(),
-            controls: vec!["autostart".into(), "web_info".into()],
+            controls: vec!["autostart".into(), "web_info".into(), "capture".into()],
         }
     }
     async fn initialize(&mut self, mut initialization: Value) -> anyhow::Result<()> {
@@ -106,6 +106,21 @@ impl Service for Worker {
             .await
     }
     async fn control(&self, operation: &str, input: Value) -> anyhow::Result<Value> {
+        if operation == "capture" {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Capture {
+                name: String,
+                preferences: VmPreferences,
+            }
+            let input: Capture = serde_json::from_value(input)?;
+            praxis_vm::validate_vm_name(&input.name)?;
+            return Ok(serde_json::to_value(
+                self.runtime()?
+                    .capture(&input.name, input.preferences.screenshot_limit)
+                    .await,
+            )?);
+        }
         if operation == "web_info" {
             return Ok(serde_json::to_value(
                 self.web
@@ -128,8 +143,12 @@ impl Service for Worker {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> std::process::ExitCode {
-    if std::env::args().skip(1).collect::<Vec<_>>() != ["--stdio"] {
-        eprintln!("praxis-vm-service requires --stdio and a Praxis host");
+    let args: Vec<_> = std::env::args_os().skip(1).collect();
+    if args.first().is_some_and(|arg| arg == "--cli") {
+        return praxis_vm::cli::from_host_stdin(&args[1..]).await;
+    }
+    if args != ["--stdio"] {
+        eprintln!("praxis-vm-service requires --stdio or --cli");
         return std::process::ExitCode::FAILURE;
     }
     match praxis_plugin_api::serve(
