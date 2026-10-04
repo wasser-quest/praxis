@@ -14,6 +14,16 @@ pub fn reset_task_completion(db: &Database, user_id: &str) -> anyhow::Result<()>
 }
 pub fn reset_task_completion_in(db: &Database, root: &Path, user_id: &str) -> anyhow::Result<()> {
     let mut ctx = db.load_context(user_id)?;
+    if reset_completion(&mut ctx, root)? {
+        db.save_context(&ctx)?;
+        tracing::debug!(user_id, "Cleared previous task completion flag");
+    }
+    Ok(())
+}
+
+/// Read-only preparation is also used by inference setup validation. Do not
+/// clear persisted completion or emit context events when setup is incomplete.
+pub(crate) fn reset_completion(ctx: &mut Context, root: &Path) -> anyhow::Result<bool> {
     if ctx.settings.done {
         ctx.settings.done = false;
         if let Ok(sm) = crate::sm::load_file_in(&root.join("contexts"), workflow_name(&ctx)) {
@@ -29,7 +39,7 @@ pub fn reset_task_completion_in(db: &Database, root: &Path, user_id: &str) -> an
                     crate::sm::apply_state(&sm, &mut value, start),
                     "Graph start cannot be applied"
                 );
-                ctx = serde_json::from_value(value)?;
+                *ctx = serde_json::from_value(value)?;
                 ctx.settings.active_state = ctx.active_state.clone();
                 anyhow::ensure!(
                     (ctx.user_id.clone(), ctx.session_id.clone()) == identity,
@@ -41,10 +51,9 @@ pub fn reset_task_completion_in(db: &Database, root: &Path, user_id: &str) -> an
                 );
             }
         }
-        db.save_context(&ctx)?;
-        tracing::debug!(user_id, "Cleared previous task completion flag");
+        return Ok(true);
     }
-    Ok(())
+    Ok(false)
 }
 
 pub const OMITTED_HISTORY_IMAGES_NOTICE: &str = "Some earlier inline images are omitted from this request by the configured history-image policy. Their saved text/path references remain. Re-read relevant images with enabled tools before making visual claims; images read by the current task are eligible for the latest-two image window.";
@@ -193,6 +202,7 @@ pub fn prepare_runtime(
     turn: Option<i32>,
     channel_id: Option<&str>,
 ) -> anyhow::Result<Context> {
+    super::task_control::check_registry(user_id, &state.plugins)?;
     let mut ctx = state.db.load_context(user_id)?;
     if let Some(turn) = turn {
         ctx.turn = turn;

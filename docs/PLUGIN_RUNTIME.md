@@ -66,6 +66,70 @@ the gateway binds its listener. A blocked or failing feature worker no longer
 holds up the core retention tick. The cron adapter preserves the existing job
 check behavior; this change does not implement new scheduled inference.
 
+## Task registry revisions
+
+Before task routing, discovery or inference, Praxis captures an owned immutable
+registry snapshot and its `praxis.registry.v1` SHA-256. Package order and JSON map
+insertion order do not change the hash. It covers resolved declarations: package
+identity/version, schemas, handlers, contracts, defaults, credential-grant names
+and manifest enable flags, with the native API/application version as a domain.
+Context default collisions now resolve in package-name order rather than hash-map
+iteration order. Secret-store credential values are excluded.
+
+The shared dispatcher checks that revision before lowering Decision IR or
+looking up a handler. Direct task-owned plugin execution and receipt creation
+also check pinned declarations. A changed registry is rejected before execution;
+a new task can pin the new declarations. Action receipts carry
+`registry_revision`. Snapshot teardown follows task teardown, including failure
+and cancellation. Persisted tool enable flags are checked live at dispatch, so
+pinning does not grant permission to use a disabled tool.
+
+This identifies declarations, not script contents or native executable bytes.
+The running gateway still loads its registry at startup; this is not hot reload,
+immutable package installation or sidecar service-handle publication.
+
+## Management and inference readiness
+
+Praxis starts with incomplete inference-provider setup. Host authentication,
+resilience configuration, workspace validity and owner-catalog checks still
+apply. `/health` reports process health. Authenticated `/api/status` adds
+`inference.ready` and a non-retryable setup diagnostic; context/session APIs and
+provider administration remain usable. These operations read metadata without
+constructing inference clients or sending a provider request. Clients initialize
+once per router generation on inference use; explicit provider login can rebuild
+the router as before.
+
+Chat, WebSocket messages and direct agent entry first plan the trusted workflow
+on an in-memory context, including the next entry node of a completed graph.
+They check workspace/capability setup and the planned provider plus explicit
+fallbacks. An unavailable provider returns `provider_not_configured` without
+clearing persisted completion, changing graph state, saving input, creating
+verification tickets or registering an agent input queue. REST chat returns
+HTTP 503 with the existing `success/response/error` body; WebSocket reports the
+setup error and stays usable. Missing default-provider setup also skips the
+WebSocket session GPU prewarm. A configured session/workflow override can run
+even when the installation default is missing.
+
+Readiness means a provider is configured/registered, not that its server or model
+is reachable. Ollama and llama.cpp remain key-optional endpoint adapters.
+`/login` and `/v1/providers/login` retain their explicit endpoint/login checks and
+hot-swap behavior; correcting setup takes effect without restarting the gateway.
+
+For example, with normal host credentials and local assets configured:
+
+```bash
+USE_PROVIDER=openai cargo run -- run --no-discord --no-dashboard
+# No OpenAI key is needed to start the management listener.
+curl http://localhost:3537/health
+curl http://localhost:3537/api/status \
+  -H "Authorization: Bearer $GATEWAY_API_KEY"
+```
+
+To enable inference, use `/login ollama <api_base> <model>` and select
+`settings.provider=ollama` / `settings.model=<model>` in context, or log into the
+selected default provider. The management test suite uses temporary local assets,
+empty plugin registries and synthetic providers; it makes no paid inference calls.
+
 ## Compatibility and remaining work
 
 All current native tools are still present. This change does not yet reduce them
@@ -74,9 +138,9 @@ packages. The shared dispatcher temporarily contains their native adapters.
 Agent VM redirection and chat host-file/terminal behavior remain distinct through
 an explicit dispatch mode, ready for the later execution-backend extraction.
 
-The worker API is an in-process migration adapter. Service-backed tool handles,
-registry revision pinning and provider-independent management startup are still
-tracked in [PR 1](../plan/README.md). Sidecar IPC, installable service manifests,
+The worker API is an in-process migration adapter. Service-backed tool handles
+and a versioned invocation/context API remain in [PR 1](../plan/README.md).
+Sidecar IPC, installable service manifests,
 feature-process lifecycle and dependency removal remain subsequent work.
 Contracts/receipts retain their meanings; plugin processes remain operator-trusted.
 
@@ -92,10 +156,19 @@ output-archival and tool-loop suites remain the regression checks.
 core transition delivery, real POML before/after a state change, missing-plugin
 setup errors, template catalog metadata and independent service lifecycle/retention.
 
-Validated without live model inference: 929 library tests, 15 CLI tests and two
-real Cargo-based project IR tests passed. The library run requires the real POML
+`gateway::foundation_tests` verifies stable declaration hashing, snapshot lifetime,
+live disable with pinned IR dispatch, receipt revisions, rejection of changed
+registries through native/IR/direct execution, lazy client inventory, authenticated
+management HTTP routes, WebSocket setup recovery, preserved completed graphs,
+workflow provider overrides, router swaps and invalid host settings.
+
+Validated without live model inference: 941 library tests, 15 CLI tests and seven
+selected integration tests passed. Three integration cases use real Cargo for
+project-root isolation and chat/agent IR execution; four use scripted models to
+check retry/history retention, WebSocket stop/retry, graph restart/navigation and
+IR source rollback/completion. The library run requires the real POML
 CLI, including the plugin-free render regression and all shipped root templates.
-It leaves 48 cases ignored by existing annotations; the two Cargo IR cases were
-then selected and run separately. New modules pass rustfmt checks; documentation
+It leaves 48 cases ignored by existing annotations; those seven cases were
+selected and run separately. New modules pass rustfmt checks; documentation
 links resolve. Homepage source/docs links, metadata and clone commands now use
 `https://github.com/wasser-quest/praxis` and were checked in the HTML.

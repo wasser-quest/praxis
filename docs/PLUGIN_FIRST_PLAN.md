@@ -51,7 +51,9 @@ POML rendering, contexts and state machines remain available without feature
 plugins. Node and `POML_CLI` are still required for full POML syntax. Local
 `templates/` and `contexts/` work without an asset package; a workflow declaring
 an unavailable plugin capability fails setup. Core events/template sync and
-independent retention now support the headless path. See
+independent retention now support the headless path. Management starts without
+an inference provider, clients initialize lazily and tasks pin registry
+declarations. Service-backed feature handles remain the next foundation item. See
 [plugin-free workflows](CORE_WORKFLOWS.md) for the tested behavior and commands.
 
 Existing [verified coding roles](VERIFIED_CODING_ROLES.md),

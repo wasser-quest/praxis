@@ -18,9 +18,13 @@ and `contexts/` files.
 | View Graphs, Messages or chat in a browser | Dashboard frontend |
 
 Rendering and local graph operations can be tested without contacting an
-inference provider. The running application currently validates the selected
-provider at startup; provider-independent management startup remains in
-[milestone PR 1](../plan/README.md). A missing feature plugin does not prevent a
+inference provider. The running application also starts management with incomplete
+provider setup. Health, authenticated status/context APIs and provider login stay
+available; provider clients initialize on inference use or explicit login. Chat
+and direct agents validate the planned workflow's selected provider before
+persisting context/history or binding receipts. See
+[management readiness](PLUGIN_RUNTIME.md#management-and-inference-readiness).
+A missing feature plugin does not prevent a
 plain POML/SM workflow, but it does prevent a workflow that declares that plugin's
 capabilities. That case produces a non-retryable setup error; the model cannot
 replace the owner, invent a receipt or change the workspace to bypass it.
@@ -48,8 +52,10 @@ checks versions, IDs and duplicate ownership before starting a callback. Disable
 blocks new ticks and drains the current tick within a deadline; timeout or host
 drop aborts the worker. Core output retention, cron checks and shell job cleanup
 are separate services. Retention remains usable with cron/shell absent or blocked.
-This worker adapter does not implement sidecar IPC, feature-process shutdown,
-package revision pinning or installable v2 service manifests.
+This worker adapter does not implement sidecar IPC, feature-process shutdown or
+installable v2 service manifests. Tasks separately pin an immutable snapshot and
+SHA-256 of resolved registry declarations. That pin does not attest script or
+binary contents and is not an atomic package-upgrade mechanism.
 
 ## Reproducible checks
 

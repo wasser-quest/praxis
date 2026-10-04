@@ -119,7 +119,6 @@ pub async fn run_agent_loop(
     feedback_tx: Option<tokio::sync::mpsc::UnboundedSender<String>>,
 ) -> anyhow::Result<AgentLoopResult> {
     let _task = crate::gateway::task_control::begin(user_id)?;
-    crate::gateway::prompt::reset_task_completion_in(&state.db, std::path::Path::new(&state.config.root_dir), user_id)?;
     run_agent_loop_in_task(state, user_id, user_message_input, config, feedback_tx).await
 }
 
@@ -131,6 +130,7 @@ pub(crate) async fn run_agent_loop_in_task(
     config: AgentLoopConfig,
     feedback_tx: Option<tokio::sync::mpsc::UnboundedSender<String>>,
 ) -> anyhow::Result<AgentLoopResult> {
+    super::inference::check_task(state, user_id, user_message_input, None, config.sm_file.as_deref())?;
     let result = run_agent_loop_inner(state, user_id, user_message_input, config, feedback_tx).await;
     // Strict rendering/DB errors must not leave a ghost active loop behind.
     unregister_active_loop(user_id).await;
@@ -194,6 +194,9 @@ async fn run_agent_loop_inner(
     }
     let workspace = state.config.workspace_root()?;
     let root = std::path::Path::new(&state.config.root_dir);
+    // Match read-only preflight: apply the supplied workflow default before
+    // restarting a completed graph, then save only after setup succeeds.
+    super::prompt::reset_completion(&mut ctx, root)?;
     let candidate = super::workflow_actions::plan(root, &ctx, &user_message, &state.plugins, None)?;
     let workflow = crate::sm::load_file_in(&root.join("contexts"), super::prompt::workflow_name(&candidate)).map_err(|e| anyhow::anyhow!("{e}"))?;
     super::workflow_preflight::validate(&state.db, &state.plugins, super::prompt::workflow_name(&candidate), &workflow, &candidate)?;

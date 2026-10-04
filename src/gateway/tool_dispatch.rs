@@ -55,6 +55,9 @@ async fn dispatch(
     plugins: &crate::plugins::PluginRegistry,
     mode: DispatchMode,
 ) -> String {
+    if let Err(error) = super::task_control::check_registry(user_id, plugins) {
+        return format!("Error: {error}; tool not executed");
+    }
     tracing::info!(tool = %tc.function.name, args_bytes = tc.function.arguments.len(), "execute_tool_call: dispatching");
 
     let resolved;

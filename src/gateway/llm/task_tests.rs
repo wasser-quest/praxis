@@ -122,8 +122,19 @@ async fn resilience_gateway_histories_survive_retries_and_exhaustion_on_both_pat
     for max_turns in [1, 4] {
         for exhausted in [false, true] {
             let (dir, db, router, calls) = fixture(exhausted);
+            // Test retry/history semantics with an isolated trusted workflow.
+            // Production role permissions must not implicitly authorize this
+            // synthetic provider's raw terminal action.
+            std::fs::create_dir(dir.path().join("contexts")).unwrap();
+            std::fs::create_dir(dir.path().join("templates")).unwrap();
+            std::fs::write(dir.path().join("contexts/retries.sm"), "[state standard]\nsettings.provider = synthetic\nsettings.system_template = standard\nsettings.activated_tools = [\"execute_terminal\",\"agent_complete\"]\n").unwrap();
+            std::fs::write(dir.path().join("templates/standard.poml"), "<poml><role>Offline retry fixture</role></poml>").unwrap();
+            std::fs::write(dir.path().join("templates/user.poml"), include_str!("../../../templates/user.poml")).unwrap();
             let user = format!("resilience-gateway-{max_turns}-{exhausted}");
             let mut ctx = db.load_context(&user).unwrap();
+            ctx.sm_file = Some("retries".into());
+            ctx.settings.sm_file = ctx.sm_file.clone();
+            ctx.settings.system_template = Some("standard".into());
             ctx.settings.provider = Some("synthetic".into());
             ctx.settings.max_llm_turns = Some(max_turns);
             ctx.settings.history_with_toolcalls = true;
@@ -131,7 +142,11 @@ async fn resilience_gateway_histories_survive_retries_and_exhaustion_on_both_pat
             db.save_context(&ctx).unwrap();
             let state = crate::gateway::GatewayState {
                 db: db.clone(),
-                config: crate::config::Config::from_env(),
+                config: crate::config::Config {
+                    root_dir: dir.path().to_string_lossy().into_owned(),
+                    workspace_dir: None,
+                    ..crate::config::Config::from_env()
+                },
                 secrets: Default::default(),
                 llm: crate::gateway::LlmHandle::new(router),
                 plugins: Arc::new(crate::plugins::PluginRegistry::new()),

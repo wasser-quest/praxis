@@ -353,6 +353,11 @@ mod capability_dispatch_tests {
     async fn decision_ir_rejects_wrong_owners_and_legacy_uncontracted_targets() {
         let (_dir, _root, db, mut registry, user, task) = ir_fixture();
         drop(task);
+        // Package declarations are pinned by the first dispatch. Arrange both
+        // invalid targets before starting the task, not between its calls.
+        registry.register(serde_json::from_value(json!({"name":"legacy","description":"legacy","version":"1","tools":[{
+            "name":"legacy_action","description":"legacy","handler":{"type":"script","path":"never","interpreter":"/bin/sh"},"parameters":{"type":"object","properties":{}}
+        }]})).unwrap());
         let _task = task_control::begin(&user).unwrap();
         let root = tempfile::tempdir().unwrap();
         let sm = crate::sm::parse(
@@ -363,9 +368,6 @@ mod capability_dispatch_tests {
         let wrong: serde_json::Value = serde_json::from_str(&execute_tool_call(&db, &user, &ir_call("wrong", "1 T"), &registry).await).unwrap();
         assert_eq!(wrong["error"]["code"], "plugin_missing");
         assert_eq!(wrong["executed"], false);
-        registry.register(serde_json::from_value(json!({"name":"legacy","description":"legacy","version":"1","tools":[{
-            "name":"legacy_action","description":"legacy","handler":{"type":"script","path":"never","interpreter":"/bin/sh"},"parameters":{"type":"object","properties":{}}
-        }]})).unwrap());
         let legacy: serde_json::Value = serde_json::from_str(&execute_tool_call(&db, &user, &ir_call("legacy", "1 L"), &registry).await).unwrap();
         assert_eq!(legacy["error"]["code"], "contract_missing");
         assert_eq!(legacy["error"]["retryable"], false);

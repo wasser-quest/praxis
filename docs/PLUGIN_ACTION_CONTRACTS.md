@@ -37,7 +37,13 @@ retained for native patch commit/rollback. It offers semantic build/test actions
 instead of raw terminal or `run_check` orchestration. It is opt in and does not
 install or run itself. Upgrading from plugin v1.0 only requires replacing the
 manifest and restarting; the former request script is no longer used. Start a
-new task after changing the pinned workflow or capability definitions.
+new task after changing the pinned workflow or capability definitions. The
+gateway now pins the entire resolved registry before task routing/inference.
+Action receipts include `registry_revision`, a SHA-256 over declarations, schemas,
+contracts, defaults and credential-grant names. Changing any declaration requires
+a new task; the snapshot never captures secret-store credential values. Live tool
+disable flags still block dispatch. Script/binary contents are not attested by
+this declaration hash; immutable package installation remains roadmap work.
 
 Plugin v1.2 also provides native transactional `modify_source`. Select
 `verified-implementation` to require a source-edit receipt together with build

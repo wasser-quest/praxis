@@ -144,10 +144,22 @@ impl LLMRouter {
     }
 
     pub fn provider_names(&self) -> Vec<String> {
-        self.providers
+        let mut names: Vec<_> = self.providers
             .iter()
             .map(|p| p.name().to_string())
-            .collect()
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// Provider metadata without constructing HTTP clients or starting workers.
+    pub(crate) fn configured_provider_names(secrets: &crate::db::secrets::Secrets) -> Vec<String> {
+        let mut names: Vec<_> = super::providers::PROVIDERS.iter()
+            .filter(|spec| matches!(spec.kind, super::providers::AuthKind::Endpoint)
+                || super::providers::has_credential(secrets, spec.name))
+            .map(|spec| spec.name.to_owned()).collect();
+        names.sort();
+        names
     }
 
     pub fn default_provider(&self) -> &str {

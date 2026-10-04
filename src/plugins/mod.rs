@@ -67,6 +67,7 @@ pub struct VerificationAdapter {}
 #[serde(deny_unknown_fields)]
 pub struct SourceEditAdapter {}
 
+#[derive(Clone)]
 pub struct PluginRegistry {
     plugins: HashMap<String, Plugin>,
 }
@@ -76,6 +77,29 @@ impl PluginRegistry {
         Self {
             plugins: HashMap::new(),
         }
+    }
+
+    /// Identity of the resolved declarations, including contracts, defaults and
+    /// credential grants (names only). Does not attest script bytes or binaries.
+    pub fn revision(&self) -> anyhow::Result<String> {
+        use sha2::{Digest, Sha256};
+        fn canonical(value: serde_json::Value) -> serde_json::Value {
+            match value {
+                serde_json::Value::Object(map) => {
+                    let sorted: std::collections::BTreeMap<_, _> = map.into_iter()
+                        .map(|(key, value)| (key, canonical(value))).collect();
+                    serde_json::Value::Object(sorted.into_iter().collect())
+                }
+                serde_json::Value::Array(values) => serde_json::Value::Array(values.into_iter().map(canonical).collect()),
+                other => other,
+            }
+        }
+        let declarations = canonical(serde_json::to_value(&self.plugins)?);
+        let bytes = serde_json::to_vec(&(
+            "praxis.registry.v1", env!("CARGO_PKG_VERSION"),
+            crate::runtime::services::SERVICE_API_VERSION, declarations,
+        ))?;
+        Ok(format!("{:x}", Sha256::digest(bytes)))
     }
 
     pub fn register(&mut self, plugin: Plugin) {
@@ -99,7 +123,9 @@ impl PluginRegistry {
     }
 
     pub fn list(&self) -> Vec<&Plugin> {
-        self.plugins.values().collect()
+        let mut plugins: Vec<_> = self.plugins.values().collect();
+        plugins.sort_by(|a, b| a.name.cmp(&b.name));
+        plugins
     }
 
     pub fn enabled_tools(&self) -> Vec<&PluginTool> {
@@ -126,7 +152,7 @@ impl PluginRegistry {
 
     pub fn context_defaults(&self) -> HashMap<String, serde_json::Value> {
         let mut defaults = HashMap::new();
-        for plugin in self.plugins.values() {
+        for plugin in self.list() {
             if !plugin.enabled {
                 continue;
             }
@@ -189,6 +215,7 @@ impl PluginRegistry {
         context: Option<&serde_json::Value>,
         secrets: Option<&HashMap<String, String>>,
     ) -> anyhow::Result<String> {
+        crate::gateway::task_control::check_registry(user, self)?;
         let crate::tools::catalog::ToolOwner::Plugin { plugin, tool } =
             crate::tools::catalog::owner(self, name)? else {
                 anyhow::bail!("Capability cannot shadow a built-in tool");

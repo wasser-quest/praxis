@@ -4,7 +4,9 @@ Status: migration started; the roadmap baseline is merged main `a037f21`.
 The [first implementation slice](../docs/PLUGIN_RUNTIME.md) adds shared tool
 ownership and dispatch. The [progress checklist](README.md) tracks PR 1's
 remaining work. A native background-service host and core event/template services
-are now implemented. Manifest v2, feature-service tool hosting, route/UI
+are now implemented, along with task registry snapshots, receipt revision
+evidence and provider-independent management with lazy clients.
+Manifest v2, feature-service tool hosting, route/UI
 registration and minimal startup below remain implementation targets.
 
 ## 1. Decision and scope
@@ -58,7 +60,7 @@ Coupling identified at the roadmap baseline:
 | `src/gateway/{message_handler,agent_loop,ws_handler}.rs` | Repeated builtin dispatch branches | One dispatcher for every ingress path and IR |
 | `src/db/tools.rs`, `src/tools/registry.rs` | Builtin defaults and static catalog | Installed/enabled owner registry with legacy aliases |
 | `PluginRegistry::manages_contract` | Builtin names and every `vm_` name excluded | Explicit ownership; reserve only actual kernel tools |
-| `src/gateway/mod.rs` | Cron, terminal job cleanup and core retention share startup workers | Independent feature workers and core housekeeping |
+| `src/gateway/mod.rs` | Native workers have separate lifecycle registrations; management starts without provider setup | Packaged feature services and independent core housekeeping |
 | `src/lib.rs`, `Cargo.toml`, `src/assets.rs` | Feature modules, dependencies and assets remain unconditional | Optional crates, package assets and a minimal build |
 
 Move behavior as well as names. An absent plugin must contribute no tools,
