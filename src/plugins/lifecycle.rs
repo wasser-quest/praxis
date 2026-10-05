@@ -969,6 +969,28 @@ pub async fn install_default(request: &PresetRequest<'_>) -> anyhow::Result<Pres
     Ok(report)
 }
 
+/// Toggle an installed plugin's `enabled` flag in its manifest and lock entry.
+/// The locked manifest hash is refreshed so `praxis plugin verify` stays green.
+pub fn set_enabled(plugins_dir: &Path, name: &str, enabled: bool) -> anyhow::Result<()> {
+    let manifest = plugins_dir.join(name).join("plugin.json");
+    anyhow::ensure!(
+        manifest.is_file(),
+        "Plugin '{name}' is not installed at {}",
+        plugins_dir.join(name).display()
+    );
+    let mut value: serde_json::Value = serde_json::from_slice(&std::fs::read(&manifest)?)?;
+    value["enabled"] = serde_json::Value::Bool(enabled);
+    let bytes = serde_json::to_string_pretty(&value)?.into_bytes();
+    std::fs::write(&manifest, &bytes)?;
+    let mut records = load_records(plugins_dir)?;
+    if let Some(entry) = records.get_mut(name) {
+        entry["enabled"] = serde_json::Value::Bool(enabled);
+        entry["manifest_sha256"] = serde_json::Value::String(sha256_bytes(&bytes));
+        save_records(plugins_dir, &records)?;
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct VerifyReport {
     pub ok: Vec<String>,

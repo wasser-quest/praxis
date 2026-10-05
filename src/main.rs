@@ -250,6 +250,16 @@ enum PluginAction {
     },
     /// Verify installed plugins against praxis.lock.json
     Verify,
+    /// Enable an installed plugin
+    Enable {
+        #[arg(value_name = "PLUGIN_NAME")]
+        name: String,
+    },
+    /// Disable an installed plugin (its tools leave the catalog; files stay)
+    Disable {
+        #[arg(value_name = "PLUGIN_NAME")]
+        name: String,
+    },
     /// List installed plugins
     List,
     /// List builtin tool packages (runtime_control, shell, memory, …)
@@ -1049,6 +1059,15 @@ async fn handle_plugin_action(action: &PluginAction) -> anyhow::Result<()> {
                 anyhow::bail!("{} default plugin(s) failed to install", report.failed.len());
             }
         }
+        PluginAction::Enable { name } | PluginAction::Disable { name } => {
+            let enabled = matches!(action, PluginAction::Enable { .. });
+            praxis::plugins::lifecycle::set_enabled(plugins_path, name, enabled)?;
+            println!(
+                "Plugin '{}' {}. Running instances apply it on the next model turn.",
+                name,
+                if enabled { "enabled" } else { "disabled" }
+            );
+        }
         PluginAction::Verify => {
             let report = praxis::plugins::lifecycle::verify(plugins_path)?;
             for name in &report.ok {
@@ -1602,5 +1621,23 @@ mod tests {
             },
             _ => panic!("Expected Plugin variant"),
         }
+    }
+
+    #[test]
+    fn test_cli_parsing_plugin_enable_disable() {
+        let cli = Cli::try_parse_from(["praxis", "plugin", "disable", "demo"]).unwrap();
+        assert!(matches!(
+            cli,
+            Cli::Plugin {
+                action: PluginAction::Disable { name }
+            } if name == "demo"
+        ));
+        let cli = Cli::try_parse_from(["praxis", "plugin", "enable", "demo"]).unwrap();
+        assert!(matches!(
+            cli,
+            Cli::Plugin {
+                action: PluginAction::Enable { name }
+            } if name == "demo"
+        ));
     }
 }

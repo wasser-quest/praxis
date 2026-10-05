@@ -610,3 +610,38 @@ async fn install_default_reports_dependency_cycle() {
     assert!(report.failed.iter().all(|(_, error)| error.contains("cycle")));
     assert!(!plugins.join("alpha").exists() && !plugins.join("beta").exists());
 }
+
+#[tokio::test]
+async fn set_enabled_toggles_manifest_and_lock_and_keeps_verify_green() {
+    let root = tempfile::tempdir().unwrap();
+    let plugins = root.path().join("plugins");
+    let data = root.path().join("data");
+    let source = root.path().join("source");
+    write_named(&source, "hooked", serde_json::json!({}));
+    lifecycle::install(&install_req(&source, &plugins, &data, false))
+        .await
+        .unwrap();
+
+    lifecycle::set_enabled(&plugins, "hooked", false).unwrap();
+    let manifest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(plugins.join("hooked/plugin.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(manifest["enabled"], false);
+    let lock: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(plugins.join("praxis.lock.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(lock["hooked"]["enabled"], false);
+    // The refreshed hash keeps verify green.
+    assert_eq!(lifecycle::verify(&plugins).unwrap().ok, vec!["hooked"]);
+
+    lifecycle::set_enabled(&plugins, "hooked", true).unwrap();
+    let manifest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(plugins.join("hooked/plugin.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(manifest["enabled"], true);
+
+    assert!(lifecycle::set_enabled(&plugins, "missing", true).is_err());
+}

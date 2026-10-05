@@ -165,6 +165,9 @@ praxis plugin install-default --preset ./my-preset.json
 praxis plugin upgrade ./plugins/hooks_demo --allow-scripts
 # Check installed plugins against the lockfile hashes
 praxis plugin verify
+# Enable/disable an installed plugin without removing its files
+praxis plugin disable hooks_demo
+praxis plugin enable hooks_demo
 ```
 
 `examples/plugins/hooks_demo` installs a private `DATA_DIR/hooks_demo` marker and
