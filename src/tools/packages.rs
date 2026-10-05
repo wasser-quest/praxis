@@ -127,6 +127,7 @@ pub fn native_available(tool: &str) -> bool {
     owner_of(tool).is_none_or(|package| match package.id {
         "legacy_file_ops" => cfg!(feature = "legacy_file_ops"),
         "shell" => cfg!(feature = "shell"),
+        "vision" => cfg!(feature = "vision"),
         _ => true,
     })
 }
@@ -233,6 +234,25 @@ mod tests {
         assert_eq!(shell["native_available"], false);
         let mut settings = crate::db::contexts::ContextSettings::default();
         settings.activated_tools = vec!["execute_terminal".into(), "run_background".into()];
+        assert!(crate::tools::registry::build_tool_definitions(&settings, None, None).is_empty());
+    }
+
+    #[cfg(not(feature = "vision"))]
+    #[test]
+    fn unlinked_vision_package_is_absent_even_with_stale_enabled_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = crate::db::Database::new(dir.path()).unwrap();
+        crate::db::tools::init_default_tools(&db).unwrap();
+        set(dir.path(), "vision", true).unwrap();
+        let plugins = crate::plugins::PluginRegistry::new();
+        let catalog = crate::tools::catalog::definitions(&db, &plugins).unwrap();
+        assert!(!catalog.iter().any(|t| t.function.name == "understand_image"), "unlinked vision implementation advertised");
+        assert!(crate::tools::catalog::owner(&plugins, "understand_image").is_err(), "stale schema must not select unavailable code");
+        let packages = list(dir.path()).unwrap();
+        let vision = packages["packages"].as_array().unwrap().iter().find(|p| p["id"] == "vision").unwrap();
+        assert_eq!(vision["native_available"], false);
+        let mut settings = crate::db::contexts::ContextSettings::default();
+        settings.activated_tools = vec!["understand_image".into()];
         assert!(crate::tools::registry::build_tool_definitions(&settings, None, None).is_empty());
     }
 

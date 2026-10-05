@@ -19,6 +19,7 @@ pub mod rag_query;
 pub mod registry;
 pub mod catalog;
 pub mod packages;
+#[cfg(feature = "vision")]
 pub mod understand_image;
 pub mod update_template;
 pub mod use_skill;

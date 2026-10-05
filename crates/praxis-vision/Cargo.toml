@@ -1,0 +1,20 @@
+[package]
+name = "praxis-vision"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Optional raw image-loading tool for Praxis"
+
+[dependencies]
+praxis-plugin-api = { path = "../praxis-plugin-api" }
+anyhow = "1"
+base64 = "0.22"
+image = "0.25"
+serde_json = "1"
+
+[[bin]]
+name = "praxis-vision"
+path = "src/main.rs"
+
+[dev-dependencies]
+tempfile = "3"

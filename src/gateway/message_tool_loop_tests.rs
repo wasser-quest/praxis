@@ -1170,6 +1170,7 @@ async fn tool_chain_budget_allows_one_honest_finalization_and_counts_invalid_cal
 }
 
 #[tokio::test]
+#[cfg(feature = "vision")]
 #[ignore = "Requires Node and POML_CLI; synthetic provider and temporary files only"]
 async fn tool_chain_new_task_resets_stale_completion_without_losing_settings() {
     for max_turns in [None, Some(5)] {

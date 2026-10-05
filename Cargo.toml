@@ -5,19 +5,21 @@ edition = "2021"
 description = "AI Agent Platform — Praxis"
 
 [workspace]
-members = ["crates/praxis-vm", "crates/praxis-plugin-api", "crates/praxis-vm-web", "crates/praxis-vm-worker", "crates/praxis-dashboard", "crates/praxis-legacy-file-ops", "crates/praxis-shell"]
+members = ["crates/praxis-vm", "crates/praxis-plugin-api", "crates/praxis-vm-web", "crates/praxis-vm-worker", "crates/praxis-dashboard", "crates/praxis-legacy-file-ops", "crates/praxis-shell", "crates/praxis-vision"]
 default-members = ["."]
 resolver = "2"
 
 [features]
 default = ["compatibility"]
-compatibility = ["vm", "dashboard", "legacy_file_ops", "shell"]
+compatibility = ["vm", "dashboard", "legacy_file_ops", "shell", "vision"]
 # Legacy read/edit implementation; omitted entirely from a core-only host.
 # The independently installed package serves the same tool names.
 legacy_file_ops = ["dep:praxis-legacy-file-ops"]
 # Raw shell execution and background jobs; omitted entirely from a core-only
 # host. The independently installed package serves the same tool names.
 shell = ["dep:praxis-shell"]
+# Raw image loading for understand_image; omitted from a core-only host.
+vision = ["dep:praxis-vision"]
 # Web dashboard: UI, listener, TLS and its static assets. The runtime,
 # gateway, CLI and verified workflows work without it.
 dashboard = ["dep:axum-server", "dep:rcgen", "dep:hostname"]
@@ -31,6 +33,7 @@ vosk = ["dep:vosk"]
 praxis-plugin-api = { path = "crates/praxis-plugin-api" }
 praxis-legacy-file-ops = { path = "crates/praxis-legacy-file-ops", optional = true }
 praxis-shell = { path = "crates/praxis-shell", optional = true }
+praxis-vision = { path = "crates/praxis-vision", optional = true }
 praxis-vm = { path = "crates/praxis-vm", optional = true }
 praxis-vm-web = { path = "crates/praxis-vm-web", optional = true }
 tokio = { version = "1", features = ["full"] }

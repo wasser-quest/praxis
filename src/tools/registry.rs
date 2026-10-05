@@ -1430,13 +1430,19 @@ mod registry_tests {
         let db = crate::db::Database::new(dir.path()).unwrap();
         crate::db::tools::init_default_tools(&db).unwrap();
         let mut settings = ContextSettings::default();
-        let mut activated = ["memory_get", "memory_set", "understand_image"].map(str::to_string).to_vec();
+        let mut activated = ["memory_get", "memory_set"].map(str::to_string).to_vec();
+        let mut expected = 2;
+        if cfg!(feature = "vision") {
+            activated.push("understand_image".into());
+            expected += 1;
+        }
         if cfg!(feature = "shell") {
             activated.push("run_background".into());
+            expected += 1;
         }
         settings.activated_tools = activated;
         let tools = build_tool_definitions(&settings, None, Some(&db));
-        assert_eq!(tools.len(), if cfg!(feature = "shell") { 4 } else { 3 }, "built-ins without category metadata must be callable too");
+        assert_eq!(tools.len(), expected, "built-ins without category metadata must be callable too");
         for tool in &tools {
             let mut expected = crate::tools::discovery::catalog(&db, &crate::plugins::PluginRegistry::new()).unwrap()
                 .into_iter().find(|t| t.function.name == tool.function.name).unwrap();
@@ -1445,9 +1451,11 @@ mod registry_tests {
         }
         let memory = tools.iter().find(|t| t.function.name == "memory_set").unwrap();
         assert_eq!(memory.function.parameters["required"], json!(["key", "value"]));
-        let image = tools.iter().find(|t| t.function.name == "understand_image").unwrap();
-        assert_eq!(image.function.parameters["required"], json!(["path", "prompt"]));
-        assert_eq!(image.function.parameters["properties"]["_output"]["type"], "object");
+        if cfg!(feature = "vision") {
+            let image = tools.iter().find(|t| t.function.name == "understand_image").unwrap();
+            assert_eq!(image.function.parameters["required"], json!(["path", "prompt"]));
+            assert_eq!(image.function.parameters["properties"]["_output"]["type"], "object");
+        }
         crate::db::tools::disable(&db, "memory_set").unwrap();
         let shadow = [plugin("memory_set")];
         assert!(!names(&build_tool_definitions(&settings, Some(&shadow), Some(&db))).contains(&"memory_set"));

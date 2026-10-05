@@ -631,7 +631,8 @@ tools and native service bindings. The VM engine now lives in an optional Rust
 package and an independently installed worker. The legacy `read_file`/`edit_file`
 helpers and the shell tools now live in optional crates plus separately
 installed packages; the shell background-job worker owns a process-memory job
-registry the one-shot transport cannot. The VM package contributes its
+registry the one-shot transport cannot. `understand_image` is now an optional
+`vision` package as well. The VM package contributes its
 API, VNC/noVNC assets and dashboard page through a generic authenticated host
 proxy, including in a build without VM support. The package also owns `praxis vm`
 commands and screenshot capture; the host forwards arguments and delivery through
