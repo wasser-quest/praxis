@@ -121,6 +121,12 @@ pub fn owner_of(tool: &str) -> Option<&'static Package> {
     PACKAGES.iter().find(|p| p.tools.contains(&tool))
 }
 
+/// Build-time availability is distinct from the persisted operator switch.
+/// Retaining names/schemas for migration never installs their implementations.
+pub fn native_available(tool: &str) -> bool {
+    owner_of(tool).is_none_or(|package| package.id != "legacy_file_ops" || cfg!(feature = "legacy_file_ops"))
+}
+
 fn state_file(data_dir: &Path) -> PathBuf {
     data_dir.join("tool_packages.json")
 }
@@ -172,6 +178,7 @@ pub fn list(data_dir: &Path) -> anyhow::Result<Value> {
                 "description": p.description,
                 "tools": p.tools,
                 "required": p.required,
+                "native_available": p.tools.iter().all(|tool| native_available(tool)),
                 "enabled": p.required || state.get(p.id).copied().unwrap_or(true),
             })
         })
@@ -182,6 +189,27 @@ pub fn list(data_dir: &Path) -> anyhow::Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(not(feature = "legacy_file_ops"))]
+    #[test]
+    fn unlinked_legacy_package_is_absent_even_with_stale_enabled_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = crate::db::Database::new(dir.path()).unwrap();
+        crate::db::tools::init_default_tools(&db).unwrap();
+        set(dir.path(), "legacy_file_ops", true).unwrap();
+        let plugins = crate::plugins::PluginRegistry::new();
+        let catalog = crate::tools::catalog::definitions(&db, &plugins).unwrap();
+        for name in ["read_file", "edit_file"] {
+            assert!(!catalog.iter().any(|t| t.function.name == name), "unlinked implementation advertised: {name}");
+            assert!(crate::tools::catalog::owner(&plugins, name).is_err(), "stale schema must not select unavailable code");
+        }
+        let packages = list(dir.path()).unwrap();
+        let legacy = packages["packages"].as_array().unwrap().iter().find(|p| p["id"] == "legacy_file_ops").unwrap();
+        assert_eq!(legacy["native_available"], false);
+        let mut settings = crate::db::contexts::ContextSettings::default();
+        settings.activated_tools = vec!["read_file".into(), "edit_file".into()];
+        assert!(crate::tools::registry::build_tool_definitions(&settings, None, None).is_empty());
+    }
 
     #[test]
     fn every_native_tool_has_exactly_one_package() {
@@ -229,6 +257,9 @@ mod tests {
         set(&db.data_dir(), "shell", false).unwrap();
         let without = names(&db);
         assert!(!without.iter().any(|n| PACKAGES[3].tools.contains(&n.as_str())), "{without:?}");
+        let mut settings = crate::db::contexts::ContextSettings::default();
+        settings.activated_tools = vec!["execute_terminal".into()];
+        assert!(crate::tools::registry::build_tool_definitions(&settings, None, Some(&db)).is_empty(), "disabled native package leaked into the model request");
         assert!(without.contains(&"agent_next".to_string()) && without.contains(&"apply_patch".to_string()));
         let owner = crate::tools::catalog::owner(&plugins, "execute_terminal").unwrap();
         assert!(crate::tools::catalog::require_enabled(&db, &owner, "execute_terminal").is_err());

@@ -175,7 +175,11 @@ async fn plugin_dispatch_rechecks_disabled_builtin_before_reading_or_writing() {
             json!({"path":path,"content":"changed"}),
         )
         .await;
-        assert!(result.contains("disabled"), "{result}");
+        if name == "read_file" && !cfg!(feature = "legacy_file_ops") {
+            assert!(result.contains("no implementation is installed"), "{result}");
+        } else {
+            assert!(result.contains("disabled"), "{result}");
+        }
         assert!(!result.contains("private-data"));
     }
     assert_eq!(std::fs::read_to_string(path).unwrap(), "private-data");

@@ -48,7 +48,8 @@ pub fn all_tools(db: &crate::db::Database, plugins: &crate::plugins::PluginRegis
             "parameters": t.parameters,
             "source": "plugin",
             "default_enabled": true,
-            "is_enabled": crate::db::tools::get_plugin_tool_enabled(db, &t.name),
+            "is_enabled": plugins.list().into_iter().find(|plugin| plugin.enabled && plugin.tools.iter().any(|tool| tool.name == t.name))
+                .is_some_and(|plugin| crate::tools::catalog::plugin_enabled(db, plugin, &t.name).unwrap_or(false)),
         }))
         .collect();
     let all = [builtin, plugin_tools].concat();

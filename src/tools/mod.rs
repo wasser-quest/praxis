@@ -9,7 +9,8 @@ pub mod discord_interactive;
 pub mod discord_send_embed;
 pub mod discord_send_message;
 pub mod discord_upload;
-pub mod edit_file;
+#[cfg(feature = "legacy_file_ops")]
+pub use praxis_legacy_file_ops::edit_file;
 pub mod execute_terminal;
 pub mod get_context;
 pub mod rag_ingest;
@@ -26,7 +27,8 @@ pub mod vm_tools;
 pub mod web_interactive;
 pub mod write_file;
 pub mod tool_output;
-pub mod read_file;
+#[cfg(feature = "legacy_file_ops")]
+pub use praxis_legacy_file_ops::read_file;
 
 #[cfg(test)]
 mod tool_output_tests;

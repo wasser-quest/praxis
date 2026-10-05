@@ -774,7 +774,8 @@ async fn handle_plugin_action(action: &PluginAction) -> anyhow::Result<()> {
             let state = praxis::tools::packages::load(&data_dir)?;
             for package in praxis::tools::packages::PACKAGES {
                 let on = package.required || state.get(package.id).copied().unwrap_or(true);
-                let status = if package.required { "core" } else if on { "enabled" } else { "disabled" };
+                let available = package.tools.iter().all(|tool| praxis::tools::packages::native_available(tool));
+                let status = if package.required { "core" } else if !available { "not linked; install package" } else if on { "enabled" } else { "disabled" };
                 println!("  {} [{}] — {} ({})", package.id, status, package.description, package.tools.join(", "));
             }
             return Ok(());
@@ -782,6 +783,10 @@ async fn handle_plugin_action(action: &PluginAction) -> anyhow::Result<()> {
         PluginAction::EnableBuiltin { id } | PluginAction::DisableBuiltin { id } => {
             let on = matches!(action, PluginAction::EnableBuiltin { .. });
             praxis::tools::packages::set(&data_dir, id, on)?;
+            if !praxis::tools::packages::get(id).is_some_and(|package| package.tools.iter().all(|tool| praxis::tools::packages::native_available(tool))) {
+                println!("Native package '{id}' preference saved; its implementation is not linked. Install its separate package or rebuild with its Cargo feature.");
+                return Ok(());
+            }
             println!("Tool package '{id}' {}. Running instances apply it on the next model turn.", if on { "enabled" } else { "disabled" });
             return Ok(());
         }

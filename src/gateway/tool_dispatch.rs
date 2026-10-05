@@ -250,6 +250,7 @@ async fn dispatch(
                 }
             } // end else (shared mode)
         }
+        #[cfg(feature = "legacy_file_ops")]
         "edit_file" => {
             if mode == DispatchMode::Agent && crate::runtime::vm::guest_backend(plugins) {
                 let path = args["path"].as_str().unwrap_or("");
@@ -277,21 +278,12 @@ async fn dispatch(
                     Err(error) => format!("Error: {error}"),
                 }
             } else {
-                let path = args["path"].as_str().unwrap_or("");
-                let old_text = args["old_text"]
-                    .as_str()
-                    .or_else(|| args["old_string"].as_str())
-                    .unwrap_or("");
-                let new_text = args["new_text"]
-                    .as_str()
-                    .or_else(|| args["new_string"].as_str())
-                    .unwrap_or("");
-                match crate::tools::edit_file::edit_file(path, old_text, new_text).await {
-                    Ok(_) => format!("File edited: {}", path),
-                    Err(e) => format!("Error: {}", e),
-                }
+                praxis_legacy_file_ops::execute(&tc.function.name, &args)
+                    .await
+                    .unwrap_or_else(|error| format!("Error: {error}"))
             } // end else (shared mode)
         }
+        #[cfg(feature = "legacy_file_ops")]
         "read_file" => {
             if mode == DispatchMode::Agent && crate::runtime::vm::guest_backend(plugins) {
                 let path = args["path"].as_str().unwrap_or("");
@@ -305,10 +297,9 @@ async fn dispatch(
                     Err(error) => format!("Error: {error}"),
                 }
             } else {
-                let path = args["path"].as_str().unwrap_or("");
-                crate::tools::read_file::run(path)
+                praxis_legacy_file_ops::execute(&tc.function.name, &args)
                     .await
-                    .unwrap_or_else(|e| format!("Error reading file: {e}"))
+                    .unwrap_or_else(|error| format!("Error: {error}"))
             } // end else (shared mode)
         }
         "get_context" => match db.load_context(user_id) {

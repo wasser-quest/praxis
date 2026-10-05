@@ -353,19 +353,9 @@ impl LLMRouter {
                             Err(e) => format!("Error: {}", e),
                         }
                     }
-                    "edit_file" => {
-                        let path = args["path"].as_str().unwrap_or("");
-                        let old_text = args["old_text"].as_str().unwrap_or("");
-                        let new_text = args["new_text"].as_str().unwrap_or("");
-                        match crate::tools::edit_file::edit_file(path, old_text, new_text).await {
-                            Ok(_) => format!("File edited: {}", path),
-                            Err(e) => format!("Error: {}", e),
-                        }
-                    }
-                    "read_file" => {
-                        let path = args["path"].as_str().unwrap_or("");
-                        crate::tools::read_file::run(path).await.unwrap_or_else(|e| format!("Error reading file: {e}"))
-                    }
+                    #[cfg(feature = "legacy_file_ops")]
+                    "edit_file" | "read_file" => praxis_legacy_file_ops::execute(&tool_call.function.name, &args)
+                        .await.unwrap_or_else(|e| format!("Error: {e}")),
                     "memory_profile_create" => {
                         crate::tools::memory::profile_create(db, user_id, &args)
                             .unwrap_or_else(|e| format!("Error: {e}"))
