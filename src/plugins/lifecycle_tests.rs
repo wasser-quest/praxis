@@ -415,3 +415,54 @@ async fn install_rejects_missing_command_dependency() {
         .is_err());
     assert!(!plugins.join("cmd_dep").exists());
 }
+
+#[tokio::test]
+async fn install_default_installs_preset_once_and_skips_existing() {
+    let root = tempfile::tempdir().unwrap();
+    let plugins = root.path().join("plugins");
+    let data = root.path().join("data");
+    write_named(&root.path().join("src-alpha"), "alpha", serde_json::json!({}));
+    write_named(&root.path().join("src-beta"), "beta", serde_json::json!({}));
+    let preset = root.path().join("preset.json");
+    std::fs::write(
+        &preset,
+        serde_json::to_string(&serde_json::json!({"plugins": ["src-alpha", "src-beta"]}))
+            .unwrap(),
+    )
+    .unwrap();
+    let request = lifecycle::PresetRequest {
+        preset_path: Some(&preset),
+        root: root.path(),
+        plugins_dir: &plugins,
+        data_dir: &data,
+        run_hooks: false,
+        dry_run: false,
+    };
+    let report = lifecycle::install_default(&request).await.unwrap();
+    assert_eq!(report.installed, vec!["alpha", "beta"]);
+    assert!(report.failed.is_empty());
+    assert!(plugins.join("alpha/plugin.json").is_file() && plugins.join("beta/plugin.json").is_file());
+
+    // Idempotent: a second run skips both.
+    let report = lifecycle::install_default(&request).await.unwrap();
+    assert!(report.installed.is_empty());
+    assert_eq!(report.skipped, vec!["alpha", "beta"]);
+
+    // Dry run leaves a fresh target untouched.
+    let dry_root = tempfile::tempdir().unwrap();
+    write_named(
+        &dry_root.path().join("src-alpha"),
+        "alpha",
+        serde_json::json!({}),
+    );
+    let dry = lifecycle::PresetRequest {
+        preset_path: Some(&preset),
+        root: root.path(),
+        plugins_dir: &dry_root.path().join("plugins"),
+        data_dir: &dry_root.path().join("data"),
+        run_hooks: false,
+        dry_run: true,
+    };
+    lifecycle::install_default(&dry).await.unwrap();
+    assert!(!dry_root.path().join("plugins/alpha").exists());
+}

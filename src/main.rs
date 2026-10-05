@@ -230,6 +230,24 @@ enum PluginAction {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Install the bundled default plugin set (or a custom preset)
+    InstallDefault {
+        /// Optional preset JSON: {"plugins": ["<dir>", ...]}
+        #[arg(long)]
+        preset: Option<String>,
+        /// Run install hooks without asking
+        #[arg(long)]
+        allow_scripts: bool,
+        /// Never run install/uninstall hooks
+        #[arg(long)]
+        no_scripts: bool,
+        /// Assume yes to the interactive hook prompt
+        #[arg(long)]
+        yes: bool,
+        /// Print what would happen without copying or running hooks
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// List installed plugins
     List,
     /// List builtin tool packages (runtime_control, shell, memory, …)
@@ -990,6 +1008,45 @@ async fn handle_plugin_action(action: &PluginAction) -> anyhow::Result<()> {
             }
             println!("Plugin '{}' upgraded at {}", report.name, report.dest.display());
         }
+        PluginAction::InstallDefault {
+            preset,
+            allow_scripts,
+            no_scripts,
+            yes,
+            dry_run,
+        } => {
+            let policy = praxis::plugins::lifecycle::HookPolicy::from_env()?;
+            let run_hooks = praxis::plugins::lifecycle::resolve_consent(
+                policy,
+                *allow_scripts || *yes,
+                *no_scripts,
+                "Run plugin install hooks?",
+            );
+            let root = std::env::var("ROOT_DIR").unwrap_or_else(|_| ".".to_string());
+            let report = praxis::plugins::lifecycle::install_default(
+                &praxis::plugins::lifecycle::PresetRequest {
+                    preset_path: preset.as_deref().map(Path::new),
+                    root: Path::new(&root),
+                    plugins_dir: plugins_path,
+                    data_dir: &data_dir,
+                    run_hooks,
+                    dry_run: *dry_run,
+                },
+            )
+            .await?;
+            for name in &report.installed {
+                println!("  installed {name}");
+            }
+            for name in &report.skipped {
+                println!("  already installed {name}");
+            }
+            for (name, error) in &report.failed {
+                eprintln!("  failed {name}: {error}");
+            }
+            if !report.failed.is_empty() {
+                anyhow::bail!("{} default plugin(s) failed to install", report.failed.len());
+            }
+        }
         PluginAction::List => {
             if !plugins_path.exists() {
                 println!("No plugins directory found at '{}'", plugins_dir);
@@ -1491,6 +1548,33 @@ mod tests {
                     assert!(force && purge);
                 }
                 _ => panic!("Expected Uninstall variant"),
+            },
+            _ => panic!("Expected Plugin variant"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parsing_plugin_install_default() {
+        let cli = Cli::try_parse_from([
+            "praxis",
+            "plugin",
+            "install-default",
+            "--preset",
+            "./preset.json",
+            "--allow-scripts",
+        ])
+        .unwrap();
+        match cli {
+            Cli::Plugin { action } => match action {
+                PluginAction::InstallDefault {
+                    preset,
+                    allow_scripts,
+                    ..
+                } => {
+                    assert_eq!(preset.as_deref(), Some("./preset.json"));
+                    assert!(allow_scripts);
+                }
+                _ => panic!("Expected InstallDefault variant"),
             },
             _ => panic!("Expected Plugin variant"),
         }
