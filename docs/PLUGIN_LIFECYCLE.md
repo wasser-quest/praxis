@@ -114,6 +114,26 @@ events, or a binary IPC channel for low-latency streaming. The kernel never
 links a frontend. Gaps to close for the TUI: interactive tool/question approval,
 raw token streaming, and selection copy.
 
+## Using it
+
+```bash
+# Run hooks unattended for this command
+praxis plugin install ./examples/plugins/hooks_demo --allow-scripts
+# Or rely on the configured policy: PLUGIN_HOOKS=allow|ask|deny (default ask)
+PLUGIN_HOOKS=ask praxis plugin install ./examples/plugins/hooks_demo
+# Inspect without changing anything
+praxis plugin install ./examples/plugins/hooks_demo --dry-run
+# Register without running scripts
+praxis plugin install ./examples/plugins/hooks_demo --no-scripts
+# Remove; data is preserved unless --purge is passed to the hook
+praxis plugin uninstall hooks_demo --allow-scripts
+praxis plugin uninstall hooks_demo --allow-scripts --purge
+```
+
+`examples/plugins/hooks_demo` installs a private `DATA_DIR/hooks_demo` marker and
+uses a script tool. The run is recorded in `DATA_DIR/plugin_installs.json` with
+the manifest and hook hashes.
+
 ## Phased delivery
 
 1. **A — lifecycle:** manifest hooks, `allow|ask|deny`, staged install/uninstall,

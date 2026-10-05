@@ -92,6 +92,7 @@ fn backend_tool_toggle_builtin_ownership_is_preserved() {
         secrets: vec![],
         enabled: true,
         replaces: Vec::new(),
+        hooks: Default::default(),
     }).is_err());
     assert!(plugins.list().is_empty());
     for enabled in [false, true] {

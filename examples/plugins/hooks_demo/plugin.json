@@ -1,0 +1,15 @@
+{
+  "name": "hooks_demo",
+  "description": "Example plugin with install/uninstall hooks and a script tool",
+  "version": "0.1.0",
+  "enabled": true,
+  "hooks": {"install": "hooks/install.sh", "uninstall": "hooks/uninstall.sh"},
+  "tools": [
+    {
+      "name": "hooks_demo_echo",
+      "description": "Echo the JSON arguments (example script tool installed with a lifecycle hook)",
+      "parameters": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]},
+      "handler": {"type": "script", "path": "demo.sh", "interpreter": "sh"}
+    }
+  ]
+}

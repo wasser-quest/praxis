@@ -34,8 +34,9 @@ optional workflow packs add assets rather than replacing the core interpreter.
 - [ ] PR 5: runtime-control tools and other tool packages.
 - [ ] PR 6: providers, channels, media and workflow/prompt packages.
 - [ ] PR 7: minimal distribution, compatibility preset and dependency cleanup.
-- [ ] PR 8a: lifecycle hooks (`allow|ask|deny`), staged install/uninstall,
-  script hashing, install record and example plugins.
+- [x] PR 8a: lifecycle hooks (`allow|ask|deny`), staged install/uninstall,
+  script hashing, install record and example plugins. See
+  [plugin lifecycle](../docs/PLUGIN_LIFECYCLE.md).
 - [ ] PR 8b: manifest v2 and `praxis.lock.json` (declared `requires`/`provides`,
   ownership across tools/routes/UI/assets, immutable revision, rollback).
 - [ ] PR 8c: kernel interfaces (trust levels, evidence observer and signed

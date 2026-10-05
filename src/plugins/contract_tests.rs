@@ -31,6 +31,7 @@ fn fixture(handler: &str) -> (tempfile::TempDir, PluginRegistry) {
         secrets: vec!["allowed".into()],
         enabled: true,
         replaces: Vec::new(),
+        hooks: Default::default(),
     });
     (dir, registry)
 }
