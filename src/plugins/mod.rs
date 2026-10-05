@@ -62,6 +62,36 @@ pub fn frontend_declaration(manifest_path: &Path) -> anyhow::Result<Option<Front
     Ok(serde_json::from_str::<Raw>(&data)?.frontend)
 }
 
+/// Declared dependencies. `plugins` are package ids that must be installed and
+/// enabled; `commands` are executables that must be on PATH. Preflight runs
+/// before install/upgrade and uninstall refuses to orphan a dependent.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct PluginRequires {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub plugins: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub commands: Vec<String>,
+}
+
+impl PluginRequires {
+    pub fn is_empty(&self) -> bool {
+        self.plugins.is_empty() && self.commands.is_empty()
+    }
+}
+
+/// Read an optional `requires` block from a package manifest. Unknown fields
+/// are ignored because the same manifest may carry future v2 declarations.
+pub fn requires_declaration(manifest_path: &Path) -> anyhow::Result<PluginRequires> {
+    #[derive(Deserialize)]
+    struct Raw {
+        #[serde(default)]
+        requires: PluginRequires,
+    }
+    let data = std::fs::read_to_string(manifest_path)?;
+    Ok(serde_json::from_str::<Raw>(&data)?.requires)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Plugin {
     pub name: String,

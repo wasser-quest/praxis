@@ -328,3 +328,90 @@ async fn upgrade_requires_an_installed_plugin_and_dry_run_changes_nothing() {
     assert!(!report.hook.ran);
     assert_eq!(std::fs::read_to_string(plugins.join("hooked/plugin.json")).unwrap(), before);
 }
+
+fn write_named(dir: &Path, name: &str, requires: serde_json::Value) {
+    std::fs::create_dir_all(dir).unwrap();
+    let manifest = serde_json::json!({
+        "name": name,
+        "description": "fixture",
+        "version": "1.0.0",
+        "enabled": true,
+        "requires": requires,
+        "tools": []
+    });
+    std::fs::write(
+        dir.join("plugin.json"),
+        serde_json::to_string_pretty(&manifest).unwrap(),
+    )
+    .unwrap();
+}
+
+#[tokio::test]
+async fn install_preflights_declared_plugins_and_uninstall_protects_dependents() {
+    let root = tempfile::tempdir().unwrap();
+    let plugins = root.path().join("plugins");
+    let data = root.path().join("data");
+    let base = root.path().join("src-base");
+    write_named(&base, "base", serde_json::json!({}));
+    let dep = root.path().join("src-dep");
+    write_named(&dep, "dep", serde_json::json!({"plugins": ["base"]}));
+
+    // Dependency missing: fail before copying anything.
+    assert!(lifecycle::install(&install_req(&dep, &plugins, &data, false))
+        .await
+        .is_err());
+    assert!(!plugins.join("dep").exists());
+    lifecycle::install(&install_req(&base, &plugins, &data, false))
+        .await
+        .unwrap();
+    lifecycle::install(&install_req(&dep, &plugins, &data, false))
+        .await
+        .unwrap();
+    assert!(plugins.join("dep/plugin.json").is_file());
+
+    // Uninstall refuses while an enabled dependent is installed.
+    let error = lifecycle::uninstall(&UninstallRequest {
+        name: "base",
+        plugins_dir: &plugins,
+        data_dir: &data,
+        run_hooks: false,
+        force: false,
+        purge: false,
+        dry_run: false,
+    })
+    .await
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("required by"), "{error}");
+    assert!(plugins.join("base").exists());
+    // --force removes it anyway.
+    lifecycle::uninstall(&UninstallRequest {
+        name: "base",
+        plugins_dir: &plugins,
+        data_dir: &data,
+        run_hooks: false,
+        force: true,
+        purge: false,
+        dry_run: false,
+    })
+    .await
+    .unwrap();
+    assert!(!plugins.join("base").exists());
+}
+
+#[tokio::test]
+async fn install_rejects_missing_command_dependency() {
+    let root = tempfile::tempdir().unwrap();
+    let plugins = root.path().join("plugins");
+    let data = root.path().join("data");
+    let source = root.path().join("source");
+    write_named(
+        &source,
+        "cmd_dep",
+        serde_json::json!({"commands": ["praxis-nonexistent-command-xyz"]}),
+    );
+    assert!(lifecycle::install(&install_req(&source, &plugins, &data, false))
+        .await
+        .is_err());
+    assert!(!plugins.join("cmd_dep").exists());
+}
