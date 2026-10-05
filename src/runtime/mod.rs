@@ -2,6 +2,7 @@
 pub mod dashboard_package;
 pub mod events;
 pub mod features;
+pub mod process_service;
 pub mod retention;
 pub mod services;
 pub mod shell;
@@ -18,6 +19,9 @@ mod vm_process_tests;
 
 #[cfg(test)]
 mod shell_process_tests;
+
+#[cfg(test)]
+mod process_service_tests;
 
 #[cfg(test)]
 mod tests;

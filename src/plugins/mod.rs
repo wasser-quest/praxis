@@ -88,7 +88,15 @@ pub struct ServiceAdapter {
     pub service: String,
     pub operation: String,
     pub api_version: u32,
+    #[serde(default)]
     pub timeout_secs: u64,
+    /// Optional installed worker declaration. When present, the host can bind the
+    /// process service from the manifest at startup instead of relying on a
+    /// bespoke environment variable. The path is resolved inside the package.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub executable: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -658,7 +666,10 @@ fn load_plugin_from_manifest(manifest_path: &Path, plugin_dir: &Path) -> anyhow:
         .into_iter()
         .map(|mut tool| {
             contracts::validate_tool(&manifest.name, &tool)?;
-            let folder = if tool.contract.is_some() || matches!(&tool.handler, PluginHandler::Executable { .. }) {
+            let folder = if tool.contract.is_some()
+                || matches!(&tool.handler, PluginHandler::Executable { .. })
+                || matches!(&tool.handler, PluginHandler::Service(adapter) if adapter.executable.is_some())
+            {
                 plugin_dir.canonicalize()?
             } else {
                 plugin_dir.to_path_buf()
@@ -674,6 +685,16 @@ fn load_plugin_from_manifest(manifest_path: &Path, plugin_dir: &Path) -> anyhow:
                     let resolved = folder.join(relative).canonicalize()?;
                     anyhow::ensure!(resolved.starts_with(&folder) && resolved.is_file(), "Executable escapes its package or is not a regular file");
                     *path = resolved.to_string_lossy().into_owned();
+                }
+                if let PluginHandler::Service(adapter) = handler {
+                    if let Some(path) = &adapter.executable {
+                        let relative = Path::new(path);
+                        anyhow::ensure!(relative.is_relative() && relative.components().all(|c| matches!(c, std::path::Component::Normal(_))),
+                            "Service executable must be a path inside its package");
+                        let resolved = folder.join(relative).canonicalize()?;
+                        anyhow::ensure!(resolved.starts_with(&folder) && resolved.is_file(), "Service executable escapes its package or is not a regular file");
+                        adapter.executable = Some(resolved.to_string_lossy().into_owned());
+                    }
                 }
                 Ok(())
             };

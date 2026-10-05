@@ -105,6 +105,10 @@ pub(crate) fn validate_adapter(adapter: &ServiceAdapter) -> anyhow::Result<()> {
         (1..=300).contains(&adapter.timeout_secs),
         "Native service timeout_secs must be 1..300"
     );
+    anyhow::ensure!(
+        adapter.args.len() <= 32,
+        "Too many native service arguments"
+    );
     Ok(())
 }
 

@@ -8,13 +8,45 @@ unless the operator sets `VM_SERVICE_EXECUTABLE`. See [installation commands](IN
 Roadmap PR 3 now includes the headless transport and the package-owned web
 contribution: administration, VNC, embedded noVNC and a dashboard page. The
 independent VM CLI and screenshot delivery also work through the installed package;
-complete guest ownership/upgrade policy remains. Manifest v2, immutable
-package publication and generic process declarations remain later work. The VM
-and shell adapters select workers through explicit host settings; models cannot
-select an executable. The shell worker owns `run_background`/`background_status`
+complete guest ownership/upgrade policy remains. Manifest v2 and immutable
+package publication remain later work. A package may now declare its installed
+worker directly on a `service` handler (`executable` plus optional `args`); the
+host resolves the path inside the package at load time and binds it at startup,
+so no bespoke environment variable is required. Explicit bindings (VM, shell)
+still win when already registered, and models cannot select an executable. The
+shell worker owns `run_background`/`background_status`
 job state, while foreground `execute_terminal` stays on the one-shot executable
 transport. See
 [shell package installation](TOOL_PACKAGES.md#independently-installed-shell-and-background-jobs).
+
+[shell package installation](TOOL_PACKAGES.md#independently-installed-shell-and-background-jobs).
+
+## Declaring an installed worker
+
+A host-agnostic package can bind its own worker from the manifest:
+
+```json
+{
+  "name": "probe",
+  "tools": [{
+    "name": "probe_echo",
+    "handler": {
+      "type": "service", "service": "probe", "operation": "probe_echo",
+      "api_version": 1, "timeout_secs": 30,
+      "executable": "bin/probe-service", "args": ["--stdio"]
+    },
+    "parameters": {"type": "object", "properties": {}}
+  }]
+}
+```
+
+Every tool of one `(owner, service)` must agree on the executable and args, or
+activation fails before any effect. The loader canonicalizes the path inside the
+package (no escape), and registration is effect-free; `praxis run` initializes
+the binding after registration and before inference. The worker receives
+`data_dir`, `root_dir` and `workspace` in its `hello` initialization and the
+authenticated caller in each `invoke`. A missing executable, mismatched
+handshake, crash or cancellation fails closed without host fallback or replay.
 
 ## Boundary
 
