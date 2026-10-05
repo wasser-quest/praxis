@@ -199,6 +199,8 @@ pub async fn start(db: crate::db::Database, config: crate::config::Config) -> an
     let mut plugins = crate::plugins::load_all_plugins(std::path::Path::new(&plugins_dir));
     crate::runtime::vm::configure(&db, &config, &mut plugins)?;
     crate::runtime::vm::initialize_service(&config, &plugins).await?;
+    crate::runtime::shell::configure(&config, &mut plugins)?;
+    crate::runtime::shell::initialize_service(&config, &plugins).await?;
     if let Err(error) = crate::runtime::vm::autostart(&config, &plugins, &secrets).await {
         tracing::warn!(%error, "Configured VM autostart failed (non-fatal)");
     }
@@ -223,6 +225,7 @@ pub async fn start_with_plugins(db: crate::db::Database, config: crate::config::
     let mut services = crate::runtime::services::ServiceHost::new();
     crate::runtime::retention::register(&mut services, db.clone())?;
     cron_scheduler::register_service(&mut services, db)?;
+    #[cfg(feature = "shell")]
     crate::tools::execute_terminal::register_maintenance(&mut services)?;
     let result = axum::serve(listener, app).await;
     services.shutdown(std::time::Duration::from_secs(2)).await;

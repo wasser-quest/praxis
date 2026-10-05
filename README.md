@@ -83,11 +83,11 @@ cargo build --release --locked --features compatibility
 ### Keep the functionality from before pluginization
 
 Use the **`compatibility`** build and installation preset. It includes the optional
-native VM and legacy file backends and installs the shipped tool plugins, their helper scripts,
+native VM, legacy file and shell backends and installs the shipped tool plugins, their helper scripts,
 noVNC runtime files, dashboard assets, templates, workflows and skills. The normal
-build selects `compatibility` by default. Dashboard and legacy file code are now
-optional at build time; independently installed dashboard, VM and legacy file
-packages can run with a core-only host. Providers, Discord and the remaining
+build selects `compatibility` by default. Dashboard, legacy file and shell code are now
+optional at build time; independently installed dashboard, VM, legacy file and
+shell packages can run with a core-only host. Providers, Discord and the remaining
 native tools are still compiled into Praxis at this stage.
 
 To keep legacy file code outside the host while retaining `read_file` and
@@ -103,6 +103,24 @@ The compatibility build retains their native adapter. A headless build can
 also link just that adapter with `--no-default-features --features legacy_file_ops`.
 Package switches cannot enable omitted code; existing names, schemas and tool
 flags are preserved. See [tool packages](docs/TOOL_PACKAGES.md).
+
+To keep shell execution outside the host while retaining `execute_terminal`,
+`run_background` and `background_status`:
+
+```bash
+cargo build --release --locked -p praxis --no-default-features
+./scripts/install-shell-package.sh /actual/PLUGINS_DIR
+# Optional durable background jobs; foreground execution needs no worker.
+export SHELL_SERVICE_EXECUTABLE=plugins/shell/bin/praxis-shell
+# Restart Praxis with PLUGINS_DIR set to that directory.
+```
+
+`run_background` and `background_status` need the long-lived worker because the
+job registry is process memory; the raw one-shot executable transport cannot
+keep it across calls. The worker receives the authenticated caller from the
+host, never from model arguments, and the host announces completions on the
+owner's stream. A headless build can link just the native adapter with
+`--no-default-features --features shell`.
 
 For an existing installation, build the updated source, stop the running Praxis
 service, then run the following from the source checkout. Replace the installation
@@ -610,7 +628,10 @@ into optional packages. Its target is a small runtime with three builtin
 `file_ops` tools. See the [delivery checklist](plan/README.md) and
 [architecture overview](docs/PLUGIN_FIRST_PLAN.md). Current plugins install
 tools and native service bindings. The VM engine now lives in an optional Rust
-package and an independently installed worker. The VM package contributes its
+package and an independently installed worker. The legacy `read_file`/`edit_file`
+helpers and the shell tools now live in optional crates plus separately
+installed packages; the shell background-job worker owns a process-memory job
+registry the one-shot transport cannot. The VM package contributes its
 API, VNC/noVNC assets and dashboard page through a generic authenticated host
 proxy, including in a build without VM support. The package also owns `praxis vm`
 commands and screenshot capture; the host forwards arguments and delivery through

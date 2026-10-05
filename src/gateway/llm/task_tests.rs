@@ -89,7 +89,7 @@ fn fixture(
 }
 
 #[tokio::test]
-#[cfg(unix)]
+#[cfg(all(unix, feature = "shell"))]
 async fn resilience_public_tool_loop_retries_only_llm_not_executed_command() {
     let (dir, db, router, calls) = fixture(false);
     let tools = crate::db::tools::to_tool_definitions(&db).unwrap();

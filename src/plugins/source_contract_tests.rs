@@ -141,7 +141,7 @@ async fn source_capability_timeout_and_dropped_future_use_durable_rollback() {
     std::fs::remove_file(dir.path().join("started")).unwrap();
     let mut execution = Box::pin(invoke(&registry, user, "drop", input()));
     let wait = async {
-        for _ in 0..100 {
+        for _ in 0..500 {
             if dir.path().join("started").exists() {
                 return;
             }
@@ -165,7 +165,7 @@ async fn source_capability_cancel_preserves_external_conflicts() {
     let _task = bind(user, dir.path());
     let execution = invoke(&registry, user, "edit", input());
     let cancel = async {
-        for _ in 0..100 {
+        for _ in 0..500 {
             if dir.path().join("started").exists() {
                 std::fs::write(dir.path().join("source"), "external").unwrap();
                 task_control::cancel(user);

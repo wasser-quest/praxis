@@ -128,33 +128,36 @@ async fn plugin_dispatch_cron_and_background_resources_use_authenticated_owner()
         assert!(!result.contains("private-prompt"), "{result}");
         assert!(db.get_cron_job(id).unwrap().unwrap().enabled);
     }
-    let background = crate::tools::execute_terminal::start_background(
-        "printf private-output",
-        None,
-        Some(&alice),
-    )
-    .await
-    .unwrap();
-    let own = invoke(
-        &db,
-        &alice,
-        &registry,
-        "background_status",
-        json!({"job_id":background}),
-    )
-    .await;
-    assert!(own.contains(&background), "{own}");
-    let denied = invoke(
-        &db,
-        &bob,
-        &registry,
-        "background_status",
-        json!({"job_id":background}),
-    )
-    .await;
-    assert!(denied.starts_with("Unknown job id"), "{denied}");
-    let list = invoke(&db, &bob, &registry, "background_status", json!({})).await;
-    assert!(!list.contains(&background), "{list}");
+    #[cfg(feature = "shell")]
+    {
+        let background = crate::tools::execute_terminal::start_background(
+            "printf private-output",
+            None,
+            Some(&alice),
+        )
+        .await
+        .unwrap();
+        let own = invoke(
+            &db,
+            &alice,
+            &registry,
+            "background_status",
+            json!({"job_id":background}),
+        )
+        .await;
+        assert!(own.contains(&background), "{own}");
+        let denied = invoke(
+            &db,
+            &bob,
+            &registry,
+            "background_status",
+            json!({"job_id":background}),
+        )
+        .await;
+        assert!(denied.starts_with("Unknown job id"), "{denied}");
+        let list = invoke(&db, &bob, &registry, "background_status", json!({})).await;
+        assert!(!list.contains(&background), "{list}");
+    }
 }
 
 #[tokio::test]
@@ -258,7 +261,7 @@ async fn plugin_dispatch_replacement_package_takes_over_builtin_names() {
     let terminal: Vec<_> = catalog.iter().filter(|t| t.function.name == "execute_terminal").collect();
     assert_eq!(terminal.len(), 1);
     assert!(terminal[0].function.description.contains("allowlisted"));
-    assert!(catalog.iter().any(|t| t.function.name == "run_background"), "unreplaced names stay native");
+    assert_eq!(catalog.iter().any(|t| t.function.name == "run_background"), cfg!(feature = "shell"), "unreplaced names stay native when linked");
     let user = format!("takeover-{}", uuid::Uuid::new_v4());
     let marker = dir.path().join("marker");
     let blocked = invoke(&db, &user, &registry, "execute_terminal", json!({"command": format!("touch {}", marker.display())})).await;

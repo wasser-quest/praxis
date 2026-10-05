@@ -557,6 +557,8 @@ async fn run_services(
     // Feature registration does not enable tools or initialize guests by itself.
     praxis::runtime::vm::configure(&db, &config, &mut plugin_registry)?;
     praxis::runtime::vm::initialize_service(&config, &plugin_registry).await?;
+    praxis::runtime::shell::configure(&config, &mut plugin_registry)?;
+    praxis::runtime::shell::initialize_service(&config, &plugin_registry).await?;
     if let Err(error) = praxis::runtime::vm::autostart(&config, &plugin_registry, &secrets).await {
         tracing::warn!(%error, "Configured VM autostart failed (non-fatal)");
     }

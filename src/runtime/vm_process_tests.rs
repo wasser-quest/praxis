@@ -207,6 +207,13 @@ async fn vm_process_bad_setup_and_crash_fail_closed_without_native_or_host_fallb
         let user = format!("vm-process-crash-{}", uuid::Uuid::new_v4());
         let _task = task(&db, &registry, dir.path(), &user);
         for call in ["first", "after-crash"] {
+            // The guest alias only exists while the native shell adapter is linked;
+            // a core-only host exercises the same worker through vm_shell directly.
+            let tool = if cfg!(feature = "shell") {
+                "execute_terminal"
+            } else {
+                "vm_shell"
+            };
             let output = crate::gateway::tool_dispatch::DispatchContext::new(
                 dir.path(),
                 &db,
@@ -217,7 +224,7 @@ async fn vm_process_bad_setup_and_crash_fail_closed_without_native_or_host_fallb
             .execute(&crate::gateway::llm::provider::ToolCall {
                 id: call.into(),
                 function: crate::gateway::llm::provider::FunctionCall {
-                    name: "execute_terminal".into(),
+                    name: tool.into(),
                     arguments: json!({"command":"touch host-sentinel"}).to_string(),
                 },
             })

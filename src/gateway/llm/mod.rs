@@ -337,6 +337,7 @@ impl LLMRouter {
                         }
                         "Feedback sent successfully.".to_string()
                     }
+                    #[cfg(feature = "shell")]
                     "execute_terminal" => {
                         let command = args["command"].as_str().unwrap_or("");
                         match crate::tools::execute_terminal::execute_terminal(command, None).await

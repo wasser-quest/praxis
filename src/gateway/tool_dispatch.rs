@@ -152,6 +152,7 @@ async fn dispatch(
         "use_skill" => crate::tools::use_skill::run(db, &args)
             .await
             .unwrap_or_else(|e| format!("Error: {}", e)),
+        #[cfg(feature = "shell")]
         "execute_terminal" => {
             // Execute on the backend selected by the host at registration.
             if mode == DispatchMode::Agent && crate::runtime::vm::guest_backend(plugins) {
@@ -173,6 +174,7 @@ async fn dispatch(
                 }
             } // end else (shared mode)
         }
+        #[cfg(feature = "shell")]
         "run_background" => {
             let command = args["command"].as_str().unwrap_or("");
             let cwd = args["cwd"].as_str();
@@ -184,6 +186,7 @@ async fn dispatch(
                 Err(e) => format!("Error: {}", e),
             }
         }
+        #[cfg(feature = "shell")]
         "background_status" => match args["job_id"].as_str() {
             Some(id) => match crate::tools::execute_terminal::job_status(id)
                 .filter(|job| job.owner_user_id.as_deref() == Some(user_id))

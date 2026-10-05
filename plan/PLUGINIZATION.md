@@ -372,8 +372,17 @@ flags; unlinked native tools cannot leak through fallback/static catalogs.
 The shared executable transport carries raw text results and leaves all
 verification/receipt authority in the host.
 
-Next extract `shell` and its background-job service, then move each remaining
-owner below in its own reviewable change. Providers/channels/media remain PR 6.
+The shell package followed the same pattern: `execute_terminal`,
+`run_background` and `background_status` live in `crates/praxis-shell`, with a
+package in `packages/shell` and the `shell` Cargo feature in `compatibility`.
+Foreground execution keeps the one-shot exact-text transport; background jobs
+use a long-lived process-protocol worker because the job registry is process
+memory. The host issues the authenticated caller and drains completion notices.
+A core-only host omits the crate and dependency and can install the package
+later; stale rows cannot advertise the omitted implementation.
+
+Next move each remaining owner below in its own reviewable change.
+Providers/channels/media remain PR 6.
 
 Move `runtime_control`, shell/background jobs, legacy file operations, memory,
 delegation, skills, interaction, RAG, cron and workflow authoring in small

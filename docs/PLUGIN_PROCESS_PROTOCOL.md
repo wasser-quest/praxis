@@ -9,8 +9,12 @@ Roadmap PR 3 now includes the headless transport and the package-owned web
 contribution: administration, VNC, embedded noVNC and a dashboard page. The
 independent VM CLI and screenshot delivery also work through the installed package;
 complete guest ownership/upgrade policy remains. Manifest v2, immutable
-package publication and generic process declarations remain later work. Only the
-VM adapter selects a worker today; models cannot select an executable.
+package publication and generic process declarations remain later work. The VM
+and shell adapters select workers through explicit host settings; models cannot
+select an executable. The shell worker owns `run_background`/`background_status`
+job state, while foreground `execute_terminal` stays on the one-shot executable
+transport. See
+[shell package installation](TOOL_PACKAGES.md#independently-installed-shell-and-background-jobs).
 
 ## Boundary
 
