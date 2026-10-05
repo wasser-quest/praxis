@@ -5,6 +5,7 @@ mod source_contract_tests;
 pub mod contracts;
 pub mod lifecycle;
 pub mod minimax_image;
+pub mod trust;
 mod executable;
 
 #[cfg(test)]
@@ -148,6 +149,43 @@ impl ProvidesDeclaration {
     }
 }
 
+/// What a package is allowed to be. A manifest declaration is a request; the
+/// kernel grants a role through the operator trust store before activation.
+/// Ordering is the privilege order used for "granted role >= declared role".
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "lowercase")]
+pub enum TrustRole {
+    /// Model-facing tools with schemas and contracts.
+    #[default]
+    Tool,
+    /// Scoped per-user storage and declared secrets.
+    Data,
+    /// Delivery adapters (channels).
+    Channel,
+    /// Routes and UI slots.
+    Ui,
+    /// Workspace/process effects under kernel-observed evidence.
+    Authority,
+    /// Defines guard/verifier/SM/POML policy.
+    Runtime,
+}
+
+impl TrustRole {
+    pub fn parse(value: &str) -> anyhow::Result<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "tool" => Ok(Self::Tool),
+            "data" => Ok(Self::Data),
+            "channel" => Ok(Self::Channel),
+            "ui" => Ok(Self::Ui),
+            "authority" => Ok(Self::Authority),
+            "runtime" => Ok(Self::Runtime),
+            other => anyhow::bail!(
+                "Trust role must be tool, data, channel, ui, authority or runtime (got '{other}')"
+            ),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Plugin {
     pub name: String,
@@ -177,6 +215,16 @@ pub struct Plugin {
     /// Manifest v2 declared contributions (routes, UI, assets, migrations).
     #[serde(default, skip_serializing_if = "ProvidesDeclaration::is_empty")]
     pub provides: ProvidesDeclaration,
+    /// Requested trust role. Included in the registry revision; activation
+    /// additionally requires an operator grant in the trust store.
+    #[serde(default, skip_serializing_if = "TrustRole::is_tool")]
+    pub role: TrustRole,
+}
+
+impl TrustRole {
+    pub fn is_tool(&self) -> bool {
+        *self == Self::Tool
+    }
 }
 
 fn default_true() -> bool {
@@ -764,6 +812,8 @@ struct PluginManifest {
     frontend: Option<FrontendDeclaration>,
     #[serde(default)]
     provides: ProvidesDeclaration,
+    #[serde(default)]
+    role: TrustRole,
 }
 
 pub fn load_plugins_from_dir(dir: &Path) -> anyhow::Result<Vec<Plugin>> {
@@ -897,6 +947,7 @@ fn load_plugin_from_manifest(manifest_path: &Path, plugin_dir: &Path) -> anyhow:
         requires: manifest.requires,
         frontend: validate_frontend(plugin_dir, manifest.frontend)?,
         provides: manifest.provides,
+        role: manifest.role,
     })
 }
 
@@ -966,6 +1017,15 @@ pub fn load_installed_plugin(plugin_dir: &Path) -> anyhow::Result<Plugin> {
 }
 
 pub fn load_all_plugins(plugins_dir: &Path) -> PluginRegistry {
+    load_all_plugins_with_trust(plugins_dir, &std::collections::BTreeMap::new())
+}
+
+/// Load enabled packages, refusing to activate a package that requests a trust
+/// role the operator has not granted. A `tool` role needs no grant.
+pub fn load_all_plugins_with_trust(
+    plugins_dir: &Path,
+    trust: &std::collections::BTreeMap<String, TrustRole>,
+) -> PluginRegistry {
     let mut registry = PluginRegistry::new();
 
     register_builtin_plugins(&mut registry);
@@ -973,6 +1033,16 @@ pub fn load_all_plugins(plugins_dir: &Path) -> PluginRegistry {
     match load_plugins_from_dir(plugins_dir) {
         Ok(plugins) => {
             for plugin in plugins {
+                let granted = trust.get(&plugin.name).copied().unwrap_or_default();
+                if granted < plugin.role {
+                    tracing::warn!(
+                        name = %plugin.name,
+                        requested = ?plugin.role,
+                        granted = ?granted,
+                        "Plugin requests an unapproved trust role; not activated"
+                    );
+                    continue;
+                }
                 if let Err(error) = registry.try_register(plugin) {
                     tracing::warn!(%error, "Plugin activation rejected; previous owners preserved");
                 }
@@ -1006,6 +1076,7 @@ mod plugin_tests {
             requires: Default::default(),
             frontend: None,
             provides: Default::default(),
+            role: Default::default(),
         });
         assert!(registry.get("test").is_some());
         assert_eq!(registry.list().len(), 1);
@@ -1054,6 +1125,7 @@ mod plugin_tests {
             requires: Default::default(),
             frontend: None,
             provides: Default::default(),
+            role: Default::default(),
         });
         assert_eq!(registry.enabled_tools().len(), 1);
     }
@@ -1082,6 +1154,7 @@ mod plugin_tests {
             requires: Default::default(),
             frontend: None,
             provides: Default::default(),
+            role: Default::default(),
         });
         assert_eq!(registry.enabled_tools().len(), 0);
     }
@@ -1229,6 +1302,7 @@ mod plugin_tests {
             requires: Default::default(),
             frontend: None,
             provides: Default::default(),
+            role: Default::default(),
         });
         assert!(registry.context_defaults().is_empty());
     }
@@ -1249,6 +1323,7 @@ mod plugin_tests {
             requires: Default::default(),
             frontend: None,
             provides: Default::default(),
+            role: Default::default(),
         });
         let sec = registry.collect_secrets();
         assert_eq!(sec.len(), 2);
@@ -1363,5 +1438,51 @@ mod plugin_tests {
         }))
         .unwrap();
         assert!(plugin.provides.validate().is_err());
+    }
+
+    #[test]
+    fn unapproved_trust_roles_are_not_activated() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugins_dir = dir.path().join("plugins");
+        let plugin_dir = plugins_dir.join("engine");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+        std::fs::write(
+            plugin_dir.join("plugin.json"),
+            serde_json::to_string(&serde_json::json!({
+                "name": "engine", "description": "x", "version": "1",
+                "role": "runtime", "tools": []
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        // No grant: the runtime role is not activated.
+        let empty = std::collections::BTreeMap::new();
+        assert!(load_all_plugins_with_trust(&plugins_dir, &empty).list().is_empty());
+
+        // A lower grant does not authorize a higher declaration.
+        let mut weak = std::collections::BTreeMap::new();
+        weak.insert("engine".to_string(), TrustRole::Authority);
+        assert!(load_all_plugins_with_trust(&plugins_dir, &weak).list().is_empty());
+
+        // The matching grant activates it, and a higher grant also works.
+        let mut granted = std::collections::BTreeMap::new();
+        granted.insert("engine".to_string(), TrustRole::Runtime);
+        let registry = load_all_plugins_with_trust(&plugins_dir, &granted);
+        assert_eq!(registry.list().len(), 1);
+        assert_eq!(registry.get("engine").unwrap().role, TrustRole::Runtime);
+
+        let mut higher = std::collections::BTreeMap::new();
+        higher.insert("engine".to_string(), TrustRole::Runtime);
+        assert_eq!(load_all_plugins_with_trust(&plugins_dir, &higher).list().len(), 1);
+    }
+
+    #[test]
+    fn trust_role_parsing_and_ordering() {
+        assert!(TrustRole::parse("tool").unwrap() == TrustRole::Tool);
+        assert!(TrustRole::parse("RUNTIME").unwrap() == TrustRole::Runtime);
+        assert!(TrustRole::parse("nope").is_err());
+        assert!(TrustRole::Tool < TrustRole::Data);
+        assert!(TrustRole::Authority < TrustRole::Runtime);
     }
 }

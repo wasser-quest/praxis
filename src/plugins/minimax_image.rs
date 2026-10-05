@@ -13,6 +13,7 @@ pub fn create_plugin() -> Plugin {
         requires: Default::default(),
         frontend: None,
         provides: Default::default(),
+        role: Default::default(),
         tools: vec![
             PluginTool {
                 name: "image_generate".to_string(),

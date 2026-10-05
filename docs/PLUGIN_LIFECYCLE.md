@@ -53,6 +53,17 @@ Every plugin requests capabilities; operator policy grants them.
 A verifier plugin can be swapped, but the kernel stamps `verified_by: <id>@<version>`
 and the grant that allowed it. Downstream guards may require a specific verifier.
 
+The declaration is enforced today: a package requests a role with
+`"role": "tool|data|channel|ui|authority|runtime"` (default `tool`), and the
+operator grants it with `praxis plugin trust <name> --role <role>` (stored in
+`DATA_DIR/plugin_trust.json`, revoke with `praxis plugin untrust <name>`). A
+package whose requested role exceeds its grant is not activated, so a package
+cannot promote itself to `runtime` or `authority`. The effective role is part
+of the registry revision.
+
+The kernel-observed evidence/signing seam (the swappable `RuntimeEngine` and
+verifier identity in receipts) is the next implementation step.
+
 ## Lifecycle
 
 Install, enable and start are distinct operations. `praxis plugin install` never
@@ -197,6 +208,9 @@ praxis plugin verify
 # Enable/disable an installed plugin without removing its files
 praxis plugin disable hooks_demo
 praxis plugin enable hooks_demo
+# Grant a non-tool role (needed before a runtime/authority package activates)
+praxis plugin trust core_engine --role runtime
+praxis plugin untrust core_engine
 ```
 
 `examples/plugins/hooks_demo` installs a private `DATA_DIR/hooks_demo` marker and

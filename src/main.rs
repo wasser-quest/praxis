@@ -260,6 +260,18 @@ enum PluginAction {
         #[arg(value_name = "PLUGIN_NAME")]
         name: String,
     },
+    /// Grant a plugin a non-tool trust role (tool|data|channel|ui|authority|runtime)
+    Trust {
+        #[arg(value_name = "PLUGIN_NAME")]
+        name: String,
+        #[arg(long, default_value = "tool")]
+        role: String,
+    },
+    /// Revoke a plugin's trust grant
+    Untrust {
+        #[arg(value_name = "PLUGIN_NAME")]
+        name: String,
+    },
     /// List installed plugins
     List,
     /// List builtin tool packages (runtime_control, shell, memory, …)
@@ -598,7 +610,12 @@ async fn run_services(
 
     // Create placeholder secrets for plugins
     let plugins_dir = std::env::var("PLUGINS_DIR").unwrap_or_else(|_| "./plugins".to_string());
-    let mut plugin_registry = praxis::plugins::load_all_plugins(std::path::Path::new(&plugins_dir));
+    let trust_dir = std::env::var("DATA_DIR").unwrap_or_else(|_| "./data".to_string());
+    let trust = praxis::plugins::trust::load(std::path::Path::new(&trust_dir))?;
+    let mut plugin_registry = praxis::plugins::load_all_plugins_with_trust(
+        std::path::Path::new(&plugins_dir),
+        &trust,
+    );
     for key in plugin_registry.collect_secrets() {
         if !secrets.custom.contains_key(&key) && secrets.plugin_secret(&key).is_none() {
             tracing::info!(key = %key, "Creating placeholder secret for plugin");
@@ -1068,6 +1085,15 @@ async fn handle_plugin_action(action: &PluginAction) -> anyhow::Result<()> {
                 if enabled { "enabled" } else { "disabled" }
             );
         }
+        PluginAction::Trust { name, role } => {
+            let role = praxis::plugins::TrustRole::parse(role)?;
+            praxis::plugins::trust::set(&data_dir, name, Some(role))?;
+            println!("Plugin '{name}' granted role '{role:?}'. Restart Praxis to apply.");
+        }
+        PluginAction::Untrust { name } => {
+            praxis::plugins::trust::set(&data_dir, name, None)?;
+            println!("Plugin '{name}' trust grant removed. Restart Praxis to apply.");
+        }
         PluginAction::Verify => {
             let report = praxis::plugins::lifecycle::verify(plugins_path)?;
             for name in &report.ok {
@@ -1137,6 +1163,9 @@ async fn handle_plugin_action(action: &PluginAction) -> anyhow::Result<()> {
                                 plugin.provides.assets.len(),
                                 plugin.provides.migrations.len()
                             );
+                        }
+                        if !plugin.role.is_tool() {
+                            println!("      role: {:?}", plugin.role);
                         }
                         found = true;
                     }
@@ -1642,6 +1671,32 @@ mod tests {
             Cli::Plugin {
                 action: PluginAction::Enable { name }
             } if name == "demo"
+        ));
+    }
+
+    #[test]
+    fn test_cli_parsing_plugin_trust() {
+        let cli = Cli::try_parse_from([
+            "praxis",
+            "plugin",
+            "trust",
+            "engine",
+            "--role",
+            "runtime",
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli,
+            Cli::Plugin {
+                action: PluginAction::Trust { name, role }
+            } if name == "engine" && role == "runtime"
+        ));
+        let cli = Cli::try_parse_from(["praxis", "plugin", "untrust", "engine"]).unwrap();
+        assert!(matches!(
+            cli,
+            Cli::Plugin {
+                action: PluginAction::Untrust { name }
+            } if name == "engine"
         ));
     }
 }
