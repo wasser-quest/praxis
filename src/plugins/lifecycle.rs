@@ -346,6 +346,95 @@ fn report_hook(outcome: &HookOutcome, verb: &str) {
 /// Install a plugin from a local directory using staged, atomic publication.
 /// If the install hook fails, the published directory is removed and no install
 /// record or registry entry remains.
+fn command_available(name: &str) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+    let Some(paths) = std::env::var_os("PATH") else {
+        return false;
+    };
+    for dir in std::env::split_paths(&paths) {
+        let candidate = dir.join(name);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if std::fs::metadata(&candidate)
+                .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+            {
+                return true;
+            }
+        }
+        #[cfg(not(unix))]
+        if candidate.is_file() {
+            return true;
+        }
+        #[cfg(windows)]
+        for ext in ["exe", "cmd", "bat", "com"] {
+            if dir.join(format!("{name}.{ext}")).is_file() {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Installed, enabled plugins that declare a dependency on `name`.
+fn dependents(plugins_dir: &Path, name: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let Ok(entries) = std::fs::read_dir(plugins_dir) else {
+        return out;
+    };
+    for entry in entries.flatten() {
+        let dir = entry.path();
+        let file_name = entry.file_name().to_string_lossy().into_owned();
+        if !dir.is_dir() || file_name.starts_with('.') {
+            continue;
+        }
+        let manifest = dir.join("plugin.json");
+        let Some(plugin) = std::fs::read(&manifest)
+            .ok()
+            .and_then(|data| serde_json::from_slice::<Plugin>(&data).ok())
+        else {
+            continue;
+        };
+        if plugin.name == name || !plugin.enabled {
+            continue;
+        }
+        if crate::plugins::requires_declaration(&manifest)
+            .is_ok_and(|requires| requires.plugins.iter().any(|id| id == name))
+        {
+            out.push(plugin.name);
+        }
+    }
+    out.sort();
+    out
+}
+
+fn preflight_requires(
+    plugins_dir: &Path,
+    requires: &crate::plugins::PluginRequires,
+) -> anyhow::Result<()> {
+    for id in &requires.plugins {
+        let manifest = plugins_dir.join(id).join("plugin.json");
+        anyhow::ensure!(
+            manifest.is_file(),
+            "Plugin requires '{id}', which is not installed; install it first"
+        );
+        let enabled = std::fs::read(&manifest)
+            .ok()
+            .and_then(|data| serde_json::from_slice::<Plugin>(&data).ok())
+            .is_some_and(|plugin| plugin.enabled);
+        anyhow::ensure!(enabled, "Plugin requires '{id}', which is installed but disabled");
+    }
+    for command in &requires.commands {
+        anyhow::ensure!(
+            command_available(command),
+            "Plugin requires command '{command}' on PATH"
+        );
+    }
+    Ok(())
+}
+
 fn build_record(
     source_root: &Path,
     plugin: &Plugin,
@@ -387,6 +476,10 @@ pub async fn install(request: &InstallRequest<'_>) -> anyhow::Result<InstallRepo
     // Parsing a manifest does not validate hook paths; do it before any copy.
     let source_root = request.source.canonicalize()?;
     let hooks = validate_hooks(&source_root, plugin.hooks.clone())?;
+    preflight_requires(
+        request.plugins_dir,
+        &crate::plugins::requires_declaration(&manifest_path)?,
+    )?;
 
     let dest = request.plugins_dir.join(&plugin.name);
     anyhow::ensure!(
@@ -512,6 +605,10 @@ pub async fn upgrade(request: &UpgradeRequest<'_>) -> anyhow::Result<InstallRepo
     let plugin: Plugin = serde_json::from_slice(&manifest_bytes)?;
     let source_root = request.source.canonicalize()?;
     let hooks = validate_hooks(&source_root, plugin.hooks.clone())?;
+    preflight_requires(
+        request.plugins_dir,
+        &crate::plugins::requires_declaration(&manifest_path)?,
+    )?;
     let dest = request.plugins_dir.join(&plugin.name);
     anyhow::ensure!(
         dest.exists(),
@@ -613,6 +710,13 @@ pub async fn uninstall(request: &UninstallRequest<'_>) -> anyhow::Result<Uninsta
         "Plugin '{}' not found at '{}'",
         request.name,
         plugin_dir.display()
+    );
+    let blocking = dependents(request.plugins_dir, request.name);
+    anyhow::ensure!(
+        blocking.is_empty() || request.force,
+        "Plugin '{}' is required by: {}. Pass --force to remove it anyway.",
+        request.name,
+        blocking.join(", ")
     );
     if request.dry_run {
         println!("Dry run: would remove {}", plugin_dir.display());

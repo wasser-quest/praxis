@@ -106,6 +106,21 @@ and `file_ops`.
 state. Startup loads exactly the lock; upgrades stage a new revision and keep
 the previous for rollback.
 
+## Dependencies
+
+A manifest may declare `requires`:
+
+```json
+"requires": {"plugins": ["runtime"], "commands": ["cargo"]}
+```
+
+* `plugins` are package ids that must already be installed and enabled. Install
+  and upgrade fail before copying if a dependency is missing or disabled.
+* `commands` are executables that must be on `PATH`.
+* Uninstall refuses to remove a plugin that an enabled package requires; pass
+  `--force` to remove it anyway. A full dependency-closure resolver and a
+  lockfile land with manifest v2 (PR 8b).
+
 ## Frontends
 
 `praxis-tui` and the dashboard are ordinary frontend plugins. They talk to the
@@ -113,8 +128,6 @@ kernel over Host API v1 (loopback, per-launch token, declared scopes) plus SSE
 events, or a binary IPC channel for low-latency streaming. The kernel never
 links a frontend. Gaps to close for the TUI: interactive tool/question approval,
 raw token streaming, and selection copy.
-
-## Frontends
 
 A package may contribute a `frontend` executable. It is launched by the
 operator, not registered as a tool, so it does not change the registry revision.

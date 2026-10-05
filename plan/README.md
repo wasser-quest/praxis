@@ -39,6 +39,8 @@ optional workflow packs add assets rather than replacing the core interpreter.
   [plugin lifecycle](../docs/PLUGIN_LIFECYCLE.md).
 - [ ] PR 8b: manifest v2 and `praxis.lock.json` (declared `requires`/`provides`,
   ownership across tools/routes/UI/assets, immutable revision, rollback).
+  Progress: `requires.plugins`/`requires.commands` preflight and uninstall
+  dependent protection are implemented.
 - [ ] PR 8c: kernel interfaces (trust levels, evidence observer and signed
   receipts, replaceable runtime engine interface).
 - [ ] PR 8d: extract the remaining packages and ship the `--install-default` and
