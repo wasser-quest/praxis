@@ -1,6 +1,7 @@
 //! Shared runtime services available without feature plugins or frontends.
 pub mod dashboard_package;
 pub mod engine;
+pub mod engine_bridge;
 pub mod events;
 pub mod features;
 pub mod process_service;

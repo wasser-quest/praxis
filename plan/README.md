@@ -60,8 +60,10 @@ optional workflow packs add assets rather than replacing the core interpreter.
   kernel-signed with `require` verifying the signature. The rendering path is
   behind a `runtime::engine::RuntimeEngine` seam with `KernelEngine` as
   the default, covering rendering and state-machine guard/transition condition
-  evaluation. The host bridge that lets a `runtime` package install an engine
-  remains.
+  evaluation. A `runtime` package can declare an `engine` worker that the host
+  launches and installs at startup, so rendering is replaceable by an installed
+  package; guard-condition policy still delegates to the kernel until SM
+  evaluation is async.
 - [ ] PR 8d: extract the remaining packages and ship the `--install-default` and
   minimal presets; make the TUI a separate `praxis-tui` frontend plugin.
   Progress: `praxis-tui` now exists as a standalone executable and the `tui`

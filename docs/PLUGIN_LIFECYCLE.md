@@ -80,8 +80,24 @@ building, skills, compaction, decision routing and template validation call
 directly, and state-machine guard/transition conditions, auto-rules and
 overrides are evaluated through `engine::evaluate_condition` instead of the SM
 module. `KernelEngine` delegates to the unchanged built-in implementations, so
-behavior is identical. A `runtime`-role package will install its own engine
-through the host bridge; receipt signing and that bridge remain.
+behavior is identical. Receipts are kernel-signed so a stored receipt cannot be
+edited to satisfy a guard.
+
+A `runtime`-role package may **declare an engine worker**:
+
+```json
+{"name": "my_engine", "role": "runtime",
+ "engine": {"executable": "bin/my-engine", "args": ["--stdio"]}}
+```
+
+`engine` is only valid with `role: "runtime"` and an operator grant
+(`praxis plugin trust`). At startup the host launches the worker over process
+protocol v1 and installs a `RuntimeEngine` that renders through it; rendering is
+a pure transform, so the worker gets a host-issued but non-authoritative
+envelope. Guard-condition evaluation still delegates to `KernelEngine` because
+state-machine code needs a synchronous answer (making it replaceable needs
+async SM evaluation). Stopping Praxis or dropping the binding force-stops the
+worker and restores the built-in engine.
 
 ## Lifecycle
 
