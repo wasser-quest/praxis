@@ -270,8 +270,8 @@ pub(crate) fn get_default_tools() -> Vec<Tool> {
         },
         Tool {
             name: "write_file".into(),
-            description: Some("Create or overwrite file".into()),
-            parameters: serde_json::json!({"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}),
+            description: Some("Create or overwrite file. For a checked transactional write, pass expected_absent=true (create only) or expected_sha256 from inspect_file (replace only); without a precondition this is a raw write.".into()),
+            parameters: serde_json::json!({"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"},"expected_absent":{"type":"boolean","description":"Require that the file does not exist (versioned checked write)"},"expected_sha256":{"type":"string","description":"Require this lowercase SHA-256 before replacing (from inspect_file)"}},"required":["path","content"]}),
             is_enabled: true,
         },
         Tool {

@@ -274,6 +274,8 @@ clipboard) remains an operator smoke check.
   to host APIs; POML/context/SM/IR verification stays in core.
 - [ ] Complete the versioned core `write_file` contract and finish dependency
   cleanup after the corresponding feature packages are independently installed.
+  Progress: the checked `expected_absent`/`expected_sha256` single-file
+  transactional contract is implemented; the legacy raw form is unchanged.
 
 Verification for the first tool implementation extraction: 1,014 compatibility
 and 986 core-only library tests, 17 CLI tests in each build, six file-package

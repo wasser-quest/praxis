@@ -198,6 +198,24 @@ The installer builds only the package and installs its `plugin.json` and
 is not verification; the host still enforces task, flag and cancellation rules
 and raw activity invalidates pending receipts exactly like the native tool.
 
+## Checked `write_file`
+
+`write_file` keeps its legacy raw form (`path` + `content`) and adds an
+optional versioned contract for transactional writes:
+
+```json
+{"path":"src/main.rs","content":"…","expected_absent":true}
+{"path":"src/main.rs","content":"…","expected_sha256":"<from inspect_file>"}
+```
+
+* `expected_absent` creates the file only if it does not exist;
+  `expected_sha256` replaces it only if the current bytes match.
+* A checked write goes through the durable single-file journal: existing
+  parents only, no symlinks/hardlinks, atomic publication, rollback on failure,
+  and the same workspace pinning as `apply_patch`.
+* Supplying both or neither precondition is an error, so a checked call can
+  never silently fall back to a raw overwrite. The legacy path is unchanged.
+
 ## Executable tool transport v1
 
 A raw tool can declare a handler such as:

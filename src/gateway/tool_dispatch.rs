@@ -244,6 +244,12 @@ async fn dispatch(
                     Ok(result) => result,
                     Err(error) => format!("Error: {error}"),
                 }
+            } else if args.get("expected_absent").is_some() || args.get("expected_sha256").is_some() {
+                // Versioned contract: single-file transactional write with a
+                // precondition. Never falls back to the raw write.
+                crate::tools::apply_patch::write_checked(user_id, &tc.id, &args)
+                    .await
+                    .unwrap_or_else(|error| format!("Error: {error}"))
             } else {
                 let path = args["path"].as_str().unwrap_or("");
                 let content = args["content"].as_str().unwrap_or("");
