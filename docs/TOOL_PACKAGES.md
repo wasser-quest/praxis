@@ -47,6 +47,33 @@ Rules:
 - `legacy_file_ops` and `shell` are raw operations; they are not verified
   language capabilities (those are contracts such as `verified_rust`).
 
+## Replacing a package with your own plugin
+
+A plugin can implement a builtin package's tool names instead of the native
+code by declaring `"replaces"` in its `plugin.json`:
+
+```json
+{ "name": "allowlist_shell", "replaces": ["shell"],
+  "tools": [{ "name": "execute_terminal", "handler": { "type": "script", "path": "run.py", "interpreter": "python3" }, ... }] }
+```
+
+```bash
+praxis plugin install examples/tool-packages/allowlist_shell
+```
+
+- The plugin owns every name of that package it declares; undeclared names
+  (here `run_background`, `background_status`) stay native.
+- Only one enabled plugin may replace a package, and it may not declare
+  native names from other packages.
+- `file_ops` and `runtime_control` cannot be replaced: they carry the core
+  file contract and host-owned workflow semantics.
+- The replacement is controlled by the plugin (enabled flag and per-tool
+  flags); the builtin package switch only controls the native code.
+- Replacements run through normal plugin dispatch: task cancellation,
+  workflow action guards and per-tool flags still apply. They are
+  operator-trusted code, not sandboxed.
+
+Disable or uninstall the plugin to return to the native implementation.
+
 Next: move package implementations out of the core binary one at a time
-(behind the same names, as compatibility aliases) and let an installed plugin
-take over a name once its native package is disabled.
+behind the same names.

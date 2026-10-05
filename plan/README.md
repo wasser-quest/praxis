@@ -195,8 +195,10 @@ clipboard) remains an operator smoke check.
   via CLI, dashboard and Host API; catalog, discovery and execution respect
   them; per-tool flags are preserved; startup never changes package state;
   `file_ops` is core. See [tool packages](../docs/TOOL_PACKAGES.md).
-- [ ] Move implementations out of the core binary per package, with plugin
-  takeover of names whose native package is disabled. Runtime-control and the remaining
+- [x] Plugin replacement of builtin packages (`"replaces": [...]`), with one
+  replacement per package, core packages protected and an example
+  (`examples/tool-packages/allowlist_shell`).
+- [ ] Move implementations out of the core binary per package. Runtime-control and the remaining
 feature/tool packages follow; POML/context/SM/IR verification stays in core.
 
 Existing setup guides remain applicable during migration:

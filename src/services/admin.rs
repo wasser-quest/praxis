@@ -25,7 +25,7 @@ pub type Outcome<T> = Result<T, Failure>;
 pub fn all_tools(db: &crate::db::Database, plugins: &crate::plugins::PluginRegistry) -> Value {
     let builtin: Vec<_> = crate::tools::registry::all_tool_meta()
         .iter()
-        .filter(|m| crate::tools::catalog::is_builtin(m.name))
+        .filter(|m| crate::tools::catalog::native(plugins, m.name))
         .map(|m| json!({
             "name": m.name,
             "description": m.description,
@@ -56,8 +56,18 @@ pub fn all_tools(db: &crate::db::Database, plugins: &crate::plugins::PluginRegis
 }
 
 /// Builtin tool packages with their tools and state.
-pub fn tool_packages(db: &crate::db::Database) -> Outcome<Value> {
-    Ok(crate::tools::packages::list(&db.data_dir())?)
+pub fn tool_packages(db: &crate::db::Database, plugins: &crate::plugins::PluginRegistry) -> Outcome<Value> {
+    let mut value = crate::tools::packages::list(&db.data_dir())?;
+    for package in value["packages"].as_array_mut().into_iter().flatten() {
+        let id = package["id"].as_str().unwrap_or_default().to_owned();
+        package["replaceable"] = json!(crate::tools::packages::replaceable(&id));
+        package["replaced_by"] = json!(plugins
+            .list()
+            .into_iter()
+            .find(|p| p.enabled && p.replaces.iter().any(|r| *r == id))
+            .map(|p| p.name.clone()));
+    }
+    Ok(value)
 }
 
 /// Enable or disable a builtin tool package. Per-tool flags are preserved, so
@@ -84,7 +94,7 @@ pub fn set_tool_enabled(
 ) -> Outcome<()> {
     let builtins = crate::db::tools::list(db)?;
     // Builtins own their names, including when a plugin declares the same name.
-    if crate::tools::catalog::is_builtin(name) && builtins.iter().any(|tool| tool.name == name) {
+    if crate::tools::catalog::native(plugins, name) && builtins.iter().any(|tool| tool.name == name) {
         Ok(crate::db::tools::set_enabled(db, name, enabled)?)
     } else if plugins.enabled_tools().iter().any(|tool| tool.name == name) {
         Ok(crate::db::tools::set_plugin_tool_enabled(db, name, enabled)?)

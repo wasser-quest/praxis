@@ -578,7 +578,7 @@ async fn delete_template(
 async fn list_tool_packages(
     State(state): State<Arc<DashboardState>>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    admin_json(crate::services::admin::tool_packages(&state.db))
+    admin_json(crate::services::admin::tool_packages(&state.db, &state.plugins))
 }
 
 async fn set_tool_package(
