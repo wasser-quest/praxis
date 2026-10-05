@@ -69,7 +69,11 @@ the policy. Receipts are also **kernel-signed**: an HMAC-SHA256 over the
 canonical fields (excluding the `signature` field itself), and
 `action_contracts::require` verifies that signature before accepting a receipt,
 so a stored or archived receipt cannot be edited to satisfy a guard. The key is
-per-process unless `PRAXIS_RECEIPT_KEY` is set to 64 hex characters.
+`PRAXIS_RECEIPT_KEY` (64 hex characters) when set; otherwise the kernel
+persists a stable `DATA_DIR/receipt.key` (mode `0600`) so archived receipts
+verify across restarts. With no data directory and no environment key it falls
+back to a per-process ephemeral key. An existing store file is never
+overwritten; a start-up race adopts the winner's key.
 
 ## Runtime engine seam
 
@@ -99,10 +103,12 @@ declare and implement `render`, `render_strict`, `render_strict_candidate` and
 `evaluate_condition` (the handshake requires an exact match). State-machine
 evaluation is async, so `evaluate_condition` is a worker call too: an installed
 engine owns guard policy while the kernel still owns every observed fact (exit
-codes, resource/workspace hashes and receipts). A crashed or unavailable worker
-fails closed (the condition is false), never silently falling back to the
-built-in policy. Stopping Praxis or dropping the binding force-stops the worker
-and restores the built-in engine.
+codes, resource/workspace hashes and receipts). Each call carries a
+kernel-produced `evidence` snapshot (signed receipts, revision, workspace
+revision and reply facts) alongside the context map; the engine may read it but
+cannot forge it. A crashed or unavailable worker fails closed (the condition is
+false), never silently falling back to the built-in policy. Stopping Praxis or
+dropping the binding force-stops the worker and restores the built-in engine.
 
 ## Lifecycle
 

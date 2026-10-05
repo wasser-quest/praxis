@@ -736,6 +736,11 @@ pub async fn apply_to_context(
     sm: &StateMachine,
     context: &mut serde_json::Value,
 ) -> Vec<(String, String)> {
+    // Kernel-observed evidence for engine guard policy (receipts, exit codes,
+    // resource/workspace hashes). Empty when there is no active task.
+    let evidence = crate::gateway::action_contracts::engine_evidence(
+        context.get("user_id").and_then(|v| v.as_str()).unwrap_or(""),
+    );
     // Resolve tool groups and add to context settings
     apply_tool_groups(sm, context);
     
@@ -779,9 +784,9 @@ pub async fn apply_to_context(
                 && s.get("decision_profile").and_then(|v| v.as_str()).is_some_and(|p| !p.is_empty() && p != "off")
         });
     let resolved_state = if sm.is_graph() { active_state.clone() } else if decision_owns_state {
-        resolve_auto_state(&StateMachine { auto_rules: Vec::new(), ..sm.clone() }, obj, &active_state).await
+        resolve_auto_state(&StateMachine { auto_rules: Vec::new(), ..sm.clone() }, obj, &active_state, &evidence).await
     } else {
-        resolve_auto_state(sm, obj, &active_state).await
+        resolve_auto_state(sm, obj, &active_state, &evidence).await
     };
 
     // Apply resolved state variables (may override current state if auto-rule triggered)
@@ -806,7 +811,7 @@ pub async fn apply_to_context(
 
     // Apply overrides
     for overr in &sm.overrides {
-        if crate::runtime::engine::evaluate_condition(&overr.condition, context.as_object().unwrap_or(&serde_json::Map::new())).await {
+        if crate::runtime::engine::evaluate_condition(&overr.condition, context.as_object().unwrap_or(&serde_json::Map::new()), &evidence).await {
             set_nested_value(context, &overr.key, serde_json::Value::String(overr.value.clone()));
         }
     }
@@ -814,7 +819,7 @@ pub async fn apply_to_context(
     // Collect secret overrides
     let mut secret_changes = Vec::new();
     for secret_overr in &sm.secret_overrides {
-        if crate::runtime::engine::evaluate_condition(&secret_overr.condition, context.as_object().unwrap_or(&serde_json::Map::new())).await {
+        if crate::runtime::engine::evaluate_condition(&secret_overr.condition, context.as_object().unwrap_or(&serde_json::Map::new()), &evidence).await {
             secret_changes.push((secret_overr.key.clone(), secret_overr.value.clone()));
         }
     }
@@ -857,9 +862,10 @@ async fn resolve_auto_state(
     sm: &StateMachine,
     context: &serde_json::Map<String, serde_json::Value>,
     current_state: &str,
+    evidence: &serde_json::Value,
 ) -> String {
     for rule in &sm.auto_rules {
-        if crate::runtime::engine::evaluate_condition(&rule.condition, context).await {
+        if crate::runtime::engine::evaluate_condition(&rule.condition, context, evidence).await {
             return rule.target_state.clone();
         }
     }
@@ -1076,6 +1082,9 @@ pub fn save_file_in(root: &std::path::Path, name: &str, content: &str) -> anyhow
 
 /// Evaluate transitions and advance to next state if condition is met.
 pub async fn advance_state(sm: &StateMachine, context: &serde_json::Value) -> Option<String> {
+    let evidence = crate::gateway::action_contracts::engine_evidence(
+        context.get("user_id").and_then(|v| v.as_str()).unwrap_or(""),
+    );
     let obj = match context.as_object() {
         Some(o) => o,
         None => return None,
@@ -1087,7 +1096,7 @@ pub async fn advance_state(sm: &StateMachine, context: &serde_json::Value) -> Op
         .unwrap_or("");
 
     for transition in &sm.transitions {
-        if transition.from == current_state && (transition.condition.trim().is_empty() || crate::runtime::engine::evaluate_condition(&transition.condition, obj).await) {
+        if transition.from == current_state && (transition.condition.trim().is_empty() || crate::runtime::engine::evaluate_condition(&transition.condition, obj, &evidence).await) {
             return Some(transition.to.clone());
         }
     }

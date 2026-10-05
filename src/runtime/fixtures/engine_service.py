@@ -48,8 +48,15 @@ while True:
         if request["operation"] == "evaluate_condition":
             condition = request["input"].get("condition", "")
             context = request["input"].get("context", {})
+            evidence = request["input"].get("evidence", {})
             result = "" == condition  # empty conditions are truthy
-            if "==" in condition:
+            if condition.startswith("evidence."):
+                # Read a dotted path from the kernel-observed evidence snapshot.
+                value = evidence
+                for part in condition[len("evidence."):].split("."):
+                    value = value.get(part) if isinstance(value, dict) else None
+                result = bool(value)
+            elif "==" in condition:
                 var, _, val = condition.partition("==")
                 val = val.strip().strip('"')
                 current = context.get(var.strip())

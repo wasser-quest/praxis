@@ -67,8 +67,11 @@ optional workflow packs add assets rather than replacing the core interpreter.
   evaluation. A `runtime` package can declare an `engine` worker that the host
   launches and installs at startup. State-machine evaluation is async, so the
   worker owns guard/transition policy too: `RuntimeEngine::evaluate_condition`
-  is a worker call and a crashed/unavailable worker fails closed. Passing the
-  kernel's observed evidence to the engine remains.
+  is a worker call that receives the kernel's observed evidence (signed
+  receipts, exit codes, resource/workspace hashes and reply facts) and fails
+  closed when the worker is unavailable. Receipt keys persist in
+  `DATA_DIR/receipt.key` (or `PRAXIS_RECEIPT_KEY`), so archived receipts verify
+  across restarts.
 - [ ] PR 8d: extract the remaining packages and ship the `--install-default` and
   minimal presets; make the TUI a separate `praxis-tui` frontend plugin.
   Progress: `praxis-tui` now exists as a standalone executable and the `tui`

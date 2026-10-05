@@ -19,6 +19,14 @@ _complete = [tests]
 }
 
 #[test]
+fn engine_evidence_marks_inactive_without_a_task() {
+    assert_eq!(
+        super::action_contracts::engine_evidence("no-active-engine-evidence-task"),
+        json!({"active_task": false})
+    );
+}
+
+#[test]
 fn contract_parser_rejects_unknown_checks_and_malformed_contracts() {
     assert!(sm::parse("[state done]\n[guards]\ndone = [invented]").is_err());
     assert!(sm::parse("[checks]\ntests = {\"program\":\"cargo\",\"timeout_secs\":0}").is_err());
@@ -187,6 +195,16 @@ async fn contract_runner_records_real_exit_status_and_rejects_model_command_over
             crate::gateway::receipt_sign::verify(&result["receipt"]),
             "native check receipt must be kernel-signed"
         );
+        // The engine evidence snapshot exposes the same kernel-observed facts.
+        let evidence = super::action_contracts::engine_evidence(user);
+        assert_eq!(evidence["active_task"], json!(true));
+        assert_eq!(evidence["receipts"]["tests"]["exit_code"], json!(if verified { 0 } else { 1 }));
+        assert_eq!(evidence["receipts"]["tests"]["verified"], json!(verified));
+        assert_eq!(evidence["receipts"]["tests"]["verified_by"], json!("kernel"));
+        assert!(evidence["receipts"]["tests"]["signature"]
+            .as_str()
+            .is_some_and(|signature| !signature.is_empty()));
+        assert!(evidence["receipts"]["tests"]["workspace_revision"].is_string());
         assert_eq!(require(user, "_complete").is_ok(), verified);
         before_tool(user, "read_file").unwrap();
         assert_eq!(require(user, "_complete").is_ok(), verified);

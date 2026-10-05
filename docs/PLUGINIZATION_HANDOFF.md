@@ -159,7 +159,8 @@ Handlers: `builtin`, `http`, `script`, `executable`, `verification`,
   evaluation is async, so a process engine can own guard policy too.
 * **Engine host bridge**: a `runtime` package with an `engine` block is launched
   at startup and installs a `RuntimeEngine` that renders and evaluates
-  guard/transition conditions through the worker (failing closed on errors).
+  guard/transition conditions through the worker (failing closed on errors),
+  receiving the kernel's observed evidence snapshot.
 * **Checked `write_file`**: `expected_absent` / `expected_sha256` transactional
   single-file write with the durable journal; legacy raw form unchanged.
 
@@ -207,8 +208,11 @@ cannot forge or edit a receipt.
 engine worker (rendering through process protocol v1). State-machine guard,
 auto-rule, override and transition conditions are evaluated asynchronously
 through the engine, so the worker owns guard policy as well as rendering; a
-crashed or unavailable worker fails closed (condition is false). The kernel
-still parses the state machine and owns every observed fact.
+crashed or unavailable worker fails closed (condition is false). Every
+condition receives a kernel-produced evidence snapshot (receipts with exit
+codes/signatures, resource and workspace hashes, reply facts) that the engine
+may read but cannot forge. The kernel still parses the state machine and owns
+every observed fact and receipt verification.
 
 ### 5.6 Checked file writes
 
@@ -226,13 +230,11 @@ Praxis CLI, and writes a MOTD of required changes. The kernel does not link it.
 
 ## 6. What needs to be done (prioritized)
 
-### A. Finish the kernel seam
+### A. Finish the kernel seam — done
 
-1. **Observed evidence to the engine.** When the engine decides a guard, pass it
-   the kernel's observed evidence (exit code, resource/workspace hashes) rather
-   than only the context map.
-2. **Receipt persistence** (optional): use `PRAXIS_RECEIPT_KEY` and a stable store
-   so archived receipts verify across restarts.
+Async SM evaluation (A.1), observed evidence to the engine (A.2) and a stable
+receipt-key store (A.3) are implemented. See §5.4, §5.5 and §7. The remaining
+kernel-seam work is in §B (routes/UI loading and migrations).
 
 ### B. Manifest v2 loading
 
@@ -276,9 +278,11 @@ for absent features; remove the builtin dashboard after a release.
 
 * Route/UI/migration loading is not implemented; `routes`/`ui`/`migrations` are
   declarations + ownership only. Assets *are* loaded.
-* Guard-condition policy is now replaceable by a process engine: state-machine
-  evaluation is async, `RuntimeEngine::evaluate_condition` is a worker call, and
-  worker failure fails closed. Passing observed evidence to the engine remains.
+* Guard-condition policy is replaceable by a process engine: state-machine
+  evaluation is async, `RuntimeEngine::evaluate_condition` is a worker call that
+  receives the kernel's observed evidence snapshot, and worker failure fails
+  closed. Receipt keys persist in `DATA_DIR/receipt.key` (or
+  `PRAXIS_RECEIPT_KEY`), so archived receipts verify across restarts.
 * `file_ops`, `runtime_control`, memory, RAG, cron, Discord, interaction,
   skills, workflow authoring, providers, channels and media still compile into
   the kernel; only the crates/packages in §3 are independently installable.

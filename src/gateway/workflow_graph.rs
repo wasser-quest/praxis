@@ -22,6 +22,7 @@ pub struct Edge {
 }
 
 pub async fn edges(sm: &StateMachine, context: &Value, user: &str) -> Vec<Edge> {
+    let evidence = crate::gateway::action_contracts::engine_evidence(user);
     let mut indices = HashMap::<String, usize>::new();
     let mut result = Vec::new();
     for transition in &sm.transitions {
@@ -30,7 +31,7 @@ pub async fn edges(sm: &StateMachine, context: &Value, user: &str) -> Vec<Edge> 
         let metadata = sm.edges.get(&id);
         let condition_met = transition.condition.trim().is_empty()
             || match context.as_object() {
-                Some(obj) => crate::runtime::engine::evaluate_condition(&transition.condition, obj).await,
+                Some(obj) => crate::runtime::engine::evaluate_condition(&transition.condition, obj, &evidence).await,
                 None => false,
             };
         let blocked_reason = if !sm.states.contains_key(&transition.to) {

@@ -347,6 +347,45 @@ impl VerificationState {
         self.receipts.insert(name.into(), receipt.clone());
         receipt
     }
+
+    /// Kernel-observed evidence for engine guard policy. This is a read-only
+    /// snapshot the kernel produces from its own ledger; an engine may read it
+    /// but cannot forge it because receipt verification stays in the kernel.
+    pub(crate) fn observed_evidence(&self) -> serde_json::Value {
+        let receipts: serde_json::Map<String, serde_json::Value> = self
+            .receipts
+            .iter()
+            .map(|(name, receipt)| {
+                (
+                    name.clone(),
+                    serde_json::to_value(receipt).unwrap_or(serde_json::Value::Null),
+                )
+            })
+            .collect();
+        let actions: serde_json::Map<String, serde_json::Value> = self
+            .actions
+            .iter()
+            .map(|(key, action)| {
+                (
+                    key.clone(),
+                    serde_json::to_value(&action.receipt).unwrap_or(serde_json::Value::Null),
+                )
+            })
+            .collect();
+        serde_json::json!({
+            "active_task": true,
+            "task_id": self.task_id,
+            "revision": self.revision,
+            "policy_bound": self.policy.is_some(),
+            "receipts": receipts,
+            "actions": actions,
+            "reply_facts": {
+                "input_message_id": self.input_message_id,
+                "input_state": self.input_state,
+                "state_changed_since_input": self.transitions_since_input > 0,
+            },
+        })
+    }
 }
 
 pub(crate) fn action_root(user: &str) -> anyhow::Result<PathBuf> {
@@ -542,6 +581,14 @@ pub(crate) fn reply_facts(user: &str) -> serde_json::Value {
         "input_state":ledger.input_state,
         "state_changed_since_input":ledger.transitions_since_input > 0
     }))).unwrap_or(serde_json::Value::Null)
+}
+
+/// Kernel-observed evidence handed to a replaceable engine when it decides a
+/// guard/transition condition. Returns an explicit inactive marker when there is
+/// no task (CLI previews, tests and pure library callers).
+pub(crate) fn engine_evidence(user: &str) -> serde_json::Value {
+    task_control::with_verification(user, |ledger| Ok(ledger.observed_evidence()))
+        .unwrap_or_else(|_| serde_json::json!({"active_task": false}))
 }
 /// Reject authority-changing model updates before any context is saved.
 pub fn validate_context(before: &Context, after: &Context) -> anyhow::Result<()> {

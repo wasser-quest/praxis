@@ -122,14 +122,16 @@ impl RuntimeEngine for ProcessEngine {
         &self,
         condition: &str,
         context: &serde_json::Map<String, Value>,
+        evidence: &Value,
     ) -> bool {
         // A failed or crashed engine cannot authorize a transition. Guard
         // evaluation fails closed (condition is false) and the receipt still
-        // names the installed engine as the policy owner.
+        // names the installed engine as the policy owner. The evidence is a
+        // kernel-produced snapshot; the worker may read it but cannot forge it.
         match self
             .call_value(
                 "evaluate_condition",
-                json!({"condition": condition, "context": context}),
+                json!({"condition": condition, "context": context, "evidence": evidence}),
             )
             .await
         {
@@ -296,8 +298,15 @@ mod tests {
         // worker, not the kernel.
         let mut context = serde_json::Map::new();
         context.insert("step".into(), json!(1));
-        assert!(engine.evaluate_condition("step == 1", &context).await);
-        assert!(!engine.evaluate_condition("step == 2", &context).await);
+        let evidence = json!({
+            "active_task": true,
+            "receipts": {"tests": {"exit_code": 0, "verified": true}}
+        });
+        assert!(engine.evaluate_condition("step == 1", &context, &evidence).await);
+        assert!(!engine.evaluate_condition("step == 2", &context, &evidence).await);
+        // The kernel-produced evidence snapshot reaches the worker.
+        assert!(engine.evaluate_condition("evidence.active_task", &context, &evidence).await);
+        assert!(!engine.evaluate_condition("evidence.active_task", &context, &json!({})).await);
     }
 
     #[tokio::test]
@@ -316,7 +325,7 @@ mod tests {
         .unwrap();
         // A crashed or unavailable engine must not authorize a transition.
         let context = serde_json::Map::new();
-        assert!(!engine.evaluate_condition("step == 1", &context).await);
+        assert!(!engine.evaluate_condition("step == 1", &context, &json!({})).await);
     }
 
     #[tokio::test]
