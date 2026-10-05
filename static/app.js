@@ -2457,9 +2457,11 @@ async function loadToolPackages() {
             const safeId = escapeHtml(p.id);
             const control = p.required
                 ? '<span class="badge badge-builtin">Core</span>'
+                : p.native_available === false
+                ? `<span class="badge badge-plugin">${p.replaced_by ? 'Installed package' : 'Install package'}</span>`
                 : `<button type="button" class="toggle ${p.enabled ? 'active' : ''}" aria-label="${p.enabled ? 'Disable' : 'Enable'} ${safeId}" aria-pressed="${p.enabled ? 'true' : 'false'}" onclick='toggleToolPackage(${idArg}, ${!p.enabled})'></button>`;
             return `<div class="data-item tool-item">
-                <div class="tool-copy"><span class="name">${safeId}</span><span class="meta">${escapeHtml(p.description || '')} — ${escapeHtml((p.tools || []).join(', '))}${p.replaced_by ? ` — implemented by plugin ${escapeHtml(p.replaced_by)}` : ''}</span></div>
+                <div class="tool-copy"><span class="name">${safeId}</span><span class="meta">${escapeHtml(p.description || '')} — ${escapeHtml((p.tools || []).join(', '))}${p.replaced_by ? ` — implemented by plugin ${escapeHtml(p.replaced_by)}` : p.native_available === false ? ' — native implementation is absent from this build' : ''}</span></div>
                 ${control}
             </div>`;
         }).join('');

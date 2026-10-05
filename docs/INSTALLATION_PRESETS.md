@@ -5,12 +5,13 @@ through the plugin migration. There are two separate operations:
 
 | Operation | Command | Result |
 |---|---|---|
-| Build the normal distribution | `cargo build --release --locked --features compatibility` | Includes the optional native VM crate; this is also the default build |
+| Build the normal distribution | `cargo build --release --locked --features compatibility` | Includes native VM, dashboard and legacy file adapters; this is also the default build |
 | Install its public assets | `praxis install-preset compatibility --directory INSTALLATION` | Fills missing workflows, prompts, skills, dashboard files, shipped plugin folders and noVNC runtime files |
 | Update the dashboard | Add `--update-dashboard` | Replaces changed dashboard files with backups |
 | Grant VM tool access once | Add `--enable-vm-tools --data-dir DATA_DIRECTORY` | Enables the 25 VM plugin tool flags in the selected data directory |
 | Build without a linked VM engine | `cargo build --release --locked --no-default-features --features dashboard` | Excludes `praxis-vm` and the VM CLI; can use an installed VM worker |
-| Headless runtime | `cargo build --release --locked --no-default-features` | Excludes the dashboard (UI, `:1337` listener, TLS cert generation) and the VM engine; gateway, CLI, POML/SM workflows and receipts unchanged |
+| Headless runtime | `cargo build --release --locked --no-default-features` | Excludes dashboard, VM engine and legacy read/edit code; gateway, CLI, POML/SM workflows and receipts remain |
+| Headless with native legacy file tools | `cargo build --release --locked --no-default-features --features legacy_file_ops` | Keeps `read_file`/`edit_file`, without VM or dashboard |
 | VM without dashboard | `cargo build --release --locked --no-default-features --features vm` | Native VM tools/CLI, no dashboard listener |
 
 The installer does not start services, run QEMU, call providers, read `.env` or
@@ -140,6 +141,20 @@ setting `VM_SERVICE_EXECUTABLE`. See [web contributions](PLUGIN_WEB_CONTRIBUTION
 and [protocol and lifecycle](PLUGIN_PROCESS_PROTOCOL.md).
 
 ## Optional capabilities and headless use
+
+The core-only build omits native `read_file`/`edit_file`. To keep their code
+outside the host, install `praxis-legacy-file-ops` independently:
+
+```bash
+./scripts/install-legacy-file-ops-package.sh /actual/PLUGINS_DIR
+```
+
+Restart Praxis with that `PLUGINS_DIR`. The same names and results become
+available through the package; existing disabled per-tool choices are inherited
+until explicitly overridden in plugin flags. The compatibility build already
+links this crate and needs no separate file-tool install. Other tool packages
+still ship in core while their extraction proceeds. See
+[tool package installation and transport](TOOL_PACKAGES.md#independently-installed-legacy-file-operations).
 
 Verified Rust is intentionally opt-in:
 

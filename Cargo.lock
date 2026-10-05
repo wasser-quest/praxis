@@ -3701,6 +3701,7 @@ dependencies = [
  "minimp3",
  "once_cell",
  "png",
+ "praxis-legacy-file-ops",
  "praxis-plugin-api",
  "praxis-vm",
  "praxis-vm-web",
@@ -3759,6 +3760,17 @@ dependencies = [
  "tokio-tungstenite 0.24.0",
  "tower-http",
  "urlencoding",
+]
+
+[[package]]
+name = "praxis-legacy-file-ops"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "praxis-plugin-api",
+ "serde_json",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]

@@ -158,6 +158,7 @@ const BUNDLED_ASSETS: &[Asset] = &[
     asset!("docs/COMFYUI_QWEN3.md"),
     asset!("docs/VOSK_REMOTE.md"),
     asset!("docs/TOOL_DISCOVERY.md"),
+    asset!("docs/TOOL_PACKAGES.md"),
     asset!("docs/TOOL_OUTPUTS.md"),
     asset!("docs/MEMORY_PROFILES.md"),
     asset!("plugins/vm/plugin.json"),

@@ -208,6 +208,7 @@ fn tool_output_direct_parameter_selects_model_view_and_is_not_forwarded() {
 }
 
 #[tokio::test]
+#[cfg(feature = "legacy_file_ops")]
 async fn tool_output_file_capture_does_not_lose_the_old_10000_char_tail() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("large.txt");

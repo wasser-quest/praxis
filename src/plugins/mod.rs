@@ -4,11 +4,15 @@ mod contract_tests;
 mod source_contract_tests;
 pub mod contracts;
 pub mod minimax_image;
+mod executable;
 
 #[cfg(test)]
 mod comfyui_tests;
 #[cfg(test)]
 mod media_tests;
+
+#[cfg(all(test, unix))]
+mod executable_tests;
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -55,6 +59,10 @@ pub enum PluginHandler {
     Http { url: String, method: String },
     #[serde(rename = "script")]
     Script { path: String, interpreter: String },
+    /// Installed executable, bounded versioned JSON over stdin/stdout. Results
+    /// retain their exact text rather than the legacy script envelope.
+    #[serde(rename = "executable")]
+    Executable { path: String, timeout_secs: u64 },
     /// Native verification has no helper script, URL, or model-selected command.
     #[serde(rename = "verification")]
     Verification(VerificationAdapter),
@@ -479,6 +487,12 @@ impl PluginRegistry {
                 }).collect();
                 execute_script(path, interpreter, args, context, Some(&scoped)).await
             }
+            PluginHandler::Executable { path, timeout_secs } => {
+                let scoped = plugin.secrets.iter().filter_map(|key| {
+                    secrets.and_then(|values| values.get(key)).map(|value| (key.clone(), value.clone()))
+                }).collect();
+                executable::execute(path, *timeout_secs, tool_name, args, context, scoped).await
+            }
         }
     }
 }
@@ -644,20 +658,29 @@ fn load_plugin_from_manifest(manifest_path: &Path, plugin_dir: &Path) -> anyhow:
         .into_iter()
         .map(|mut tool| {
             contracts::validate_tool(&manifest.name, &tool)?;
-            let folder = if tool.contract.is_some() {
+            let folder = if tool.contract.is_some() || matches!(&tool.handler, PluginHandler::Executable { .. }) {
                 plugin_dir.canonicalize()?
             } else {
                 plugin_dir.to_path_buf()
             };
-            let resolve = |handler: &mut PluginHandler| {
+            let resolve = |handler: &mut PluginHandler| -> anyhow::Result<()> {
                 if let PluginHandler::Script { path, .. } = handler {
                     *path = folder.join(&*path).to_string_lossy().into_owned();
                 }
+                if let PluginHandler::Executable { path, .. } = handler {
+                    let relative = Path::new(path);
+                    anyhow::ensure!(relative.is_relative() && relative.components().all(|c| matches!(c, std::path::Component::Normal(_))),
+                        "Executable must be a path inside its package");
+                    let resolved = folder.join(relative).canonicalize()?;
+                    anyhow::ensure!(resolved.starts_with(&folder) && resolved.is_file(), "Executable escapes its package or is not a regular file");
+                    *path = resolved.to_string_lossy().into_owned();
+                }
+                Ok(())
             };
-            resolve(&mut tool.handler);
+            resolve(&mut tool.handler)?;
             if let Some(compensation) = tool.contract.as_mut().and_then(|c| c.compensation.as_mut())
             {
-                resolve(&mut compensation.handler);
+                resolve(&mut compensation.handler)?;
             }
             Ok(tool)
         })

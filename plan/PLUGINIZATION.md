@@ -361,6 +361,20 @@ host bridge rather than arbitrary privileged same-origin JavaScript.
 
 ### PR 5 — remaining tool packages
 
+Implementation extraction has started with `legacy_file_ops`: its read/edit
+code lives in `crates/praxis-legacy-file-ops`, with a standalone executable
+package in `packages/legacy_file_ops`. The compatibility Cargo feature links
+it; a core-only host omits the implementation and dependency and can install
+the package later without rebuilding. See [tool packages](../docs/TOOL_PACKAGES.md).
+Package enable/disable state is distinct from native build availability.
+Existing per-tool flags are inherited until explicitly overridden by plugin
+flags; unlinked native tools cannot leak through fallback/static catalogs.
+The shared executable transport carries raw text results and leaves all
+verification/receipt authority in the host.
+
+Next extract `shell` and its background-job service, then move each remaining
+owner below in its own reviewable change. Providers/channels/media remain PR 6.
+
 Move `runtime_control`, shell/background jobs, legacy file operations, memory,
 delegation, skills, interaction, RAG, cron and workflow authoring in small
 package PRs using the ownership table. Split scheduler workers by owner; leave
@@ -456,10 +470,14 @@ Measure these gates per package instead of treating a renamed module or JSON
 manifest as finished pluginization.
 
 PR 1's native foundation and PR 2's headless VM adapter are implemented.
-PR 3's process transport and package-owned VM routes/VNC/dashboard contribution
-and package-owned CLI/screenshot delivery are implemented. Next finish guest ownership and upgrade/recovery
-policy, then extract the whole dashboard in PR 4. The compatibility
-preset is available ahead of PR 7;
-the final minimal distribution still requires the remaining extractions.
+PR 3's installed VM transport, routes/VNC/UI, CLI/screenshots and guest
+ownership/recovery are implemented; the progress checklist records remaining
+lifecycle/manual verification limits. PR 4 now has an independently packaged
+dashboard on Host API v1; absent-feature navigation and eventual removal of its
+builtin compatibility feature remain. PR 5's package controls/replacements and
+legacy file implementation extraction are implemented. Next move shell and the
+remaining implementations out of the host, then package PR 6's providers,
+channels, media and assets. The compatibility preset is available ahead of PR 7;
+the final minimal distribution still requires these remaining extractions.
 Keep Decision IR and verified execution as shared runtime semantics throughout;
 this architecture reorganizes their capabilities rather than replacing them.

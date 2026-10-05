@@ -35,6 +35,7 @@ fn replaces(plugin: &Plugin, name: &str) -> bool {
 /// Whether a builtin name is served by native code (not replaced by a plugin).
 pub(crate) fn native(plugins: &PluginRegistry, name: &str) -> bool {
     is_builtin(name)
+        && super::packages::native_available(name)
         && !plugins.list().into_iter().any(|plugin| {
             plugin.enabled && replaces(plugin, name) && plugin.tools.iter().any(|tool| tool.name == name)
         })
@@ -55,6 +56,9 @@ pub(crate) fn owner<'a>(plugins: &'a PluginRegistry, name: &str) -> anyhow::Resu
         .collect();
     if is_builtin(name) {
         if owners.is_empty() {
+            anyhow::ensure!(super::packages::native_available(name),
+                "Tool '{name}' requires the '{}' package; no implementation is installed",
+                super::packages::owner_of(name).map_or("unknown", |p| p.id));
             return Ok(ToolOwner::Builtin);
         }
         anyhow::ensure!(
@@ -117,10 +121,21 @@ pub(crate) fn require_enabled(
                     .find(|tool| tool.name == name)
                     .map_or(true, |tool| tool.is_enabled)
         }
-        ToolOwner::Plugin { .. } => crate::db::tools::plugin_tool_enabled(db, name)?,
+        ToolOwner::Plugin { plugin, .. } => plugin_enabled(db, plugin, name)?,
     };
     anyhow::ensure!(enabled, "Tool '{name}' is disabled or unavailable");
     Ok(())
+}
+
+/// Replacements inherit existing per-tool choices until the operator explicitly
+/// overrides them in plugin flags. Package switches still control native code.
+pub(crate) fn plugin_enabled(db: &Database, plugin: &Plugin, name: &str) -> anyhow::Result<bool> {
+    let flags = crate::db::tools::list_plugin_tools(db)?;
+    if let Some(enabled) = flags.get(name) { return Ok(*enabled); }
+    if replaces(plugin, name) {
+        return Ok(crate::db::tools::list(db)?.iter().find(|row| row.name == name).is_none_or(|row| row.is_enabled));
+    }
+    Ok(true)
 }
 
 pub fn definitions(db: &Database, plugins: &PluginRegistry) -> anyhow::Result<Vec<ToolDefinition>> {
@@ -143,6 +158,8 @@ pub fn definitions(db: &Database, plugins: &PluginRegistry) -> anyhow::Result<Ve
             .filter(|tool| flags.get(&tool.function.name).copied().unwrap_or_else(|| {
                 if crate::runtime::vm::is_vm_tool(&tool.function.name) {
                     legacy.iter().find(|row| row.name == tool.function.name).is_some_and(|row| row.is_enabled)
+                } else if plugins.list().into_iter().any(|plugin| plugin.enabled && replaces(plugin, &tool.function.name) && plugin.tools.iter().any(|t| t.name == tool.function.name)) {
+                    legacy.iter().find(|row| row.name == tool.function.name).is_none_or(|row| row.is_enabled)
                 } else { true }
             })),
     );

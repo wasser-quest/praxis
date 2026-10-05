@@ -1,0 +1,15 @@
+[package]
+name = "praxis-legacy-file-ops"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Optional raw read_file/edit_file tools for Praxis"
+
+[dependencies]
+anyhow = "1"
+serde_json = "1"
+tokio = { version = "1", features = ["fs", "io-util", "macros", "rt"] }
+praxis-plugin-api = { path = "../praxis-plugin-api" }
+
+[dev-dependencies]
+tempfile = "3"

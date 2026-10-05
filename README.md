@@ -83,11 +83,26 @@ cargo build --release --locked --features compatibility
 ### Keep the functionality from before pluginization
 
 Use the **`compatibility`** build and installation preset. It includes the optional
-native VM backend and installs the shipped tool plugins, their helper scripts,
+native VM and legacy file backends and installs the shipped tool plugins, their helper scripts,
 noVNC runtime files, dashboard assets, templates, workflows and skills. The normal
-build selects `compatibility` by default. Dashboard, providers, Discord and the
-remaining native tools are still compiled into Praxis at this stage; they do not
-require separate plugin installation commands.
+build selects `compatibility` by default. Dashboard and legacy file code are now
+optional at build time; independently installed dashboard, VM and legacy file
+packages can run with a core-only host. Providers, Discord and the remaining
+native tools are still compiled into Praxis at this stage.
+
+To keep legacy file code outside the host while retaining `read_file` and
+`edit_file`:
+
+```bash
+cargo build --release --locked -p praxis --no-default-features
+./scripts/install-legacy-file-ops-package.sh /actual/PLUGINS_DIR
+# Restart Praxis with PLUGINS_DIR set to that directory.
+```
+
+The compatibility build retains their native adapter. A headless build can
+also link just that adapter with `--no-default-features --features legacy_file_ops`.
+Package switches cannot enable omitted code; existing names, schemas and tool
+flags are preserved. See [tool packages](docs/TOOL_PACKAGES.md).
 
 For an existing installation, build the updated source, stop the running Praxis
 service, then run the following from the source checkout. Replace the installation

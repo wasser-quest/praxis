@@ -113,8 +113,9 @@ and preservation of disabled tools. The no-VM dependency tree excludes `praxis-v
   restart with the guest still running, verified reattach and disk preservation.
   This found and fixed a missing absolute pointer device (`usb-tablet`).
 
-See [process hosting](../docs/PLUGIN_PROCESS_PROTOCOL.md). The full PR 3 checkbox
-remains open for guest ownership and full upgrade/recovery policy. Generic v2
+See [process hosting](../docs/PLUGIN_PROCESS_PROTOCOL.md). Guest ownership and
+restart recovery are implemented; the full PR 3 checkbox remains open for the
+remaining upgrade/lifecycle policy. Generic v2
 process declarations and immutable package publication are still future work.
 
 Verification: 978 library tests with the native VM engine and 971 without it,
@@ -198,8 +199,30 @@ clipboard) remains an operator smoke check.
 - [x] Plugin replacement of builtin packages (`"replaces": [...]`), with one
   replacement per package, core packages protected and an example
   (`examples/tool-packages/allowlist_shell`).
-- [ ] Move implementations out of the core binary per package. Runtime-control and the remaining
-feature/tool packages follow; POML/context/SM/IR verification stays in core.
+- [x] First implementation extraction: `legacy_file_ops` owns `read_file` and
+  `edit_file` in an optional crate and independently installed executable.
+  Compatibility links the adapter; `--no-default-features` omits its code and
+  dependency. Names, schemas, text results and per-tool choices are retained.
+- [x] Generic executable transport v1: bounded stdin/stdout, exact text results,
+  declared secrets, timeouts and cancellation. Missing native implementations
+  cannot reappear via stale rows/static schemas; management reports availability.
+- [ ] Extract `shell` (including its background-job service) next, then each
+  remaining tool owner. Runtime-control wrappers remain scoped to host APIs;
+  POML/context/SM/IR verification stays in core.
+- [ ] Complete the versioned core `write_file` contract and finish dependency
+  cleanup after the corresponding feature packages are independently installed.
+
+Verification for the first tool implementation extraction: 1,014 compatibility
+and 986 core-only library tests, 17 CLI tests in each build, six file-package
+tests, 11 plugin-protocol tests and four dashboard helper scripts passed.
+The actual separately built helper passed chat/agent dispatch on both hosts,
+including live flags, cancellation and stale verification receipts. Three
+selected real-POML workflow integrations covered IR rollback/completion,
+capability recovery and graph navigation; two core-only integrations exercised
+real Cargo build/tests and source rollback. The core-only dependency tree and
+compiled binary exclude the legacy-file implementation. A compiled CLI and
+fresh package install passed; reinstall refusal preserved the existing binary
+and manifest. No live model inference was used.
 
 Existing setup guides remain applicable during migration:
 

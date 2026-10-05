@@ -96,6 +96,7 @@ fn validate_handler(handler: &PluginHandler) -> anyhow::Result<()> {
     match handler {
         PluginHandler::Service(adapter) => crate::runtime::features::validate_adapter(adapter)?,
         PluginHandler::Verification(_) | PluginHandler::SourceEdit(_) => {}
+        PluginHandler::Executable { .. } => anyhow::bail!("Executable protocol v1 supplies raw tools; use a service adapter for action contracts"),
         PluginHandler::Script { path, interpreter } => anyhow::ensure!(
             !path.is_empty()
                 && !path.contains('\0')
@@ -135,6 +136,10 @@ fn validate_checks(checks: &[CheckContract], required: bool) -> anyhow::Result<(
     Ok(())
 }
 pub(crate) fn validate_tool(plugin: &str, tool: &PluginTool) -> anyhow::Result<()> {
+    if let PluginHandler::Executable { path, timeout_secs } = &tool.handler {
+        anyhow::ensure!(!path.is_empty() && !path.contains('\0') && (1..=600).contains(timeout_secs), "Invalid executable handler");
+        anyhow::ensure!(tool.contract.is_none(), "Executable protocol v1 supplies raw tools; use a service adapter for action contracts");
+    }
     if let PluginHandler::Service(adapter) = &tool.handler {
         anyhow::ensure!(
             identifier(plugin) && identifier(&tool.name),
@@ -708,6 +713,6 @@ async fn handler(
             Ok(serde_json::from_str(out.trim())
                 .unwrap_or_else(|_| Value::String(out.trim().into())))
         }
-        PluginHandler::Builtin { .. } => Err("handler_failed"),
+        PluginHandler::Builtin { .. } | PluginHandler::Executable { .. } => Err("handler_failed"),
     }
 }

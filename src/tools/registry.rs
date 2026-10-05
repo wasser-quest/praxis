@@ -635,6 +635,18 @@ fn build_tool_definitions_with_selection(
     } else {
         filter_tools_for_request(allowed_names, allowed_cats.as_deref(), full_names, full_cats.as_deref(), discovery_mode)
     };
+    let package_switches = match db.map(|db| super::packages::load(&db.data_dir())).transpose() {
+        Ok(switches) => switches.unwrap_or_default(),
+        Err(_) => {
+            tracing::warn!("Cannot load tool package state; no tools offered");
+            return Vec::new();
+        }
+    };
+    let native_on = |name: &str| {
+        super::packages::native_available(name)
+            && super::packages::owner_of(name).is_none_or(|p| p.required || package_switches.get(p.id).copied().unwrap_or(true))
+    };
+    tools.retain(|tool| native_on(&tool.function.name));
     
     // Use the same enabled contracts as discovery, including built-ins that
     // have no category metadata (background/delegation tools, etc.). Never let
@@ -648,7 +660,7 @@ fn build_tool_definitions_with_selection(
     };
     if db.is_some() {
         tools.retain(|tool| native.iter().any(|n| n.name == tool.function.name && n.is_enabled));
-        for tool in native.iter().filter(|tool| tool.is_enabled && !crate::runtime::vm::is_vm_tool(&tool.name)) {
+        for tool in native.iter().filter(|tool| tool.is_enabled && !crate::runtime::vm::is_vm_tool(&tool.name) && native_on(&tool.name)) {
             let category = get_tool_meta(&tool.name).map(|meta| meta.category).unwrap_or(ToolCategory::Action);
             let activated = full_schemas.contains(&tool.name) || full_cats.as_ref().is_some_and(|cats| cats.contains(&category));
             if (has_explicit_config || discovery_mode == ToolDiscoveryMode::None) && !activated { continue; }
@@ -672,11 +684,22 @@ fn build_tool_definitions_with_selection(
     // VM schemas are provided only by the explicitly bound feature package.
     tools.retain(|tool| !crate::runtime::vm::is_vm_tool(&tool.function.name));
 
+    // Plugin registration validates replacement ownership. Use the installed
+    // owner's schema rather than a stale native schema for replaceable names.
+    // With no DB/native row, keep the historical closed static fallback.
+    let replacements: HashSet<&str> = plugin_tools.into_iter().flatten()
+        .filter(|tool| super::packages::owner_of(&tool.function.name)
+            .is_some_and(|package| super::packages::replaceable(package.id)))
+        .filter(|tool| !super::packages::native_available(&tool.function.name)
+            || native.iter().any(|row| row.name == tool.function.name))
+        .map(|tool| tool.function.name.as_str()).collect();
+    tools.retain(|tool| !replacements.contains(tool.function.name.as_str()));
+
     // Merge plugin tools - also filter them by state settings
     if let Some(plugins) = plugin_tools {
         for plugin_tool in plugins {
             // Check if tool already exists (static registry override)
-            if (canonical_tool(&plugin_tool.function.name).is_some() && !crate::runtime::vm::is_vm_tool(&plugin_tool.function.name))
+            if (canonical_tool(&plugin_tool.function.name).is_some() && super::packages::native_available(&plugin_tool.function.name) && !replacements.contains(plugin_tool.function.name.as_str()) && !crate::runtime::vm::is_vm_tool(&plugin_tool.function.name))
                 || tools.iter().any(|t| t.function.name == plugin_tool.function.name) {
                 continue;
             }
@@ -687,6 +710,15 @@ fn build_tool_definitions_with_selection(
                 .unwrap_or(true);
             if !plugin_enabled {
                 continue; // Skip disabled plugin tools
+            }
+            // When an extracted implementation is supplied by a package,
+            // honor legacy per-tool flags unless explicitly overridden.
+            if let Some(db) = db {
+                if replacements.contains(plugin_tool.function.name.as_str())
+                    && !crate::db::tools::list_plugin_tools(db).ok().is_some_and(|flags| flags.contains_key(&plugin_tool.function.name))
+                    && native.iter().any(|tool| tool.name == plugin_tool.function.name && !tool.is_enabled) {
+                    continue;
+                }
             }
             // Plugin tools obey the same allow-list as built-ins: when the state
             // configures tools explicitly, a plugin tool must be named directly in
@@ -1300,7 +1332,8 @@ mod registry_tests {
         let tools = build_tool_definitions(&settings, Some(&plugins), None);
         let got = names(&tools);
         assert!(!got.contains(&"brave_web_search"), "unlisted plugin tool must not leak");
-        assert!(got.contains(&"read_file") && got.contains(&"execute_terminal"));
+        assert_eq!(got.contains(&"read_file"), cfg!(feature = "legacy_file_ops"));
+        assert!(got.contains(&"execute_terminal"));
         assert!(!got.contains(&"agent_complete") && !got.contains(&"memory_get"));
         // Activated tools carry full schemas even in DescriptionOnly mode.
         let term = tools.iter().find(|t| t.function.name == "execute_terminal").unwrap();
@@ -1320,8 +1353,9 @@ mod registry_tests {
         settings.full_tool_schemas = vec!["read_file".into()];
         let tools = build_tool_definitions(&settings, None, None);
         let got = names(&tools);
-        assert_eq!(got.len(), 3);
-        assert!(got.contains(&"agent_complete") && got.contains(&"agent_next") && got.contains(&"read_file"));
+        assert_eq!(got.len(), 2 + usize::from(cfg!(feature = "legacy_file_ops")));
+        assert!(got.contains(&"agent_complete") && got.contains(&"agent_next"));
+        assert_eq!(got.contains(&"read_file"), cfg!(feature = "legacy_file_ops"));
     }
 
     #[test]
@@ -1334,9 +1368,10 @@ mod registry_tests {
         crate::gateway::task_control::select_tools(&user, vec!["memory_get".into(), "brave_web_search".into()], false).unwrap();
         let tools = build_tool_definitions_for_user(&settings, Some(&plugins), None, &user);
         let got = names(&tools);
-        assert!(got.contains(&"memory_get") && got.contains(&"brave_web_search") && got.contains(&"read_file"));
+        assert!(got.contains(&"memory_get") && got.contains(&"brave_web_search"));
+        assert_eq!(got.contains(&"read_file"), cfg!(feature = "legacy_file_ops"));
         assert!(!got.contains(&"execute_terminal"));
-        assert!(build_tool_definitions_for_user(&settings, Some(&plugins), None, "someone-else").len() == 3);
+        assert_eq!(build_tool_definitions_for_user(&settings, Some(&plugins), None, "someone-else").len(), if cfg!(feature = "legacy_file_ops") { 3 } else { 1 });
     }
 
     #[test]
@@ -1423,7 +1458,7 @@ mod registry_tests {
         settings.tool_discovery_mode = "None".into();
         assert!(build_tool_definitions(&settings, None, None).is_empty());
         settings.activated_tools = vec!["core_files".into()];
-        assert_eq!(build_tool_definitions(&settings, None, None).len(), 3);
+        assert_eq!(build_tool_definitions(&settings, None, None).len(), if cfg!(feature = "legacy_file_ops") { 3 } else { 1 });
     }
 
     #[test]
