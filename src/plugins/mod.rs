@@ -51,6 +51,16 @@ pub struct FrontendDeclaration {
     pub args: Vec<String>,
 }
 
+/// A `runtime`-role package may provide the runtime engine (rendering and
+/// guard-condition policy) as an installed process worker.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct EngineDeclaration {
+    pub executable: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<String>,
+}
+
 /// Declared dependencies. `plugins` are package ids that must be installed and
 /// enabled; `commands` are executables that must be on PATH. Preflight runs
 /// before install/upgrade and uninstall refuses to orphan a dependent.
@@ -219,6 +229,9 @@ pub struct Plugin {
     /// additionally requires an operator grant in the trust store.
     #[serde(default, skip_serializing_if = "TrustRole::is_tool")]
     pub role: TrustRole,
+    /// Optional runtime-engine worker; only valid with `role: "runtime"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub engine: Option<EngineDeclaration>,
 }
 
 impl TrustRole {
@@ -814,6 +827,8 @@ struct PluginManifest {
     provides: ProvidesDeclaration,
     #[serde(default)]
     role: TrustRole,
+    #[serde(default)]
+    engine: Option<EngineDeclaration>,
 }
 
 pub fn load_plugins_from_dir(dir: &Path) -> anyhow::Result<Vec<Plugin>> {
@@ -949,6 +964,7 @@ fn load_plugin_from_manifest(manifest_path: &Path, plugin_dir: &Path) -> anyhow:
         frontend: validate_frontend(plugin_dir, manifest.frontend)?,
         provides: manifest.provides,
         role: manifest.role,
+        engine: validate_engine(plugin_dir, manifest.role, manifest.engine)?,
     })
 }
 
@@ -1029,6 +1045,38 @@ pub(crate) fn validate_assets(plugin_dir: &Path, assets: &[String]) -> anyhow::R
     Ok(())
 }
 
+/// A declared runtime engine must be a regular file inside a `runtime` package.
+pub(crate) fn validate_engine(
+    plugin_dir: &Path,
+    role: TrustRole,
+    engine: Option<EngineDeclaration>,
+) -> anyhow::Result<Option<EngineDeclaration>> {
+    let Some(mut engine) = engine else {
+        return Ok(None);
+    };
+    anyhow::ensure!(
+        role == TrustRole::Runtime,
+        "A runtime engine declaration requires role 'runtime'"
+    );
+    anyhow::ensure!(engine.args.len() <= 32, "Too many engine arguments");
+    let root = plugin_dir.canonicalize()?;
+    let relative = Path::new(&engine.executable);
+    anyhow::ensure!(
+        relative.is_relative()
+            && relative
+                .components()
+                .all(|c| matches!(c, std::path::Component::Normal(_))),
+        "Engine executable must be a path inside its package"
+    );
+    let resolved = root.join(relative).canonicalize()?;
+    anyhow::ensure!(
+        resolved.starts_with(&root) && resolved.is_file(),
+        "Engine executable escapes its package or is not a regular file"
+    );
+    engine.executable = resolved.to_string_lossy().into_owned();
+    Ok(Some(engine))
+}
+
 pub fn register_builtin_plugins(_registry: &mut PluginRegistry) {
     // No built-in plugins — install plugins via the plugins/ directory
 }
@@ -1101,6 +1149,7 @@ mod plugin_tests {
             frontend: None,
             provides: Default::default(),
             role: Default::default(),
+            engine: None,
         });
         assert!(registry.get("test").is_some());
         assert_eq!(registry.list().len(), 1);
@@ -1150,6 +1199,7 @@ mod plugin_tests {
             frontend: None,
             provides: Default::default(),
             role: Default::default(),
+            engine: None,
         });
         assert_eq!(registry.enabled_tools().len(), 1);
     }
@@ -1179,6 +1229,7 @@ mod plugin_tests {
             frontend: None,
             provides: Default::default(),
             role: Default::default(),
+            engine: None,
         });
         assert_eq!(registry.enabled_tools().len(), 0);
     }
@@ -1327,6 +1378,7 @@ mod plugin_tests {
             frontend: None,
             provides: Default::default(),
             role: Default::default(),
+            engine: None,
         });
         assert!(registry.context_defaults().is_empty());
     }
@@ -1348,6 +1400,7 @@ mod plugin_tests {
             frontend: None,
             provides: Default::default(),
             role: Default::default(),
+            engine: None,
         });
         let sec = registry.collect_secrets();
         assert_eq!(sec.len(), 2);

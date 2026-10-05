@@ -208,10 +208,13 @@ pub async fn start(db: crate::db::Database, config: crate::config::Config) -> an
     crate::runtime::shell::initialize_service(&config, &plugins).await?;
     crate::runtime::process_service::configure(&config, &mut plugins)?;
     crate::runtime::process_service::initialize_service(&config, &plugins).await?;
+    let engine_binding = crate::runtime::engine_bridge::configure(&config, &plugins).await?;
     if let Err(error) = crate::runtime::vm::autostart(&config, &plugins, &secrets).await {
         tracing::warn!(%error, "Configured VM autostart failed (non-fatal)");
     }
-    start_with_plugins(db, config, plugins).await
+    let result = start_with_plugins(db, config, plugins).await;
+    drop(engine_binding);
+    result
 }
 
 /// Both headless and dashboard entry points share the same feature instances.
