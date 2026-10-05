@@ -32,6 +32,8 @@ fn fixture(handler: &str) -> (tempfile::TempDir, PluginRegistry) {
         enabled: true,
         replaces: Vec::new(),
         hooks: Default::default(),
+        requires: Default::default(),
+        frontend: None,
     });
     (dir, registry)
 }

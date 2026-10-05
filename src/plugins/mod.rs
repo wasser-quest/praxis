@@ -41,25 +41,13 @@ impl PluginHooks {
 }
 
 /// Optional frontend executable contributed by a package (for example
-/// `praxis-tui`). Frontends are launched by the operator, not registered as
-/// tools, so they do not change the tool registry revision.
+/// `praxis-tui`). It is launched by the operator, not registered as a tool.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct FrontendDeclaration {
     pub executable: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub args: Vec<String>,
-}
-
-/// Read an optional `frontend` block from a package manifest.
-pub fn frontend_declaration(manifest_path: &Path) -> anyhow::Result<Option<FrontendDeclaration>> {
-    #[derive(Deserialize)]
-    struct Raw {
-        #[serde(default)]
-        frontend: Option<FrontendDeclaration>,
-    }
-    let data = std::fs::read_to_string(manifest_path)?;
-    Ok(serde_json::from_str::<Raw>(&data)?.frontend)
 }
 
 /// Declared dependencies. `plugins` are package ids that must be installed and
@@ -78,18 +66,6 @@ impl PluginRequires {
     pub fn is_empty(&self) -> bool {
         self.plugins.is_empty() && self.commands.is_empty()
     }
-}
-
-/// Read an optional `requires` block from a package manifest. Unknown fields
-/// are ignored because the same manifest may carry future v2 declarations.
-pub fn requires_declaration(manifest_path: &Path) -> anyhow::Result<PluginRequires> {
-    #[derive(Deserialize)]
-    struct Raw {
-        #[serde(default)]
-        requires: PluginRequires,
-    }
-    let data = std::fs::read_to_string(manifest_path)?;
-    Ok(serde_json::from_str::<Raw>(&data)?.requires)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -111,6 +87,13 @@ pub struct Plugin {
     /// Operator-approved install/uninstall scripts. See docs/PLUGIN_LIFECYCLE.md.
     #[serde(default, skip_serializing_if = "PluginHooks::is_empty")]
     pub hooks: PluginHooks,
+    /// Declared dependencies, preflighted before effects and part of the
+    /// registry revision so a change invalidates task receipts.
+    #[serde(default, skip_serializing_if = "PluginRequires::is_empty")]
+    pub requires: PluginRequires,
+    /// Optional frontend executable contributed by the package.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frontend: Option<FrontendDeclaration>,
 }
 
 fn default_true() -> bool {
@@ -692,6 +675,10 @@ struct PluginManifest {
     replaces: Vec<String>,
     #[serde(default)]
     hooks: PluginHooks,
+    #[serde(default)]
+    requires: PluginRequires,
+    #[serde(default)]
+    frontend: Option<FrontendDeclaration>,
 }
 
 pub fn load_plugins_from_dir(dir: &Path) -> anyhow::Result<Vec<Plugin>> {
@@ -796,6 +783,8 @@ fn load_plugin_from_manifest(manifest_path: &Path, plugin_dir: &Path) -> anyhow:
         enabled: manifest.enabled,
         replaces: manifest.replaces,
         hooks: validate_hooks(plugin_dir, manifest.hooks)?,
+        requires: manifest.requires,
+        frontend: validate_frontend(plugin_dir, manifest.frontend)?,
     })
 }
 
@@ -822,6 +811,35 @@ pub(crate) fn validate_hooks(plugin_dir: &Path, mut hooks: PluginHooks) -> anyho
         }
     }
     Ok(hooks)
+}
+
+/// A declared frontend must resolve to a regular file inside its package.
+pub(crate) fn validate_frontend(
+    plugin_dir: &Path,
+    frontend: Option<FrontendDeclaration>,
+) -> anyhow::Result<Option<FrontendDeclaration>> {
+    let Some(frontend) = frontend else {
+        return Ok(None);
+    };
+    let root = plugin_dir.canonicalize()?;
+    let relative = Path::new(&frontend.executable);
+    anyhow::ensure!(
+        relative.is_relative()
+            && relative
+                .components()
+                .all(|c| matches!(c, std::path::Component::Normal(_))),
+        "Frontend executable must be a path inside its package"
+    );
+    let resolved = root.join(relative).canonicalize()?;
+    anyhow::ensure!(
+        resolved.starts_with(&root) && resolved.is_file(),
+        "Frontend executable escapes its package or is not a regular file"
+    );
+    anyhow::ensure!(
+        frontend.args.len() <= 32,
+        "Too many frontend arguments"
+    );
+    Ok(Some(frontend))
 }
 
 pub fn register_builtin_plugins(_registry: &mut PluginRegistry) {
@@ -866,6 +884,8 @@ mod plugin_tests {
             enabled: true,
             replaces: Vec::new(),
             hooks: Default::default(),
+            requires: Default::default(),
+            frontend: None,
         });
         assert!(registry.get("test").is_some());
         assert_eq!(registry.list().len(), 1);
@@ -911,6 +931,8 @@ mod plugin_tests {
             enabled: true,
             replaces: Vec::new(),
             hooks: Default::default(),
+            requires: Default::default(),
+            frontend: None,
         });
         assert_eq!(registry.enabled_tools().len(), 1);
     }
@@ -936,6 +958,8 @@ mod plugin_tests {
             enabled: false,
             replaces: Vec::new(),
             hooks: Default::default(),
+            requires: Default::default(),
+            frontend: None,
         });
         assert_eq!(registry.enabled_tools().len(), 0);
     }
@@ -1080,6 +1104,8 @@ mod plugin_tests {
             enabled: true,
             replaces: Vec::new(),
             hooks: Default::default(),
+            requires: Default::default(),
+            frontend: None,
         });
         assert!(registry.context_defaults().is_empty());
     }
@@ -1097,10 +1123,37 @@ mod plugin_tests {
             enabled: true,
             replaces: Vec::new(),
             hooks: Default::default(),
+            requires: Default::default(),
+            frontend: None,
         });
         let sec = registry.collect_secrets();
         assert_eq!(sec.len(), 2);
         assert!(sec.contains(&"api_key".to_string()));
         assert!(sec.contains(&"api_secret".to_string()));
+    }
+
+    #[test]
+    fn loader_reads_requires_and_validates_frontend_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugin_dir = dir.path().join("fe");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+        std::fs::write(plugin_dir.join("run"), "#!/bin/sh\n").unwrap();
+        let manifest = serde_json::json!({
+            "name": "fe", "description": "x", "version": "1",
+            "frontend": {"executable": "run", "args": []},
+            "requires": {"plugins": ["base"], "commands": ["sh"]},
+            "tools": []
+        });
+        std::fs::write(plugin_dir.join("plugin.json"), manifest.to_string()).unwrap();
+        let plugin =
+            load_plugin_from_manifest(&plugin_dir.join("plugin.json"), &plugin_dir).unwrap();
+        assert_eq!(plugin.requires.plugins, vec!["base"]);
+        assert_eq!(plugin.requires.commands, vec!["sh"]);
+        assert_eq!(plugin.frontend.as_ref().unwrap().executable, "run");
+
+        let mut bad = manifest.clone();
+        bad["frontend"]["executable"] = serde_json::json!("../run");
+        std::fs::write(plugin_dir.join("plugin.json"), bad.to_string()).unwrap();
+        assert!(load_plugin_from_manifest(&plugin_dir.join("plugin.json"), &plugin_dir).is_err());
     }
 }

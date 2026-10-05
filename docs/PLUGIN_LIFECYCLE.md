@@ -125,8 +125,9 @@ A manifest may declare `requires`:
   and upgrade fail before copying if a dependency is missing or disabled.
 * `commands` are executables that must be on `PATH`.
 * Uninstall refuses to remove a plugin that an enabled package requires; pass
-  `--force` to remove it anyway. A full dependency-closure resolver and a
-  lockfile land with manifest v2 (PR 8b).
+  `--force` to remove it anyway. `requires` is part of the registry revision, so
+  a dependency change invalidates prior task receipts. The lockfile
+  (`praxis.lock.json`) records installed revisions.
 
 ## Frontends
 
@@ -137,10 +138,11 @@ links a frontend. Gaps to close for the TUI: interactive tool/question approval,
 raw token streaming, and selection copy.
 
 A package may contribute a `frontend` executable. It is launched by the
-operator, not registered as a tool, so it does not change the registry revision.
-The `tui` package installs `bin/praxis-tui`, a client of the same gateway API as
-the dashboard. `scripts/install-tui-package.sh` builds and installs it; this is
-the first step of moving the TUI fully into an unlinked package.
+operator, not registered as a tool, and is part of the registry revision so a
+changed frontend invalidates task receipts. The `tui` package installs
+`bin/praxis-tui`, a client of the same gateway API as the dashboard.
+`scripts/install-tui-package.sh` builds and installs it; this is the first step
+of moving the TUI fully into an unlinked package.
 
 ## Using it
 
