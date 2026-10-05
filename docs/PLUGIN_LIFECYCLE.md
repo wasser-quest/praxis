@@ -136,6 +136,9 @@ praxis plugin install ./examples/plugins/hooks_demo --no-scripts
 # Remove; data is preserved unless --purge is passed to the hook
 praxis plugin uninstall hooks_demo --allow-scripts
 praxis plugin uninstall hooks_demo --allow-scripts --purge
+# Replace an installed plugin with a new revision (previous kept until the new
+# install hook succeeds; a failed hook restores it)
+praxis plugin upgrade ./plugins/hooks_demo --allow-scripts
 ```
 
 `examples/plugins/hooks_demo` installs a private `DATA_DIR/hooks_demo` marker and
