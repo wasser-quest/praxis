@@ -218,6 +218,11 @@ clipboard) remains an operator smoke check.
   compatibility adapter converts the crate's JSON result to the host provider
   types; the installed package returns the same `text`/`content_parts` text.
   `--no-default-features` omits the crate and its dependency.
+- [x] Manifest-declared process services: a `service` handler may name an
+  installed `executable` and optional `args`. The loader resolves it inside the
+  package and the host binds and initializes it at startup, with conflicting
+  declarations, missing executables, bad handshakes and crashes failing closed.
+  Explicit bindings stay authoritative; models cannot select an executable.
 - [ ] Extract the remaining tool owners. Runtime-control wrappers remain scoped
   to host APIs; POML/context/SM/IR verification stays in core.
 - [ ] Complete the versioned core `write_file` contract and finish dependency

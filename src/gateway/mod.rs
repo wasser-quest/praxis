@@ -201,6 +201,8 @@ pub async fn start(db: crate::db::Database, config: crate::config::Config) -> an
     crate::runtime::vm::initialize_service(&config, &plugins).await?;
     crate::runtime::shell::configure(&config, &mut plugins)?;
     crate::runtime::shell::initialize_service(&config, &plugins).await?;
+    crate::runtime::process_service::configure(&config, &mut plugins)?;
+    crate::runtime::process_service::initialize_service(&config, &plugins).await?;
     if let Err(error) = crate::runtime::vm::autostart(&config, &plugins, &secrets).await {
         tracing::warn!(%error, "Configured VM autostart failed (non-fatal)");
     }
