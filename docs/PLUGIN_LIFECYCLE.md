@@ -114,6 +114,14 @@ events, or a binary IPC channel for low-latency streaming. The kernel never
 links a frontend. Gaps to close for the TUI: interactive tool/question approval,
 raw token streaming, and selection copy.
 
+## Frontends
+
+A package may contribute a `frontend` executable. It is launched by the
+operator, not registered as a tool, so it does not change the registry revision.
+The `tui` package installs `bin/praxis-tui`, a client of the same gateway API as
+the dashboard. `scripts/install-tui-package.sh` builds and installs it; this is
+the first step of moving the TUI fully into an unlinked package.
+
 ## Using it
 
 ```bash
