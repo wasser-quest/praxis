@@ -51,6 +51,10 @@ optional workflow packs add assets rather than replacing the core interpreter.
   executing migrations remain.
 - [ ] PR 8c: kernel interfaces (trust levels, evidence observer and signed
   receipts, replaceable runtime engine interface).
+  Progress: the `role` declaration and the operator trust store
+  (`praxis plugin trust`, `DATA_DIR/plugin_trust.json`) are implemented; a
+  package requesting more than its grant is not activated. The evidence
+  observer, receipt signing and replaceable engine interface remain.
 - [ ] PR 8d: extract the remaining packages and ship the `--install-default` and
   minimal presets; make the TUI a separate `praxis-tui` frontend plugin.
   Progress: `praxis-tui` now exists as a standalone executable and the `tui`

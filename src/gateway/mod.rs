@@ -196,7 +196,11 @@ pub async fn start(db: crate::db::Database, config: crate::config::Config) -> an
     let secrets = crate::db::secrets::get_secrets();
 
     let plugins_dir = std::env::var("PLUGINS_DIR").unwrap_or_else(|_| "./plugins".to_string());
-    let mut plugins = crate::plugins::load_all_plugins(std::path::Path::new(&plugins_dir));
+    let trust = crate::plugins::trust::load(std::path::Path::new(&config.data_dir))?;
+    let mut plugins = crate::plugins::load_all_plugins_with_trust(
+        std::path::Path::new(&plugins_dir),
+        &trust,
+    );
     crate::runtime::vm::configure(&db, &config, &mut plugins)?;
     crate::runtime::vm::initialize_service(&config, &plugins).await?;
     crate::runtime::shell::configure(&config, &mut plugins)?;

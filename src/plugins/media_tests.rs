@@ -54,6 +54,7 @@ async fn media_plugin_registry_delivers_only_the_selected_plugins_declared_secre
             requires: Default::default(),
             frontend: None,
             provides: Default::default(),
+            role: Default::default(),
             context: HashMap::new(),
             secrets: vec![key.into()],
             tools: vec![PluginTool {
