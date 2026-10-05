@@ -110,14 +110,17 @@ To keep shell execution outside the host while retaining `execute_terminal`,
 ```bash
 cargo build --release --locked -p praxis --no-default-features
 ./scripts/install-shell-package.sh /actual/PLUGINS_DIR
-# Optional durable background jobs; foreground execution needs no worker.
-export SHELL_SERVICE_EXECUTABLE=plugins/shell/bin/praxis-shell
+# The manifest declares the background worker; the env var below is an
+# optional override. Foreground execution needs no worker.
+# export SHELL_SERVICE_EXECUTABLE=plugins/shell/bin/praxis-shell
 # Restart Praxis with PLUGINS_DIR set to that directory.
 ```
 
 `run_background` and `background_status` need the long-lived worker because the
 job registry is process memory; the raw one-shot executable transport cannot
-keep it across calls. The worker receives the authenticated caller from the
+keep it across calls. The package manifest declares the worker, so the host
+binds and starts it when the package is enabled. The worker receives the
+authenticated caller from the
 host, never from model arguments, and the host announces completions on the
 owner's stream. A headless build can link just the native adapter with
 `--no-default-features --features shell`.

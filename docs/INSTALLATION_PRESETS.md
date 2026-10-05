@@ -167,10 +167,11 @@ host:
 ```
 
 Foreground `execute_terminal` then works through the package immediately after
-restart. Durable `run_background`/`background_status` additionally need
-`SHELL_SERVICE_EXECUTABLE=plugins/shell/bin/praxis-shell` (relative to `ROOT_DIR`
-or absolute) so the host can bind the long-lived job worker. Existing per-tool
-flags are inherited until explicitly overridden in plugin flags. See
+restart. The installed manifest declares the background worker, so durable
+`run_background`/`background_status` bind and start automatically when the
+package is enabled; `SHELL_SERVICE_EXECUTABLE=plugins/shell/bin/praxis-shell`
+remains an optional override. Existing per-tool flags are inherited until
+explicitly overridden in plugin flags. See
 [tool package installation and transport](TOOL_PACKAGES.md#independently-installed-shell-and-background-jobs).
 
 The core-only build also omits native image loading. Install the vision package

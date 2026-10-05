@@ -223,6 +223,8 @@ clipboard) remains an operator smoke check.
   package and the host binds and initializes it at startup, with conflicting
   declarations, missing executables, bad handshakes and crashes failing closed.
   Explicit bindings stay authoritative; models cannot select an executable.
+  The installed shell package now declares its worker this way, so
+  `SHELL_SERVICE_EXECUTABLE` is only an operator override.
 - [ ] Extract the remaining tool owners. Runtime-control wrappers remain scoped
   to host APIs; POML/context/SM/IR verification stays in core.
 - [ ] Complete the versioned core `write_file` contract and finish dependency

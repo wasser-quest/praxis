@@ -24,6 +24,7 @@ def write(value):
 
 hello = read()
 mode = (root / "worker.mode").read_text()
+(root / "worker.ready").touch()
 write({
     "type": "ready",
     "version": 99 if mode == "bad_version" else 1,
@@ -33,7 +34,6 @@ write({
     "operations": ["run_background", "background_status"],
     "controls": ["cleanup", "drain_completions"],
 })
-(root / "worker.ready").touch()
 while True:
     request = read()
     identity = {"id": request["id"], "nonce": request["nonce"]}

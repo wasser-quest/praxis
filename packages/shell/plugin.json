@@ -15,13 +15,13 @@
       "name": "run_background",
       "description": "Start a long-running shell command DETACHED (compile, download, server). Returns a job id immediately so you can keep working. The job announces its completion to the user's dashboard automatically; poll background_status only if you need the result mid-task.",
       "parameters": {"type":"object","properties":{"command":{"type":"string"},"cwd":{"type":"string"}},"required":["command"]},
-      "handler": {"type":"service","service":"shell","operation":"run_background","api_version":1,"timeout_secs":30}
+      "handler": {"type":"service","service":"shell","operation":"run_background","api_version":1,"timeout_secs":30,"executable":"bin/praxis-shell","args":["--stdio"]}
     },
     {
       "name": "background_status",
       "description": "Check status/output of a detached background command. Call without job_id to list all jobs.",
       "parameters": {"type":"object","properties":{"job_id":{"type":"string"}}},
-      "handler": {"type":"service","service":"shell","operation":"background_status","api_version":1,"timeout_secs":30}
+      "handler": {"type":"service","service":"shell","operation":"background_status","api_version":1,"timeout_secs":30,"executable":"bin/praxis-shell","args":["--stdio"]}
     }
   ]
 }
