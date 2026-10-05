@@ -134,15 +134,15 @@ The package has two entry points in one binary:
   `stderr_truncated`. No worker is needed for foreground commands.
 * `run_background` and `background_status` use the long-lived process-protocol
   worker. Its job registry is process memory, so it cannot be reproduced by a
-  one-shot helper. The host binds it when `SHELL_SERVICE_EXECUTABLE` names the
-  installed `bin/praxis-shell` (relative to `ROOT_DIR` or absolute).
+  one-shot helper. The installed manifest declares `bin/praxis-shell --stdio`, so
+  the host binds and initializes it automatically when the package is enabled.
+  `SHELL_SERVICE_EXECUTABLE` remains an optional operator override.
 
 ```bash
 cargo build --release --locked -p praxis --no-default-features
 ./scripts/install-shell-package.sh /actual/PLUGINS_DIR
-# In the installation's .env (optional; foreground needs no worker):
-SHELL_SERVICE_EXECUTABLE=plugins/shell/bin/praxis-shell
-# Restart Praxis with PLUGINS_DIR set to that directory.
+# Restart Praxis with PLUGINS_DIR set to that directory. The manifest declares
+# the background worker; set SHELL_SERVICE_EXECUTABLE only to override it.
 ```
 
 The installer builds only the package and installs its `plugin.json` and

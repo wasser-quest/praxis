@@ -187,7 +187,8 @@ async fn installed_shell_package_runs_through_chat_agent_and_worker() {
     let mut config = Config::from_env();
     config.root_dir = dir.path().to_string_lossy().into();
     config.data_dir = data.to_string_lossy().into();
-    config.shell_service_executable = Some("plugins/shell/bin/praxis-shell".into());
+    // The installed manifest declares its worker, so no env override is needed.
+    config.shell_service_executable = None;
     super::shell::configure(&config, &mut registry).unwrap();
     super::shell::initialize_service(&config, &registry)
         .await
@@ -249,5 +250,50 @@ async fn installed_shell_package_runs_through_chat_agent_and_worker() {
         .execute(&call("run_background", json!({"command":"printf late"})))
         .await;
     assert!(cancelled.contains("cancelled"), "{cancelled}");
+    registry.shutdown_services(Duration::from_secs(2)).await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn shell_process_manifest_declaration_binds_without_env_override() {
+    let (dir, db, mut config, _registry) = fixture("echo");
+    // Point the declared worker at the fixture instead of the shell stub.
+    let worker = dir.path().join("plugins/shell/bin/praxis-shell");
+    std::fs::write(&worker, include_str!("fixtures/shell_service.py")).unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&worker, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    // Reload through the manifest loader so the worker path is resolved inside
+    // the package, as it is in production.
+    let mut registry = crate::plugins::load_all_plugins(&dir.path().join("plugins"));
+    assert_eq!(registry.list().len(), 1, "fixture shell package must load");
+    config.shell_service_executable = None;
+    super::shell::configure(&config, &mut registry).unwrap();
+    super::shell::initialize_service(&config, &registry)
+        .await
+        .unwrap();
+    assert!(dir.path().join("worker.ready").exists());
+    assert!(registry
+        .tool_definitions()
+        .iter()
+        .any(|t| t.function.name == "run_background"));
+    let user = format!("shell-manifest-{}", uuid::Uuid::new_v4());
+    let _task = task(&db, &registry, dir.path(), &user);
+    let output = registry
+        .execute_tool_with_host(
+            &db,
+            &user,
+            "call-1",
+            "background_status",
+            &json!({}),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    let output: Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(output["result"]["caller"]["user"], user);
+    assert_eq!(output["result"]["operation"], "background_status");
     registry.shutdown_services(Duration::from_secs(2)).await;
 }

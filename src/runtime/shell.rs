@@ -18,15 +18,28 @@ use tokio::sync::OnceCell;
 pub const SERVICE_TOOLS: &[&str] = &["run_background", "background_status"];
 pub const CONTROLS: &[&str] = &["cleanup", "drain_completions"];
 
-/// Bind the installed `shell` package only when the operator selected a worker.
-/// A missing or malformed declaration is a setup error, not a silent fallback.
+/// Bind the installed `shell` package from an operator override or a
+/// manifest-declared worker. A missing or malformed declaration is a setup
+/// error, not a silent fallback.
 pub fn configure(config: &Config, plugins: &mut PluginRegistry) -> anyhow::Result<()> {
-    let Some(executable) = config.shell_service_executable.as_deref() else {
+    let declared = plugins.get("shell").and_then(|plugin| {
+        plugin.tools.iter().find_map(|tool| match &tool.handler {
+            PluginHandler::Service(adapter)
+                if adapter.service == "shell" && adapter.api_version == 1 =>
+            {
+                adapter.executable.clone()
+            }
+            _ => None,
+        })
+    });
+    // The explicit environment override wins so an operator can retarget a
+    // customized installation without editing the manifest.
+    let Some(executable) = config.shell_service_executable.clone().or(declared) else {
         return Ok(());
     };
     let plugin = plugins.get("shell").cloned().ok_or_else(|| {
         anyhow::anyhow!(
-            "SHELL_SERVICE_EXECUTABLE is set but the installed shell package is missing"
+            "Shell worker selected but the installed shell package is missing"
         )
     })?;
     anyhow::ensure!(
@@ -48,7 +61,7 @@ pub fn configure(config: &Config, plugins: &mut PluginRegistry) -> anyhow::Resul
             "shell tool {tool} requires the process service binding"
         );
     }
-    let adapter = ShellProcessAdapter::new(config, executable)?;
+    let adapter = ShellProcessAdapter::new(config, &executable)?;
     plugins.register_service(
         "shell",
         "shell",
@@ -60,13 +73,11 @@ pub fn configure(config: &Config, plugins: &mut PluginRegistry) -> anyhow::Resul
 }
 
 /// Host startup, before inference. Registration alone never spawns a worker.
-pub async fn initialize_service(config: &Config, plugins: &PluginRegistry) -> anyhow::Result<()> {
-    if config.shell_service_executable.is_some() {
-        plugins
-            .service_handle("shell", "shell")
-            .ok_or_else(|| anyhow::anyhow!("Shell service binding missing"))?
-            .initialize()
-            .await?;
+pub async fn initialize_service(_config: &Config, plugins: &PluginRegistry) -> anyhow::Result<()> {
+    // `configure` only registers when an operator override or manifest worker is
+    // available; if a binding exists, initialize it before inference.
+    if let Some(handle) = plugins.service_handle("shell", "shell") {
+        handle.initialize().await?;
     }
     Ok(())
 }
