@@ -40,6 +40,28 @@ impl PluginHooks {
     }
 }
 
+/// Optional frontend executable contributed by a package (for example
+/// `praxis-tui`). Frontends are launched by the operator, not registered as
+/// tools, so they do not change the tool registry revision.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct FrontendDeclaration {
+    pub executable: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<String>,
+}
+
+/// Read an optional `frontend` block from a package manifest.
+pub fn frontend_declaration(manifest_path: &Path) -> anyhow::Result<Option<FrontendDeclaration>> {
+    #[derive(Deserialize)]
+    struct Raw {
+        #[serde(default)]
+        frontend: Option<FrontendDeclaration>,
+    }
+    let data = std::fs::read_to_string(manifest_path)?;
+    Ok(serde_json::from_str::<Raw>(&data)?.frontend)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Plugin {
     pub name: String,

@@ -209,6 +209,12 @@ In `praxis chat`, **F2** toggles mouse capture for native terminal selection; **
 
 Start the chat TUI (`praxis chat`, or `praxis chat --gateway-url https://host:3537 --gateway-key …` for a remote gateway) and use `/login`. Login always runs on the **gateway machine** — the process that talks to the model — so a remote TUI logs the remote backend in. The router is rebuilt in place; no restart.
 
+The same client is available as a standalone `praxis-tui` executable
+(`praxis-tui --gateway-url … --gateway-key …`, or without a URL for a local
+gateway). `scripts/install-tui-package.sh` installs it as the `tui` frontend
+package under `PLUGINS_DIR` so it can be distributed separately from the
+kernel.
+
 ```
 /login                                   # status of every provider + how to log in
 /login codex                             # ChatGPT subscription via the Codex CLI (device auth on the gateway host)

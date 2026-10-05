@@ -976,6 +976,15 @@ async fn handle_plugin_action(action: &PluginAction) -> anyhow::Result<()> {
                                 plugin.tools.len(),
                                 plugin.secrets.len()
                             );
+                            if let Ok(Some(frontend)) =
+                                praxis::plugins::frontend_declaration(&manifest)
+                            {
+                                println!(
+                                    "      frontend: {} {}",
+                                    frontend.executable,
+                                    frontend.args.join(" ")
+                                );
+                            }
                             found = true;
                         }
                         Err(e) => {
