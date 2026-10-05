@@ -3704,6 +3704,7 @@ dependencies = [
  "praxis-legacy-file-ops",
  "praxis-plugin-api",
  "praxis-shell",
+ "praxis-vision",
  "praxis-vm",
  "praxis-vm-web",
  "rand 0.8.6",
@@ -3803,6 +3804,18 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "praxis-vision"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "image",
+ "praxis-plugin-api",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

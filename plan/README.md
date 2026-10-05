@@ -213,6 +213,11 @@ clipboard) remains an operator smoke check.
   keeps the exact one-shot result; background jobs use a long-lived worker
   because the registry is process memory. The host issues caller identity and
   drains completion notices.
+- [x] Third implementation extraction: `vision` owns `understand_image` in
+  `crates/praxis-vision` plus an independently installed executable. The
+  compatibility adapter converts the crate's JSON result to the host provider
+  types; the installed package returns the same `text`/`content_parts` text.
+  `--no-default-features` omits the crate and its dependency.
 - [ ] Extract the remaining tool owners. Runtime-control wrappers remain scoped
   to host APIs; POML/context/SM/IR verification stays in core.
 - [ ] Complete the versioned core `write_file` contract and finish dependency
@@ -242,6 +247,16 @@ scoping, cleanup bounds and the actual installed binary through protocol v1.
 The `shell` feature is part of `compatibility`; a `--no-default-features` build
 omits the crate and its dependency, and stale rows cannot advertise it. No live
 model inference was used.
+
+Verification for the vision extraction: `crates/praxis-vision` reads bounded
+PNG/PPM-family files and returns the historical `{"text","content_parts"}`
+shape. The native adapter converts that JSON to the host provider types; the
+installed executable returns it unchanged so chat/agent content parts still
+attach. Crate tests cover error and PNG data-URL output; host tests cover the
+installed package through both ingress modes, live flags and cancellation on
+both host configurations. The core-only dependency tree excludes
+`praxis-vision` and stale rows cannot select it. No live model inference was
+used.
 
 Existing setup guides remain applicable during migration:
 

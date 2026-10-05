@@ -379,7 +379,11 @@ Foreground execution keeps the one-shot exact-text transport; background jobs
 use a long-lived process-protocol worker because the job registry is process
 memory. The host issues the authenticated caller and drains completion notices.
 A core-only host omits the crate and dependency and can install the package
-later; stale rows cannot advertise the omitted implementation.
+later; stale rows cannot advertise the omitted implementation. The `vision`
+package likewise owns `understand_image` in `crates/praxis-vision`; the native
+adapter converts its JSON result to the host provider types and the installed
+executable returns the same `text`/`content_parts` text. Both features are in
+`compatibility` and absent from `--no-default-features`.
 
 Next move each remaining owner below in its own reviewable change.
 Providers/channels/media remain PR 6.

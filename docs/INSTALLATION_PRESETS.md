@@ -13,6 +13,7 @@ through the plugin migration. There are two separate operations:
 | Headless runtime | `cargo build --release --locked --no-default-features` | Excludes dashboard, VM engine, legacy read/edit and shell code; gateway, CLI, POML/SM workflows and receipts remain |
 | Headless with native legacy file tools | `cargo build --release --locked --no-default-features --features legacy_file_ops` | Keeps `read_file`/`edit_file`, without VM or dashboard |
 | Headless with native shell tools | `cargo build --release --locked --no-default-features --features shell` | Keeps `execute_terminal`/`run_background`/`background_status`, without VM or dashboard |
+| Headless with native image loading | `cargo build --release --locked --no-default-features --features vision` | Keeps `understand_image`, without VM or dashboard |
 | VM without dashboard | `cargo build --release --locked --no-default-features --features vm` | Native VM tools/CLI, no dashboard listener |
 
 The installer does not start services, run QEMU, call providers, read `.env` or
@@ -171,6 +172,18 @@ restart. Durable `run_background`/`background_status` additionally need
 or absolute) so the host can bind the long-lived job worker. Existing per-tool
 flags are inherited until explicitly overridden in plugin flags. See
 [tool package installation and transport](TOOL_PACKAGES.md#independently-installed-shell-and-background-jobs).
+
+The core-only build also omits native image loading. Install the vision package
+to keep `understand_image` outside the host:
+
+```bash
+./scripts/install-vision-package.sh /actual/PLUGINS_DIR
+```
+
+Restart Praxis with that `PLUGINS_DIR`. The package returns the same
+`text`/`content_parts` JSON as the native adapter; existing per-tool flags are
+inherited until explicitly overridden in plugin flags. See
+[tool package installation and transport](TOOL_PACKAGES.md#independently-installed-image-loading).
 
 Verified Rust is intentionally opt-in:
 

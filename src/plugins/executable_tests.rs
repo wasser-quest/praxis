@@ -268,3 +268,60 @@ async fn executable_real_legacy_package_runs_through_chat_agent_and_live_guards(
     assert!(dispatch.execute(&edit).await.contains("cancelled"));
     assert_eq!(std::fs::read_to_string(&path).unwrap(), after);
 }
+
+#[tokio::test]
+#[ignore = "Requires PRAXIS_VISION_EXECUTABLE pointing to the separately built package"]
+async fn executable_real_vision_package_runs_through_chat_and_agent_and_live_guards() {
+    use crate::gateway::{
+        llm::provider::{FunctionCall, ToolCall},
+        task_control,
+        tool_dispatch::{DispatchContext, DispatchMode},
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let package_dir = dir.path().join("plugins/vision");
+    std::fs::create_dir_all(package_dir.join("bin")).unwrap();
+    let executable =
+        std::env::var("PRAXIS_VISION_EXECUTABLE").expect("build praxis-vision first");
+    std::fs::copy(executable, package_dir.join("bin/praxis-vision")).unwrap();
+    std::fs::copy("packages/vision/plugin.json", package_dir.join("plugin.json")).unwrap();
+    let registry = load_all_plugins(&dir.path().join("plugins"));
+    assert_eq!(registry.list().len(), 1);
+    let db = crate::db::Database::new(dir.path()).unwrap();
+    crate::db::tools::init_default_tools(&db).unwrap();
+    let image = dir.path().join("pixel.png");
+    image::RgbaImage::new(1, 1).save(&image).unwrap();
+    let user = format!("external-vision-{}", uuid::Uuid::new_v4());
+    let _task = task_control::begin(&user).unwrap();
+    task_control::pin_registry(&user, &registry).unwrap();
+    let call = |args: serde_json::Value| ToolCall {
+        id: uuid::Uuid::new_v4().to_string(),
+        function: FunctionCall {
+            name: "understand_image".into(),
+            arguments: args.to_string(),
+        },
+    };
+    for mode in [DispatchMode::Chat, DispatchMode::Agent] {
+        let result = DispatchContext::new(dir.path(), &db, &user, &registry, mode)
+            .execute(&call(json!({"path":image,"prompt":"inspect"})))
+            .await;
+        let value: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert!(value["text"].as_str().unwrap().contains("Image loaded"), "{result}");
+        let parts = value["content_parts"].as_array().unwrap();
+        assert_eq!(parts[0]["type"], "image_url", "{result}");
+        assert!(parts[0]["image_url"]["url"]
+            .as_str()
+            .unwrap()
+            .starts_with("data:image/png;base64,"));
+    }
+    crate::db::tools::set_plugin_tool_enabled(&db, "understand_image", false).unwrap();
+    let disabled = DispatchContext::new(dir.path(), &db, &user, &registry, DispatchMode::Agent)
+        .execute(&call(json!({"path":image,"prompt":"inspect"})))
+        .await;
+    assert!(disabled.contains("disabled"), "{disabled}");
+    crate::db::tools::set_plugin_tool_enabled(&db, "understand_image", true).unwrap();
+    task_control::cancel(&user);
+    let cancelled = DispatchContext::new(dir.path(), &db, &user, &registry, DispatchMode::Agent)
+        .execute(&call(json!({"path":image,"prompt":"inspect"})))
+        .await;
+    assert!(cancelled.contains("cancelled"), "{cancelled}");
+}

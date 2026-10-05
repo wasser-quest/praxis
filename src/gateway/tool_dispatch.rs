@@ -573,6 +573,7 @@ async fn dispatch(
                 Err(e) => format!("Error: {}", e),
             }
         }
+        #[cfg(feature = "vision")]
         "understand_image" => {
             let result = crate::tools::understand_image::run(&args).await;
             // Store image content_parts alongside the result

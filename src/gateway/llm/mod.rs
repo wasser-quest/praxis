@@ -585,17 +585,16 @@ impl LLMRouter {
                 };
 
                 // Check if this was an image tool that returned content_parts
-                let image_result = if tool_call.function.name == "understand_image" {
-                    Some(crate::tools::understand_image::run(&args).await)
-                } else {
-                    None
-                };
-
-                let (final_result_str, content_parts) = if let Some(img) = image_result {
-                    (img.text, Some(img.content_parts))
-                } else {
-                    (result_str.clone(), None)
-                };
+                #[cfg(feature = "vision")]
+                let (final_result_str, content_parts) =
+                    if tool_call.function.name == "understand_image" {
+                        let img = crate::tools::understand_image::run(&args).await;
+                        (img.text, Some(img.content_parts))
+                    } else {
+                        (result_str.clone(), None)
+                    };
+                #[cfg(not(feature = "vision"))]
+                let (final_result_str, content_parts) = (result_str.clone(), None);
 
                 tool_call_records.push(ToolCallRecord {
                     name: tool_call.function.name.clone(),

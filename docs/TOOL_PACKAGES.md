@@ -175,6 +175,29 @@ Background ownership and lifecycle:
 
 These remain raw operations, not verified language capabilities.
 
+## Independently installed image loading
+
+`understand_image` now lives in `crates/praxis-vision`, not `src/tools`. The
+`vision` Cargo feature links the compatibility adapter and is included in the
+default `compatibility` build. Without that feature the implementation and its
+crate dependency are absent; stale rows cannot advertise it.
+
+The tool uses the bounded one-shot executable transport and returns the same
+`{"text": ..., "content_parts": [...]}` JSON the native adapter produces, so
+the chat/agent loops still attach the image as a provider content part.
+
+```bash
+cargo build --release --locked -p praxis --no-default-features
+./scripts/install-vision-package.sh /actual/PLUGINS_DIR
+# Restart Praxis with PLUGINS_DIR set to that directory.
+```
+
+The installer builds only the package and installs its `plugin.json` and
+`bin/praxis-vision`. It honors `CARGO_TARGET_DIR`, `PLUGINS_DIR` and
+`PROFILE=debug`; it refuses to overwrite an existing package. Loading an image
+is not verification; the host still enforces task, flag and cancellation rules
+and raw activity invalidates pending receipts exactly like the native tool.
+
 ## Executable tool transport v1
 
 A raw tool can declare a handler such as:
