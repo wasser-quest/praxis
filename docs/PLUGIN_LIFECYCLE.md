@@ -68,6 +68,17 @@ and observed the exit code, timeout and resource bytes; the owner only defined
 the policy. Receipt signing and the swappable `RuntimeEngine` are the next
 implementation step.
 
+## Runtime engine seam
+
+Template rendering now goes through `runtime::engine`: a `RuntimeEngine`
+trait with `KernelEngine` as the default, selected process-wide. Prompt
+building, skills, compaction, decision routing and template validation call
+`engine::render_strict`/`render_strict_candidate` instead of the POML module
+directly. `KernelEngine` delegates to the unchanged built-in renderer, so
+behavior is identical. A `runtime`-role package will install its own engine
+through the host bridge; SM/guard policy is routed through the same seam in the
+next step.
+
 ## Lifecycle
 
 Install, enable and start are distinct operations. `praxis plugin install` never

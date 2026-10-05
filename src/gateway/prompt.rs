@@ -401,7 +401,7 @@ pub async fn render_system(
             .as_deref()
             .unwrap_or("standard"),
     )?;
-    let mut rendered = super::poml::render_strict(&path.to_string_lossy(), &value).await?;
+    let mut rendered = crate::runtime::engine::render_strict(&path.to_string_lossy(), &value).await?;
     // Minimal/custom templates must not silently drop the only surviving
     // context after compaction deleted older messages. Avoid duplicating a
     // summary already rendered explicitly by the template author.
@@ -452,7 +452,7 @@ pub async fn render_user(
         Path::new(&state.config.root_dir),
     )
     .await?;
-    super::poml::render_strict(&path.to_string_lossy(), &value).await
+    crate::runtime::engine::render_strict(&path.to_string_lossy(), &value).await
 }
 
 #[cfg(test)]
@@ -538,7 +538,7 @@ mod tests {
         if std::env::var_os("POML_CLI").is_none() {
             return;
         }
-        let text = super::super::poml::render_strict(
+        let text = crate::runtime::engine::render_strict(
             &Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("templates/graph-coding.poml")
                 .to_string_lossy(),

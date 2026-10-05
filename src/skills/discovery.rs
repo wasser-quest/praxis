@@ -66,7 +66,7 @@ pub async fn enrich(db: &Database, value: &mut Value, root: &Path) -> anyhow::Re
         return Ok(());
     }
     let path = crate::gateway::templates::resolve_template(&root.join("templates"), name)?;
-    let rendered = crate::gateway::poml::render_strict(&path.to_string_lossy(), value).await?;
+    let rendered = crate::runtime::engine::render_strict(&path.to_string_lossy(), value).await?;
     let plan = DiscoveryPlan::parse(&rendered)?;
     value["skill_discovery_instructions"] = json!(plan.instructions);
     // The default empty plan touches neither the index nor the skill directory.
