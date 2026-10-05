@@ -23,7 +23,11 @@ pub fn enabled(db: &Database, plugins: &PluginRegistry, name: &str) -> bool {
 }
 
 pub fn search(db: &Database, plugins: &PluginRegistry, user: &str, args: &Value) -> anyhow::Result<String> {
-    anyhow::ensure!(crate::db::tools::get(db, "search_tools")?.is_enabled, "search_tools is disabled");
+    anyhow::ensure!(
+        crate::db::tools::get(db, "search_tools")?.is_enabled
+            && super::packages::tool_package_enabled(&db.data_dir(), "search_tools")?,
+        "search_tools is disabled"
+    );
     let query = args["query"].as_str().filter(|q| !q.trim().is_empty() && q.chars().count() <= 256)
         .ok_or_else(|| anyhow::anyhow!("query must contain 1..256 characters"))?.trim().to_lowercase();
     let limit = match args.get("limit") {

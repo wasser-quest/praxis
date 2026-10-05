@@ -91,6 +91,7 @@ fn backend_tool_toggle_builtin_ownership_is_preserved() {
         context: HashMap::new(),
         secrets: vec![],
         enabled: true,
+        replaces: Vec::new(),
     }).is_err());
     assert!(plugins.list().is_empty());
     for enabled in [false, true] {

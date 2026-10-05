@@ -1,4 +1,5 @@
 //! Shared runtime services available without feature plugins or frontends.
+pub mod dashboard_package;
 pub mod events;
 pub mod features;
 pub mod retention;
@@ -6,6 +7,7 @@ pub mod services;
 pub mod templates;
 pub mod vm;
 pub mod web;
+pub mod web_proxy;
 
 #[cfg(test)]
 mod vm_tests;

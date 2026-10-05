@@ -30,6 +30,7 @@ fn fixture(handler: &str) -> (tempfile::TempDir, PluginRegistry) {
         context: HashMap::new(),
         secrets: vec!["allowed".into()],
         enabled: true,
+        replaces: Vec::new(),
     });
     (dir, registry)
 }

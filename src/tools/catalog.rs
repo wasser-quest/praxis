@@ -26,6 +26,20 @@ pub(crate) fn is_builtin(name: &str) -> bool {
     BUILTINS.contains(name) && !crate::runtime::vm::is_vm_tool(name)
 }
 
+/// An enabled plugin that declares `replaces: [<package>]` for the package
+/// owning this native name and implements the name.
+fn replaces(plugin: &Plugin, name: &str) -> bool {
+    super::packages::owner_of(name).is_some_and(|package| plugin.replaces.iter().any(|id| id == package.id))
+}
+
+/// Whether a builtin name is served by native code (not replaced by a plugin).
+pub(crate) fn native(plugins: &PluginRegistry, name: &str) -> bool {
+    is_builtin(name)
+        && !plugins.list().into_iter().any(|plugin| {
+            plugin.enabled && replaces(plugin, name) && plugin.tools.iter().any(|tool| tool.name == name)
+        })
+}
+
 pub(crate) fn owner<'a>(plugins: &'a PluginRegistry, name: &str) -> anyhow::Result<ToolOwner<'a>> {
     let owners: Vec<_> = plugins
         .list()
@@ -40,11 +54,13 @@ pub(crate) fn owner<'a>(plugins: &'a PluginRegistry, name: &str) -> anyhow::Resu
         })
         .collect();
     if is_builtin(name) {
+        if owners.is_empty() {
+            return Ok(ToolOwner::Builtin);
+        }
         anyhow::ensure!(
-            owners.is_empty(),
+            owners.len() == 1 && replaces(owners[0].0, name),
             "Tool owner_conflict: '{name}' is owned by a builtin adapter"
         );
-        return Ok(ToolOwner::Builtin);
     }
     anyhow::ensure!(
         owners.len() <= 1,
@@ -58,6 +74,20 @@ pub(crate) fn owner<'a>(plugins: &'a PluginRegistry, name: &str) -> anyhow::Resu
 }
 
 pub(crate) fn validate(plugins: &PluginRegistry) -> anyhow::Result<()> {
+    let mut replaced = HashSet::new();
+    for plugin in plugins.list().into_iter().filter(|plugin| plugin.enabled) {
+        for id in &plugin.replaces {
+            anyhow::ensure!(
+                super::packages::replaceable(id),
+                "Plugin '{}' cannot replace tool package '{id}' (unknown or core)",
+                plugin.name
+            );
+            anyhow::ensure!(
+                replaced.insert(id.clone()),
+                "Tool owner_conflict: package '{id}' is replaced by more than one plugin"
+            );
+        }
+    }
     let mut names: Vec<_> = plugins
         .enabled_tools()
         .into_iter()
@@ -80,10 +110,13 @@ pub(crate) fn require_enabled(
     name: &str,
 ) -> anyhow::Result<()> {
     let enabled = match owner {
-        ToolOwner::Builtin => crate::db::tools::list(db)?
-            .into_iter()
-            .find(|tool| tool.name == name)
-            .map_or(true, |tool| tool.is_enabled),
+        ToolOwner::Builtin => {
+            super::packages::tool_package_enabled(&db.data_dir(), name)?
+                && crate::db::tools::list(db)?
+                    .into_iter()
+                    .find(|tool| tool.name == name)
+                    .map_or(true, |tool| tool.is_enabled)
+        }
         ToolOwner::Plugin { .. } => crate::db::tools::plugin_tool_enabled(db, name)?,
     };
     anyhow::ensure!(enabled, "Tool '{name}' is disabled or unavailable");
@@ -93,9 +126,13 @@ pub(crate) fn require_enabled(
 pub fn definitions(db: &Database, plugins: &PluginRegistry) -> anyhow::Result<Vec<ToolDefinition>> {
     validate(plugins)?;
     // Persisted rows describe flags/schemas, not arbitrary new native handlers.
+    let packages = super::packages::load(&db.data_dir())?;
+    let package_on = |name: &str| {
+        super::packages::owner_of(name).map_or(true, |p| p.required || packages.get(p.id).copied().unwrap_or(true))
+    };
     let mut tools: Vec<_> = crate::db::tools::to_tool_definitions(db)?
         .into_iter()
-        .filter(|tool| is_builtin(&tool.function.name))
+        .filter(|tool| native(plugins, &tool.function.name) && package_on(&tool.function.name))
         .collect();
     let flags = crate::db::tools::list_plugin_tools(db)?;
     let legacy = crate::db::tools::list(db)?;

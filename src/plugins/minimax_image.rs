@@ -64,6 +64,7 @@ pub fn create_plugin() -> Plugin {
             },
         ],
         enabled: true,
+        replaces: Vec::new(),
     }
 }
 

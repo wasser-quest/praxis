@@ -2446,7 +2446,33 @@ async function probeDecisionProfile() {
 
 // ═══ Tools ════════════════════════════════════════════════════════════════
 
+async function loadToolPackages() {
+    const list = document.getElementById('tool-packages-list');
+    if (!list) return;
+    try {
+        const res = await apiGet('/api/tool-packages');
+        const data = await res.json();
+        list.innerHTML = (data.packages || []).map(p => {
+            const idArg = JSON.stringify(String(p.id || ''));
+            const safeId = escapeHtml(p.id);
+            const control = p.required
+                ? '<span class="badge badge-builtin">Core</span>'
+                : `<button type="button" class="toggle ${p.enabled ? 'active' : ''}" aria-label="${p.enabled ? 'Disable' : 'Enable'} ${safeId}" aria-pressed="${p.enabled ? 'true' : 'false'}" onclick='toggleToolPackage(${idArg}, ${!p.enabled})'></button>`;
+            return `<div class="data-item tool-item">
+                <div class="tool-copy"><span class="name">${safeId}</span><span class="meta">${escapeHtml(p.description || '')} — ${escapeHtml((p.tools || []).join(', '))}${p.replaced_by ? ` — implemented by plugin ${escapeHtml(p.replaced_by)}` : ''}</span></div>
+                ${control}
+            </div>`;
+        }).join('');
+    } catch (err) { console.error('Tool packages error:', err); }
+}
+
+async function toggleToolPackage(id, enabled) {
+    await apiFetch(`/api/tool-packages/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify({ enabled }) });
+    loadTools();
+}
+
 async function loadTools() {
+    loadToolPackages();
     try {
         const res = await apiGet('/api/tools/all');
         const data = await res.json();
@@ -2463,7 +2489,8 @@ async function loadTools() {
         list.innerHTML = sortedTools.map(t => {
             const safeName = escapeHtml(t.name);
             const nameArg = JSON.stringify(String(t.name || ''));
-            const sourceBadge = t.source === 'plugin' ? '<span class="badge badge-plugin">Plugin</span>' : '<span class="badge badge-builtin">Builtin</span>';
+            const sourceBadge = t.source === 'plugin' ? '<span class="badge badge-plugin">Plugin</span>'
+                : `<span class="badge badge-builtin">${escapeHtml(t.package || 'Builtin')}${t.package_enabled === false ? ' (off)' : ''}</span>`;
             return `<div class="data-item tool-item">
                 <div class="tool-copy"><span class="name">${safeName} ${sourceBadge}</span><span class="meta">${escapeHtml(t.description || '')}</span></div>
                 <button type="button" class="toggle ${t.is_enabled ? 'active' : ''}" aria-label="${t.is_enabled ? 'Disable' : 'Enable'} ${safeName}" aria-pressed="${t.is_enabled ? 'true' : 'false'}" onclick='toggleTool(${nameArg}, ${!t.is_enabled})'></button>

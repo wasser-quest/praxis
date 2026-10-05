@@ -23,7 +23,7 @@ fn runtime_events_are_user_scoped_and_share_the_dashboard_adapter() {
     events::remove(b);
     assert!(events::subscribe(a).is_none());
     let mut core = events::get_or_create(a).subscribe();
-    let mut dashboard = crate::dashboard::stream::subscribe(a).unwrap();
+    let mut dashboard = crate::runtime::events::subscribe(a).unwrap();
     let mut other = events::get_or_create(b).subscribe();
     events::assistant_saved(a, 42, "a private reply");
     assert_eq!(core.try_recv().unwrap().event, "assistant_saved");
@@ -33,7 +33,7 @@ fn runtime_events_are_user_scoped_and_share_the_dashboard_adapter() {
         json!({"id":42,"role":"assistant","content":"a private reply"})
     );
     assert!(other.try_recv().is_err());
-    crate::dashboard::stream::send(a, "char", "x");
+    crate::runtime::events::send(a, "char", "x");
     assert_eq!(core.try_recv().unwrap().data, "x");
     events::remove(a);
     events::remove(b);

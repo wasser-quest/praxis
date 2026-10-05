@@ -1,0 +1,30 @@
+[package]
+name = "praxis-dashboard"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "The Praxis web dashboard as a replaceable package on Host API v1"
+
+[dependencies]
+praxis-plugin-api = { path = "../praxis-plugin-api" }
+anyhow = "1"
+async-trait = "0.1"
+axum = { version = "0.7", features = ["ws", "json", "multipart"] }
+axum-server = { version = "0.7", features = ["tls-rustls"] }
+rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs"] }
+futures-util = "0.3"
+reqwest = { version = "0.12.28", default-features = false, features = ["json", "stream"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "io-std", "sync", "time"] }
+tokio-tungstenite = "0.24"
+tower-http = { version = "0.6", features = ["fs"] }
+urlencoding = "2"
+
+[dev-dependencies]
+tempfile = "3"
+reqwest = { version = "0.12.28", default-features = false, features = ["json"] }
+
+[[bin]]
+name = "praxis-dashboard"
+path = "src/main.rs"

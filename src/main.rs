@@ -184,6 +184,18 @@ enum PluginAction {
     },
     /// List installed plugins
     List,
+    /// List builtin tool packages (runtime_control, shell, memory, …)
+    Builtins,
+    /// Enable a builtin tool package
+    EnableBuiltin {
+        #[arg(value_name = "PACKAGE")]
+        id: String,
+    },
+    /// Disable a builtin tool package (its tools leave the catalog; per-tool flags are kept)
+    DisableBuiltin {
+        #[arg(value_name = "PACKAGE")]
+        id: String,
+    },
 }
 
 
@@ -560,8 +572,37 @@ async fn run_services(
         }
     });
 
-    // Dashboard (optional)
+    // Dashboard (optional). DASHBOARD_PACKAGE selects an installed dashboard
+    // package instead of the built-in one; only one dashboard is active.
+    let dashboard_package = std::env::var("DASHBOARD_PACKAGE")
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty());
     if enable_dashboard {
+        if let Some(name) = dashboard_package.clone() {
+            let options = praxis::runtime::dashboard_package::Launch {
+                db: db.clone(),
+                plugins: feature_plugins.clone(),
+                plugins_dir: std::path::Path::new(&plugins_dir),
+                name: &name,
+                listen: format!("0.0.0.0:{}", config.dashboard_port),
+                tls: config.dashboard_tls,
+                data_dir: std::path::Path::new(&config.data_dir),
+                gateway_port: config.gateway_port,
+            };
+            match praxis::runtime::dashboard_package::launch(options).await {
+                Ok(package) => {
+                    tokio::spawn(praxis::runtime::dashboard_package::supervise(package));
+                }
+                Err(error) => tracing::error!(
+                    %error, package = %name,
+                    "Dashboard package failed to start; gateway and workflows continue"
+                ),
+            }
+        }
+    }
+    #[cfg(feature = "dashboard")]
+    if enable_dashboard && dashboard_package.is_none() {
         let dashboard_db = db.clone();
         let dashboard_port = config.dashboard_port;
         let dashboard_plugins = feature_plugins.clone();
@@ -572,6 +613,14 @@ async fn run_services(
             }
         });
         tracing::info!("Dashboard starting on port {}", config.dashboard_port);
+    }
+
+    #[cfg(not(feature = "dashboard"))]
+    if enable_dashboard && dashboard_package.is_none() {
+        tracing::warn!(
+            "Built-in dashboard not compiled; set DASHBOARD_PACKAGE to an installed \
+             dashboard package. Gateway, CLI and workflows continue without it"
+        );
     }
 
     // Discord (optional)
@@ -719,7 +768,23 @@ async fn handle_plugin_action(action: &PluginAction) -> anyhow::Result<()> {
     let plugins_dir = std::env::var("PLUGINS_DIR").unwrap_or_else(|_| "./plugins".to_string());
     let plugins_path = Path::new(&plugins_dir);
 
+    let data_dir = std::path::PathBuf::from(std::env::var("DATA_DIR").unwrap_or_else(|_| "./data".to_string()));
     match action {
+        PluginAction::Builtins => {
+            let state = praxis::tools::packages::load(&data_dir)?;
+            for package in praxis::tools::packages::PACKAGES {
+                let on = package.required || state.get(package.id).copied().unwrap_or(true);
+                let status = if package.required { "core" } else if on { "enabled" } else { "disabled" };
+                println!("  {} [{}] — {} ({})", package.id, status, package.description, package.tools.join(", "));
+            }
+            return Ok(());
+        }
+        PluginAction::EnableBuiltin { id } | PluginAction::DisableBuiltin { id } => {
+            let on = matches!(action, PluginAction::EnableBuiltin { .. });
+            praxis::tools::packages::set(&data_dir, id, on)?;
+            println!("Tool package '{id}' {}. Running instances apply it on the next model turn.", if on { "enabled" } else { "disabled" });
+            return Ok(());
+        }
         PluginAction::Install { path } => {
             let src = Path::new(path);
             if !src.is_dir() {

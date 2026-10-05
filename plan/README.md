@@ -153,7 +153,52 @@ with `PRAXIS_REAL_QEMU_ISO=/path/to.iso cargo test -p praxis-vm-web --test web
 real_qemu -- --ignored`. Desktop-OS interaction (installed GUI, guest agent,
 clipboard) remains an operator smoke check.
 
-Next: make the whole dashboard optional in PR 4. Runtime-control and the remaining
+## PR 4 progress — optional dashboard
+
+- [x] `dashboard` Cargo feature (in `compatibility`/default). Without it the
+  dashboard module, `:1337` listener, TLS/self-signed cert generation and the
+  `axum-server`/`rcgen`/`hostname` dependencies are absent; `praxis run` logs
+  that the dashboard isn't installed and keeps gateway/CLI/workflows running.
+- [x] Host services (`src/services`): sessions/contexts/messages (incl. token,
+  generation-speed telemetry and chat-clear marker), fork, workflow graphs
+  (shared SM parser, active node, preview), execution events/receipts and
+  usage limits, agent-loop control. Dashboard routes are thin adapters.
+- [x] Core no longer imports `dashboard` (runtime tests use `runtime::events`).
+- [x] Builds checked: minimal, VM-only, dashboard-only and default.
+- [x] Host API v1 (`/host/v1`, loopback, per-launch token, declared scopes):
+  sessions, messages, graphs, execution, usage, agent control, SSE events, auth.
+- [x] Replaceable dashboard packages: `"dashboard"` manifest block,
+  `DASHBOARD_PACKAGE` selection, single active dashboard, process supervision,
+  no silent fallback. Example package in `examples/dashboard-package`. See
+  [dashboard packages](../docs/DASHBOARD_PACKAGES.md).
+- [x] Administration services + Host API `admin:read`/`admin:write`: tools,
+  templates, workflow files, memory profiles, pairings, cron list, delegations.
+- [x] Secrets (masked, `secrets` scope), context profiles, skills, decision
+  profiles, router state, context/history writes in services + Host API.
+- [x] Media (uploads, avatars, screenshots, message audio, STT) and decision
+  probe in services + Host API; dashboard uploads now require auth and media
+  names cannot traverse DATA_DIR.
+- [x] Feature page slots for dashboard packages: `features` scope, feature
+  list, owner-confined HTTP/WebSocket forwarding through the shared
+  `runtime::web_proxy` transport.
+- [x] Standard dashboard package (`crates/praxis-dashboard`,
+  `packages/dashboard`, `scripts/install-dashboard-package.sh`): ships the
+  frontend assets and serves the whole UI on Host API v1; verified end to end
+  against a `--no-default-features` core.
+- [ ] Navigation slots for absent features; remove the built-in dashboard
+  feature after one release.
+
+## PR 5 progress — tool packages
+
+- [x] Every native tool has exactly one owning package (`tools::packages`,
+  tested against the default catalog). Packages enable/disable independently
+  via CLI, dashboard and Host API; catalog, discovery and execution respect
+  them; per-tool flags are preserved; startup never changes package state;
+  `file_ops` is core. See [tool packages](../docs/TOOL_PACKAGES.md).
+- [x] Plugin replacement of builtin packages (`"replaces": [...]`), with one
+  replacement per package, core packages protected and an example
+  (`examples/tool-packages/allowlist_shell`).
+- [ ] Move implementations out of the core binary per package. Runtime-control and the remaining
 feature/tool packages follow; POML/context/SM/IR verification stays in core.
 
 Existing setup guides remain applicable during migration:

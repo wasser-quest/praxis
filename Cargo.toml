@@ -5,13 +5,16 @@ edition = "2021"
 description = "AI Agent Platform — Praxis"
 
 [workspace]
-members = ["crates/praxis-vm", "crates/praxis-plugin-api", "crates/praxis-vm-web", "crates/praxis-vm-worker"]
+members = ["crates/praxis-vm", "crates/praxis-plugin-api", "crates/praxis-vm-web", "crates/praxis-vm-worker", "crates/praxis-dashboard"]
 default-members = ["."]
 resolver = "2"
 
 [features]
 default = ["compatibility"]
-compatibility = ["vm"]
+compatibility = ["vm", "dashboard"]
+# Web dashboard: UI, listener, TLS and its static assets. The runtime,
+# gateway, CLI and verified workflows work without it.
+dashboard = ["dep:axum-server", "dep:rcgen", "dep:hostname"]
 vm = ["dep:praxis-vm", "dep:praxis-vm-web"]
 voice_vosk = ["vosk"]
 voice_whisper = ["whisper-rs"]
@@ -38,11 +41,11 @@ image = "0.25"
 png = "0.18"
 serenity = { version = "0.12", features = ["voice"] }
 axum = { version = "0.7", features = ["ws", "json", "multipart"] }
-axum-server = { version = "0.7", features = ["tls-rustls"] }
+axum-server = { version = "0.7", features = ["tls-rustls"], optional = true }
 rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs"] }
 rustls-pemfile = "2"
-rcgen = "0.13"
-hostname = "0.4"
+rcgen = { version = "0.13", optional = true }
+hostname = { version = "0.4", optional = true }
 tokio-stream = "0.1"
 tempfile = "3"
 tokio-util = { version = "0.7", features = ["codec", "rt"] }

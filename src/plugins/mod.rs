@@ -26,6 +26,10 @@ pub struct Plugin {
     pub secrets: Vec<String>,
     #[serde(default = "default_true")]
     pub enabled: bool,
+    /// Builtin tool packages whose tool names this plugin implements
+    /// instead of the native code (e.g. `["shell"]`). See docs/TOOL_PACKAGES.md.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub replaces: Vec<String>,
 }
 
 fn default_true() -> bool {
@@ -585,6 +589,8 @@ struct PluginManifest {
     context: HashMap<String, serde_json::Value>,
     #[serde(default)]
     secrets: Vec<String>,
+    #[serde(default)]
+    replaces: Vec<String>,
 }
 
 pub fn load_plugins_from_dir(dir: &Path) -> anyhow::Result<Vec<Plugin>> {
@@ -665,6 +671,7 @@ fn load_plugin_from_manifest(manifest_path: &Path, plugin_dir: &Path) -> anyhow:
         context: manifest.context,
         secrets: manifest.secrets,
         enabled: manifest.enabled,
+        replaces: manifest.replaces,
     })
 }
 
@@ -708,6 +715,7 @@ mod plugin_tests {
             context: HashMap::new(),
             secrets: Vec::new(),
             enabled: true,
+            replaces: Vec::new(),
         });
         assert!(registry.get("test").is_some());
         assert_eq!(registry.list().len(), 1);
@@ -751,6 +759,7 @@ mod plugin_tests {
             context: HashMap::new(),
             secrets: Vec::new(),
             enabled: true,
+            replaces: Vec::new(),
         });
         assert_eq!(registry.enabled_tools().len(), 1);
     }
@@ -774,6 +783,7 @@ mod plugin_tests {
             context: HashMap::new(),
             secrets: Vec::new(),
             enabled: false,
+            replaces: Vec::new(),
         });
         assert_eq!(registry.enabled_tools().len(), 0);
     }
@@ -916,6 +926,7 @@ mod plugin_tests {
             context: HashMap::new(),
             secrets: Vec::new(),
             enabled: true,
+            replaces: Vec::new(),
         });
         assert!(registry.context_defaults().is_empty());
     }
@@ -931,6 +942,7 @@ mod plugin_tests {
             context: HashMap::new(),
             secrets: vec!["api_key".to_string(), "api_secret".to_string()],
             enabled: true,
+            replaces: Vec::new(),
         });
         let sec = registry.collect_secrets();
         assert_eq!(sec.len(), 2);

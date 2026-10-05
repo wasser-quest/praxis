@@ -42,19 +42,6 @@ pub struct MemoryUpdate {
     pub last_topics: Option<Vec<String>>,
 }
 
-#[derive(Serialize)]
-pub struct MemoryInfo {
-    pub user_id: String,
-    pub profile: String,
-    pub active_profile: String,
-    pub profile_exists: bool,
-    pub profiles: Vec<String>,
-    pub shared: HashMap<String, serde_json::Value>,
-    pub user_preferences: std::collections::HashMap<String, serde_json::Value>,
-    pub custom_variables: std::collections::HashMap<String, serde_json::Value>,
-    pub learned_facts: Vec<String>,
-    pub last_topics: Vec<String>,
-}
 
 #[derive(Deserialize)]
 pub struct TemplateUpdate {
@@ -77,42 +64,7 @@ pub struct TemplateSaveResult {
     pub rendered_preview: Option<String>,
 }
 
-#[derive(Serialize)]
-pub struct SecretsInfo {
-    /// Write-only auth.json import; never expose token suffixes from JSON.
-    pub codex_auth: String,
-    pub discord_bot_token: String,
-    pub openai_api_key: String,
-    pub anthropic_api_key: String,
-    pub ollama_api_key: String,
-    pub llamacpp_api_key: String,
-    pub minimax_api_key: String,
-    pub mimo_api_key: String,
-    pub elevenlabs_api_key: String,
-    pub gateway_api_key: String,
-    pub dashboard_admin_password: String,
-    #[serde(flatten)]
-    pub custom: std::collections::HashMap<String, String>,
-}
 
-#[derive(Deserialize)]
-pub struct SecretsUpdate {
-    /// CLI auth.json or normalized CodexAuth JSON. Empty removes, *** preserves.
-    pub codex_auth: Option<String>,
-    pub discord_bot_token: Option<String>,
-    pub openai_api_key: Option<String>,
-    pub anthropic_api_key: Option<String>,
-    pub ollama_api_key: Option<String>,
-    pub llamacpp_api_key: Option<String>,
-    pub minimax_api_key: Option<String>,
-    pub mimo_api_key: Option<String>,
-    pub elevenlabs_api_key: Option<String>,
-    pub gateway_api_key: Option<String>,
-    pub dashboard_admin_password: Option<String>,
-    pub master_password: Option<String>,
-    #[serde(flatten)]
-    pub custom: std::collections::HashMap<String, String>,
-}
 
 #[derive(Serialize)]
 pub struct SmFileInfo {
@@ -200,6 +152,8 @@ pub(crate) fn router_with_state(state: Arc<DashboardState>) -> Router {
         .route("/templates/:name", axum::routing::delete(delete_template))
         .route("/tools", axum::routing::get(list_tools))
         .route("/tools/all", axum::routing::get(list_all_tools))
+        .route("/tool-packages", axum::routing::get(list_tool_packages))
+        .route("/tool-packages/:id", axum::routing::put(set_tool_package))
         .route("/tools/:name", axum::routing::put(update_tool))
         .route("/memory/:user_id", axum::routing::get(get_memory))
         .route("/memory/:user_id", axum::routing::put(update_memory))
@@ -251,6 +205,14 @@ pub(crate) fn router_with_state(state: Arc<DashboardState>) -> Router {
         .route("/profiles/:name/apply/:user_id", axum::routing::post(apply_profile))
         .route("/profiles/:name", axum::routing::delete(delete_profile))
         .route("/media", axum::routing::get(list_media))
+        // Uploads write to DATA_DIR and always need an operator token.
+        .route("/upload-avatar", axum::routing::post(upload_avatar))
+        .route(
+            "/upload-file",
+            axum::routing::post(upload_chat_file).layer(axum::extract::DefaultBodyLimit::max(
+                crate::services::media::MAX_UPLOAD + 1024 * 1024,
+            )),
+        )
         .layer(middleware::from_fn_with_state(
             state.clone(),
             dashboard_auth_middleware,
@@ -269,8 +231,6 @@ pub(crate) fn router_with_state(state: Arc<DashboardState>) -> Router {
         .route("/api/avatar/:name", axum::routing::get(get_avatar))
         .route("/api/files/:name", axum::routing::get(get_chat_file))
         .route("/api/screenshots/*path", axum::routing::get(get_screenshot))
-        .route("/api/upload-avatar", axum::routing::post(upload_avatar))
-        .route("/api/upload-file", axum::routing::post(upload_chat_file))
         .nest("/api", protected_extra)
         .nest_service("/static", static_service)
         .layer(middleware::from_fn(static_no_cache_middleware))
@@ -396,102 +356,13 @@ async fn router_state() -> Json<serde_json::Value> {
 async fn list_chat_sessions(
     State(state): State<Arc<DashboardState>>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let conn = state.db.conn();
-    let mut stmt = conn
-        .prepare(
-            "SELECT user_id, updated_at FROM contexts ORDER BY updated_at DESC LIMIT 500",
-        )
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let rows: Vec<(String, String)> = stmt
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    drop(stmt);
-
-    let mut sessions = Vec::new();
-    for (user_id, updated_at) in rows {
-        let username: Option<String> = conn
-            .query_row(
-                "SELECT data FROM contexts WHERE user_id = ?1 LIMIT 1",
-                rusqlite::params![user_id],
-                |row| row.get::<_, String>(0),
-            )
-            .ok()
-            .and_then(|data| {
-                serde_json::from_str::<crate::db::contexts::Context>(&data).ok()
-            })
-            .and_then(|ctx| ctx.username.filter(|u| !u.trim().is_empty()));
-        // Messages live under the session key or its forked `:::` sub-keys.
-        let prefix = format!("{user_id}:::");
-        let message_count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM messages WHERE user_id = ?1 OR substr(user_id, 1, length(?2)) = ?2",
-                rusqlite::params![user_id, prefix],
-                |row| row.get(0),
-            )
-            .unwrap_or(0);
-        let preview: Option<String> = conn
-            .query_row(
-                "SELECT content FROM messages WHERE user_id = ?1 AND role = 'user' AND content <> '' ORDER BY id ASC LIMIT 1",
-                rusqlite::params![user_id],
-                |row| row.get::<_, String>(0),
-            )
-            .ok()
-            .or_else(|| {
-                conn.query_row(
-                    "SELECT content FROM messages WHERE substr(user_id, 1, length(?1)) = ?1 AND role = 'user' AND content <> '' ORDER BY id ASC LIMIT 1",
-                    rusqlite::params![prefix],
-                    |row| row.get::<_, String>(0),
-                )
-                .ok()
-            })
-            .map(|text| {
-                let flat: String = text.trim().chars().take(120).collect();
-                flat
-            });
-        let title: Option<String> = conn.query_row(
-            "SELECT json_extract(data, '$.custom_data.session_title') FROM contexts WHERE user_id=?1",
-            rusqlite::params![user_id], |row| row.get(0),
-        ).ok().flatten();
-        sessions.push(serde_json::json!({
-            "user_id": user_id,
-            "session_title": title,
-            "username": username,
-            "updated_at": updated_at,
-            "message_count": message_count,
-            "preview": preview,
-        }));
-    }
-    Ok(Json(serde_json::json!({ "sessions": sessions })))
+    crate::services::sessions::chat_sessions(&state.db).map(Json).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 async fn list_contexts(
     State(state): State<Arc<DashboardState>>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let conn = state.db.conn();
-    let mut stmt = conn
-        .prepare("SELECT user_id, data, updated_at FROM contexts ORDER BY updated_at DESC")
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let contexts: Vec<serde_json::Value> = stmt
-        .query_map([], |row| {
-            let user_id: String = row.get(0)?;
-            let data: String = row.get(1)?;
-            let updated_at: String = row.get(2)?;
-            let mut data: serde_json::Value = serde_json::from_str(&data).map_err(|e| rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Text, Box::new(e)))?;
-            crate::db::contexts::normalize_legacy_keys(&mut data);
-            Ok(serde_json::json!({
-                "user_id": user_id,
-                "data": data,
-                "updated_at": updated_at,
-            }))
-        })
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    Ok(Json(serde_json::json!({ "contexts": contexts })))
+    crate::services::sessions::contexts(&state.db).map(Json).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 async fn get_context(
@@ -534,27 +405,17 @@ async fn fork_context_route(
     let new_user_id = body
         .get("new_user_id")
         .and_then(|v| v.as_str())
-        .ok_or(StatusCode::BAD_REQUEST)?
-        .to_string();
+        .ok_or(StatusCode::BAD_REQUEST)?;
     if new_user_id.is_empty() || new_user_id == parent_user_id {
         return Err(StatusCode::BAD_REQUEST);
     }
     let username = body.get("username").and_then(|v| v.as_str());
-
-    let ctx = state
-        .db
-        .fork_context(&parent_user_id, &new_user_id, username)
+    crate::services::sessions::fork(&state.db, &parent_user_id, new_user_id, username)
+        .map(Json)
         .map_err(|e| {
             tracing::error!(error = %e, "fork_context failed");
             StatusCode::INTERNAL_SERVER_ERROR
-        })?;
-
-    Ok(Json(serde_json::json!({
-        "success": true,
-        "user_id": ctx.user_id,
-        "username": ctx.username,
-        "parent_user_id": parent_user_id,
-    })))
+        })
 }
 
 /// Execute a `/context …` slash command. The body is `{user_id, line}`. The
@@ -564,23 +425,9 @@ async fn context_exec(
     State(state): State<Arc<DashboardState>>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let user_id = body
-        .get("user_id")
-        .and_then(|v| v.as_str())
-        .ok_or(StatusCode::BAD_REQUEST)?
-        .to_string();
-    let line = body
-        .get("line")
-        .and_then(|v| v.as_str())
-        .ok_or(StatusCode::BAD_REQUEST)?;
-
-    match crate::context_cmd::parse(line) {
-        Ok(op) => {
-            let response = crate::context_cmd::apply(&state.db, &user_id, &op);
-            Ok(Json(serde_json::json!({ "response": response })))
-        }
-        Err(e) => Ok(Json(serde_json::json!({ "error": e.to_string() }))),
-    }
+    let user_id = body.get("user_id").and_then(|v| v.as_str()).ok_or(StatusCode::BAD_REQUEST)?;
+    let line = body.get("line").and_then(|v| v.as_str()).ok_or(StatusCode::BAD_REQUEST)?;
+    Ok(Json(crate::services::sessions::exec(&state.db, user_id, line)))
 }
 
 // ── Messages ─────────────────────────────────────────────────────────────────
@@ -590,68 +437,8 @@ async fn get_messages(
     Path(user_id): Path<String>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let budget = 500000usize;
     let chat_only = params.get("chat_only").map(|v| v == "1" || v == "true").unwrap_or(false);
-    tracing::debug!(user_id = %user_id, chat_only, "[MESSAGES] fetching messages");
-    let result = if chat_only {
-        // Chat view: hide rows up to the clear marker (kept in Messages tab).
-        let marker = state
-            .db
-            .load_context(&user_id)
-            .ok()
-            .and_then(|ctx| {
-                ctx.custom_data
-                    .get("chat_cleared_message_id")
-                    .and_then(|v| v.as_i64())
-            })
-            .unwrap_or(0);
-        state.db.get_chat_messages_after(&user_id, budget, marker)
-    } else {
-        state.db.get_chat_messages_with_token_budget(&user_id, budget)
-    };
-    match result {
-        Ok((messages, total_tokens)) => {
-            let msgs: Vec<serde_json::Value> = messages
-                .iter()
-                .map(|m| {
-                    let mut val = serde_json::json!({
-                        "id": m.id,
-                        "audio_mime": m.audio_mime,
-                        "role": m.role,
-                        "content": m.content,
-                        "tool_call_id": m.tool_call_id,
-                        "tool_name": m.tool_name,
-                        "prompt_tokens": m.prompt_tokens,
-                        "completion_tokens": m.completion_tokens,
-                        "total_tokens": m.total_tokens,
-                        "generation_ms": m.generation_ms,
-                    });
-                    if let Some(meta) = m.discord_meta.as_ref() {
-                        val["discord_meta"] = meta.clone();
-                    }
-                    if let Some(ref tool_calls) = m.tool_calls {
-                        val["tool_calls"] = serde_json::json!(tool_calls
-                            .iter()
-                            .map(|tc| {
-                                serde_json::json!({
-                                    "id": tc.id,
-                                    "name": tc.function.name,
-                                    "arguments": tc.function.arguments,
-                                })
-                            })
-                            .collect::<Vec<_>>());
-                    }
-                    val
-                })
-                .collect::<Vec<_>>();
-            Ok(Json(serde_json::json!({
-                "messages": msgs,
-                "total_tokens": total_tokens,
-                "message_count": messages.len(),
-            })))
-        }
-        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
-    }
+    crate::services::sessions::messages(&state.db, &user_id, chat_only).map(Json).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 /// Authenticated, on-demand replay. Never embed credentials or audio blobs in history.
@@ -659,9 +446,8 @@ async fn get_chat_audio(
     State(state): State<Arc<DashboardState>>,
     Path((user_id, message_id)): Path<(String, i64)>,
 ) -> Result<axum::response::Response, StatusCode> {
-    let (mime, audio) = state.db.get_message_audio(&user_id, message_id)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
+    let (mime, audio) = crate::services::media::message_audio(&state.db, &user_id, message_id)
+        .map_err(admin_status)?;
     Ok(([
         (axum::http::header::CONTENT_TYPE, mime),
         (axum::http::header::CACHE_CONTROL, "private, no-store".to_string()),
@@ -690,14 +476,7 @@ async fn clear_chat_view(
     State(state): State<Arc<DashboardState>>,
     Path(user_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let max_id = state
-        .db
-        .max_message_id(&user_id)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let _ = state.db.merge_context(
-        &user_id,
-        serde_json::json!({ "custom_data": { "chat_cleared_message_id": max_id } }),
-    );
+    let max_id = crate::services::sessions::clear_chat_view(&state.db, &user_id).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     tracing::info!(user_id = %user_id, marker = max_id, "[MESSAGES] chat view cleared (rows kept)");
     Ok(Json(serde_json::json!({ "success": true, "cleared_before_id": max_id })))
 }
@@ -727,30 +506,7 @@ async fn compact_messages(
 async fn list_skills(
     State(state): State<Arc<DashboardState>>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let mut registry = crate::skills::SkillRegistry::new();
-    let dir = std::path::Path::new("skills");
-    if dir.exists() {
-        registry
-            .load_from_dir(dir)
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    }
-    let skills: Vec<serde_json::Value> = registry
-        .list()
-        .iter()
-        .map(|s| {
-            serde_json::json!({
-                "name": s.name,
-                "description": s.description,
-                "user_only": s.user_only,
-            })
-        })
-        .collect();
-    let active = state
-        .db
-        .load_context("default")
-        .ok()
-        .and_then(|c| c.settings.active_skill.clone());
-    Ok(Json(serde_json::json!({ "skills": skills, "active_skill": active })))
+    admin_json(crate::services::admin::skills(&state.db, std::path::Path::new("skills")))
 }
 
 /// Delegation records for a user (dashboard /delegations).
@@ -758,13 +514,7 @@ async fn list_delegations_route(
     State(state): State<Arc<DashboardState>>,
     Path(user_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    match crate::gateway::delegation::list_delegations(&state.db, &user_id) {
-        Ok(list) => Ok(Json(serde_json::json!({ "delegations": list }))),
-        Err(e) => {
-            tracing::error!(user_id = %user_id, error = %e, "[DELEGATIONS] list failed");
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
-        }
-    }
+    admin_json(crate::services::admin::delegations(&state.db, &user_id))
 }
 
 // ── Templates ────────────────────────────────────────────────────────────────
@@ -772,154 +522,84 @@ async fn list_delegations_route(
 async fn list_templates(
     State(state): State<Arc<DashboardState>>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    match state.db.list_templates() {
-        Ok(templates) => {
-            let tpls: Vec<serde_json::Value> = templates
-                .iter()
-                .map(|t| {
-                    serde_json::json!({
-                        "name": t.name,
-                        "description": t.description,
-                        "is_system": t.is_system,
-                        "updated_at": t.updated_at,
-                    })
-                })
-                .collect();
-            Ok(Json(serde_json::json!({ "templates": tpls })))
-        }
-        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
-    }
+    admin_json(crate::services::admin::templates(&state.db))
 }
 
 async fn get_template(
     State(state): State<Arc<DashboardState>>,
     Path(name): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let templates = state
-        .db
-        .list_templates()
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let template = templates
-        .into_iter()
-        .find(|t| t.name == name)
-        .ok_or(StatusCode::NOT_FOUND)?;
-    Ok(Json(serde_json::json!({
-        "name": template.name,
-        "content": template.content,
-        "description": template.description,
-    })))
+    admin_json(crate::services::admin::template(&state.db, &name))
 }
 
 async fn update_template(
     State(state): State<Arc<DashboardState>>,
     Path(name): Path<String>,
     Json(update): Json<TemplateUpdate>,
-) -> Result<Json<TemplateSaveResult>, StatusCode> {
-    let result = async {
-        let mut ctx = if let Some(uid) = update.user_id.as_deref().filter(|s| !s.is_empty()) {
-            state.db.load_context(uid)?
-        } else { crate::db::contexts::Context::default() };
-        let input = crate::gateway::prompt::preview_input(&state.db, &ctx, update.user_prompt.as_deref())?;
-        let plugins_dir = std::env::var("PLUGINS_DIR").unwrap_or_else(|_| "./plugins".into());
-        let plugins = crate::plugins::load_all_plugins(std::path::Path::new(&plugins_dir));
-        let config = crate::gateway::state_ref().map(|gateway| gateway.config.clone()).unwrap_or_else(crate::config::Config::from_env);
-        let workspace = config.workspace_root()?;
-        crate::gateway::prompt::route_context_with_workspace(std::path::Path::new("."), &workspace, &mut ctx, &input, &plugins, None)?;
-        let context = crate::gateway::prompt::build_context(&state.db, &ctx, &input, &plugins, 0, std::path::Path::new(".")).await?;
-        crate::tools::update_template::save_validated(std::path::Path::new("templates"), &name, &update.content, &context).await
-    }.await;
-    match result {
-        Ok(rendered) => {
-            let error = state.db.save_template(&name, &update.content, None, false).err().map(|e| format!("Validated template saved to disk, but database update failed: {e}"));
-            Ok(Json(TemplateSaveResult { success: true, error, rendered_preview: Some(rendered) }))
-        }
-        Err(e) => Ok(Json(TemplateSaveResult {
-            success: false, error: Some(format!("Template was not saved: {e}")), rendered_preview: None,
-        })),
-    }
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    admin_json(
+        crate::services::admin::update_template(
+            &state.db,
+            &name,
+            &update.content,
+            update.user_id.as_deref(),
+            update.user_prompt.as_deref(),
+        )
+        .await,
+    )
 }
 
 async fn create_template(
     State(state): State<Arc<DashboardState>>,
     Json(create): Json<TemplateCreate>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let file_path = format!("templates/{}.poml", create.name);
-    if let Some(parent) = std::path::Path::new(&file_path).parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    if let Err(e) = std::fs::write(&file_path, &create.content) {
-        return Ok(Json(serde_json::json!({
-            "success": false,
-            "error": format!("Failed to write template file: {}", e)
-        })));
-    }
-    let _ = state.db.save_template(
+    admin_json(crate::services::admin::create_template(
+        &state.db,
+        std::path::Path::new("templates"),
         &create.name,
         &create.content,
         create.description.as_deref(),
-        false,
-    );
-    Ok(Json(serde_json::json!({ "success": true })))
+    ))
 }
 
 async fn delete_template(
     State(state): State<Arc<DashboardState>>,
     Path(name): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let conn = state.db.conn();
-    let _ = conn.execute(
-        "DELETE FROM templates WHERE name = ?1",
-        rusqlite::params![name],
-    );
-    let file_path = format!("templates/{}.poml", name);
-    let _ = std::fs::remove_file(&file_path);
-    Ok(Json(serde_json::json!({ "success": true })))
+    admin_json(crate::services::admin::delete_template(
+        &state.db,
+        std::path::Path::new("templates"),
+        &name,
+    ))
 }
 
 // ── Tools ────────────────────────────────────────────────────────────────────
 
+async fn list_tool_packages(
+    State(state): State<Arc<DashboardState>>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    admin_json(crate::services::admin::tool_packages(&state.db, &state.plugins))
+}
+
+async fn set_tool_package(
+    State(state): State<Arc<DashboardState>>,
+    Path(id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let enabled = body.get("enabled").and_then(|v| v.as_bool()).ok_or(StatusCode::BAD_REQUEST)?;
+    admin_json(crate::services::admin::set_tool_package(&state.db, &id, enabled))
+}
+
 async fn list_tools(
     State(state): State<Arc<DashboardState>>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let tools = crate::db::tools::list(&state.db).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(serde_json::json!({ "tools": tools })))
+    admin_json(crate::services::admin::tool_records(&state.db))
 }
 
 async fn list_all_tools(
     State(state): State<Arc<DashboardState>>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    // Built-in tools from registry
-    let builtin: Vec<_> = crate::tools::registry::all_tool_meta()
-        .iter()
-        .filter(|m| crate::tools::catalog::is_builtin(m.name))
-        .map(|m| serde_json::json!({
-            "name": m.name,
-            "description": m.description,
-            "category": format!("{:?}", m.category),
-            "parameters": m.params_schema,
-            "source": "builtin",
-            "default_enabled": m.default_enabled,
-            "is_enabled": crate::db::tools::get(&state.db, m.name).map(|t| t.is_enabled).unwrap_or(m.default_enabled),
-        }))
-        .collect();
-
-    // Plugin tools
-    let plugin_tools: Vec<_> = state.plugins
-        .enabled_tools()
-        .iter()
-        .map(|t| serde_json::json!({
-            "name": t.name,
-            "description": t.description,
-            "category": "Plugin",
-            "parameters": t.parameters,
-            "source": "plugin",
-            "default_enabled": true,
-            "is_enabled": crate::db::tools::get_plugin_tool_enabled(&state.db, &t.name),
-        }))
-        .collect();
-
-    let all = [builtin, plugin_tools].concat();
-    Ok(Json(serde_json::json!({ "tools": all, "total": all.len() })))
+    Ok(Json(crate::services::admin::all_tools(&state.db, &state.plugins)))
 }
 
 async fn update_tool(
@@ -937,17 +617,25 @@ fn set_dashboard_tool_enabled(
     name: &str,
     enabled: bool,
 ) -> Result<(), StatusCode> {
-    let builtins = crate::db::tools::list(db).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    // Builtins own their names, including when a plugin declares the same name.
-    if crate::tools::catalog::is_builtin(name) && builtins.iter().any(|tool| tool.name == name) {
-        crate::db::tools::set_enabled(db, name, enabled)
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
-    } else if plugins.enabled_tools().iter().any(|tool| tool.name == name) {
-        crate::db::tools::set_plugin_tool_enabled(db, name, enabled)
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
-    } else {
-        Err(StatusCode::NOT_FOUND)
+    crate::services::admin::set_tool_enabled(db, plugins, name, enabled).map_err(admin_status)
+}
+
+/// HTTP status for an administration-service failure.
+fn admin_status(failure: crate::services::admin::Failure) -> StatusCode {
+    use crate::services::admin::Failure;
+    match failure {
+        Failure::BadRequest(_) => StatusCode::BAD_REQUEST,
+        Failure::NotFound => StatusCode::NOT_FOUND,
+        Failure::Internal(error) => {
+            tracing::error!(%error, "Dashboard-Admin-Aufruf fehlgeschlagen");
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
     }
+}
+fn admin_json(
+    result: crate::services::admin::Outcome<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    result.map(Json).map_err(admin_status)
 }
 
 // ── Memory ───────────────────────────────────────────────────────────────────
@@ -961,35 +649,8 @@ async fn get_memory(
     State(state): State<Arc<DashboardState>>,
     Path(user_id): Path<String>,
     Query(query): Query<MemoryQuery>,
-) -> Result<Json<MemoryInfo>, StatusCode> {
-    use crate::db::memory_profiles as profiles;
-    let ctx = state
-        .db
-        .load_context(&user_id)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let mut view =
-        profiles::snapshot(&state.db, &ctx).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let active_profile = view.profile.clone();
-    if let Some(name) = query.profile {
-        profiles::validate_name(&name).map_err(|_| StatusCode::BAD_REQUEST)?;
-        let memory = profiles::read_named(&state.db, &user_id, &name)
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        view.profile = name;
-        view.exists = memory.is_some();
-        view.memory = memory.unwrap_or_default();
-    }
-    Ok(Json(MemoryInfo {
-        user_id,
-        active_profile,
-        profile: view.profile,
-        profile_exists: view.exists,
-        profiles: view.profiles,
-        shared: view.shared,
-        user_preferences: view.memory.user_preferences,
-        custom_variables: view.memory.custom_variables,
-        learned_facts: view.memory.learned_facts,
-        last_topics: view.memory.last_topics,
-    }))
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    admin_json(crate::services::admin::memory(&state.db, &user_id, query.profile.as_deref()))
 }
 
 async fn update_memory(
@@ -997,192 +658,34 @@ async fn update_memory(
     Path(user_id): Path<String>,
     Json(update): Json<MemoryUpdate>,
 ) -> Result<String, StatusCode> {
-    use crate::db::memory_profiles as profiles;
-    let profile = match update.profile {
-        Some(name) => name,
-        None => {
-            let ctx = state
-                .db
-                .load_context(&user_id)
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-            profiles::snapshot(&state.db, &ctx)
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-                .profile
-        }
+    let update = crate::services::admin::MemoryUpdate {
+        profile: update.profile,
+        reason: update.reason,
+        user_preferences: update.user_preferences,
+        custom_variables: update.custom_variables,
+        learned_facts: update.learned_facts,
+        last_topics: update.last_topics,
     };
-    profiles::validate_name(&profile).map_err(|_| StatusCode::BAD_REQUEST)?;
-    if profile == profiles::SHARED
-        && !update
-            .reason
-            .as_deref()
-            .is_some_and(|r| !r.trim().is_empty() && r.len() <= 512)
-    {
-        return Err(StatusCode::BAD_REQUEST);
-    }
-    if profiles::read_named(&state.db, &user_id, &profile)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .is_none()
-    {
-        return Err(StatusCode::NOT_FOUND);
-    }
-    profiles::update_named(&state.db, &user_id, &profile, |memory| {
-        if let Some(vars) = update.custom_variables {
-            memory.custom_variables = vars;
-        }
-        if let Some(facts) = update.learned_facts {
-            memory.learned_facts = facts;
-        }
-        if let Some(topics) = update.last_topics {
-            memory.last_topics = topics;
-        }
-        if let Some(preferences) = update.user_preferences {
-            memory.user_preferences = preferences;
-        }
-        Ok(())
-    })
-    .map_err(|_| StatusCode::BAD_REQUEST)?;
+    crate::services::admin::update_memory(&state.db, &user_id, update).map_err(admin_status)?;
     Ok("Memory updated".to_string())
 }
 
 // ── Secrets ──────────────────────────────────────────────────────────────────
 
+
+
+
+
+pub use crate::services::secrets::{SecretsInfo, SecretsUpdate};
+#[cfg(test)]
+use crate::services::secrets::apply_codex_secret;
+
 async fn get_secrets() -> Result<Json<SecretsInfo>, StatusCode> {
-    let secrets = crate::db::secrets::get_secrets();
-    let custom_masked: std::collections::HashMap<String, String> = secrets
-        .custom
-        .iter()
-        .filter(|(k, _)| k.as_str() != crate::gateway::llm::codex::SECRET_KEY)
-        .map(|(k, v)| (k.clone(), crate::db::secrets::mask_secret(&Some(v.clone()))))
-        .collect();
-    Ok(Json(SecretsInfo {
-        codex_auth: if crate::gateway::llm::codex::CodexAuth::from_secrets(&secrets).is_some() { "***".into() } else { String::new() },
-        discord_bot_token: crate::db::secrets::mask_secret(&secrets.discord_bot_token),
-        openai_api_key: crate::db::secrets::mask_secret(&secrets.openai_api_key),
-        anthropic_api_key: crate::db::secrets::mask_secret(&secrets.anthropic_api_key),
-        ollama_api_key: crate::db::secrets::mask_secret(&secrets.ollama_api_key),
-        llamacpp_api_key: crate::db::secrets::mask_secret(&secrets.llamacpp_api_key),
-        minimax_api_key: crate::db::secrets::mask_secret(&secrets.minimax_api_key),
-        mimo_api_key: crate::db::secrets::mask_secret(&secrets.mimo_api_key),
-        elevenlabs_api_key: crate::db::secrets::mask_secret(&secrets.elevenlabs_api_key),
-        gateway_api_key: crate::db::secrets::mask_secret(&secrets.gateway_api_key),
-        dashboard_admin_password: crate::db::secrets::mask_secret(
-            &secrets.dashboard_admin_password,
-        ),
-        custom: custom_masked,
-    }))
+    Ok(Json(crate::services::secrets::masked()))
 }
 
 async fn update_secrets(Json(update): Json<SecretsUpdate>) -> Result<String, StatusCode> {
-    let mut secrets = crate::db::secrets::get_secrets();
-    if let Some(auth) = update.codex_auth.as_deref() {
-        apply_codex_secret(&mut secrets, auth).map_err(|_| StatusCode::BAD_REQUEST)?;
-    }
-    // Felder, die wegen Leer-Werten übersprungen wurden (Selbst-Zugangs-
-    // daten dürfen nie mit "" in den Store — sonst Login/Gateway-401).
-    let mut skipped: Vec<&str> = Vec::new();
-
-    if let Some(v) = update.discord_bot_token {
-        secrets.discord_bot_token = Some(v);
-    }
-    if let Some(v) = update.openai_api_key {
-        secrets.openai_api_key = Some(v);
-    }
-    if let Some(v) = update.anthropic_api_key {
-        secrets.anthropic_api_key = Some(v);
-    }
-    if let Some(v) = update.ollama_api_key {
-        secrets.ollama_api_key = Some(v);
-    }
-    if let Some(v) = update.llamacpp_api_key {
-        secrets.llamacpp_api_key = Some(v);
-    }
-    if let Some(v) = update.minimax_api_key {
-        secrets.minimax_api_key = Some(v);
-    }
-    if let Some(v) = update.mimo_api_key {
-        secrets.mimo_api_key = Some(v);
-    }
-    if let Some(v) = update.elevenlabs_api_key {
-        secrets.elevenlabs_api_key = Some(v);
-    }
-    if let Some(v) = update.gateway_api_key {
-        // Selbst-Zugangsdaten: Leere Werte würden Login/Gateway still mit ""
-        // in den Store schreiben (Store > Env) → Lockout/401 bis Store-Reset.
-        // Leere = überspringen (Nichts senden = unverändert).
-        if v.trim().is_empty() {
-            skipped.push("gateway_api_key");
-        } else {
-            secrets.gateway_api_key = Some(v);
-        }
-    }
-    if let Some(v) = update.dashboard_admin_password {
-        if v.trim().is_empty() {
-            skipped.push("dashboard_admin_password");
-        } else {
-            secrets.dashboard_admin_password = Some(v);
-        }
-    }
-
-    for (k, v) in update.custom {
-        if v.is_empty() {
-            secrets.custom.remove(&k);
-        } else {
-            secrets.custom.insert(k, v);
-        }
-    }
-
-    let skipped_note = if skipped.is_empty() {
-        String::new()
-    } else {
-        format!(" (leere Werte ignoriert: {})", skipped.join(", "))
-    };
-
-    // Persist to enc2 if master password provided
-    if let Some(ref password) = update.master_password {
-        // Trim wie beim Start (MASTER_KEY_FILE wird beim Lesen getrimmt):
-        // Copy-Paste-Zeilenümbrüche dürfen kein Re-Keying auslösen.
-        let password = password.trim();
-        // Guard: Bei vorhandenem Store MUSS das Feld den AKTUELLEN Master-Key
-        // öffnen (echter Decrypt-Test). Ohne Check verschlüsselt save_secrets
-        // den Store still mit einem evtl. falschen Wert NEU → nächster Start
-        // „Invalid MASTER_KEY (hash mismatch)" (21.09. live passiert: Secret
-        // im Dashboard geändert, Restart brickte).
-        if crate::db::secrets::has_secrets() && !crate::db::enc2::verify_password(password) {
-            return Ok("Falsches Master-Passwort — NICHTS gespeichert, Store unverändert. (Feld = exakter Inhalt von vps/master_key)".to_string());
-        }
-        if let Err(_e) = crate::db::secrets::save_secrets(&secrets, password) {
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
-        }
-        crate::db::secrets::init_secrets(secrets.clone());
-        reload_llm_router(&secrets);
-        Ok(format!("Secrets saved and encrypted.{}", skipped_note))
-    } else {
-        crate::db::secrets::init_secrets(secrets.clone());
-        reload_llm_router(&secrets);
-        Ok(format!(
-            "Secrets updated in memory. Provide master_password to persist to disk.{}",
-            skipped_note
-        ))
-    }
-}
-
-/// Provider keys changed in the dashboard take effect without a restart.
-fn reload_llm_router(secrets: &crate::db::secrets::Secrets) {
-    if let Some(state) = crate::gateway::state_ref() {
-        let config = crate::gateway::providers::effective_config(&state.config, secrets);
-        state.llm.swap(crate::gateway::llm::LLMRouter::new(&config, secrets));
-    }
-}
-
-fn apply_codex_secret(secrets: &mut crate::db::secrets::Secrets, value: &str) -> anyhow::Result<()> {
-    use crate::gateway::llm::codex::{CodexAuth, SECRET_KEY};
-    if value.starts_with("***") { return Ok(()); }
-    if value.trim().is_empty() {
-        secrets.custom.remove(SECRET_KEY);
-    } else {
-        CodexAuth::from_json(value)?.store(secrets);
-    }
-    Ok(())
+    crate::services::secrets::update(update).map_err(admin_status)
 }
 
 #[cfg(test)]
@@ -1219,104 +722,37 @@ mod codex_secret_tests {
 async fn list_pairings(
     State(state): State<Arc<DashboardState>>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let conn = state.db.conn();
-    let mut stmt = conn
-        .prepare("SELECT user_id, discord_user_id, discord_guild_id, paired_at, last_seen_at FROM pairings ORDER BY paired_at DESC")
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let pairings: Vec<serde_json::Value> = stmt
-        .query_map([], |row| {
-            Ok(serde_json::json!({
-                "user_id": row.get::<_, String>(0)?,
-                "discord_user_id": row.get::<_, String>(1)?,
-                "discord_guild_id": row.get::<_, Option<String>>(2)?,
-                "paired_at": row.get::<_, Option<String>>(3)?,
-                "last_seen_at": row.get::<_, Option<String>>(4)?,
-            }))
-        })
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap_or_default();
-
-    Ok(Json(serde_json::json!({ "pairings": pairings })))
+    admin_json(crate::services::admin::pairings(&state.db))
 }
 
 async fn delete_pairing(
     State(state): State<Arc<DashboardState>>,
     Path(user_id): Path<String>,
 ) -> Result<String, StatusCode> {
-    let conn = state.db.conn();
-    conn.execute(
-        "DELETE FROM pairings WHERE user_id = ?1",
-        rusqlite::params![user_id],
-    )
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    crate::services::admin::delete_pairing(&state.db, &user_id).map_err(admin_status)?;
     Ok("Pairing deleted".to_string())
 }
 
 async fn list_pending_pairings(
     State(state): State<Arc<DashboardState>>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let conn = state.db.conn();
-    let mut stmt = conn
-        .prepare("SELECT code, discord_user_id, expires_at, created_at FROM pending_pairings ORDER BY created_at DESC")
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let pending: Vec<serde_json::Value> = stmt
-        .query_map([], |row| {
-            Ok(serde_json::json!({
-                "code": row.get::<_, String>(0)?,
-                "discord_user_id": row.get::<_, String>(1)?,
-                "expires_at": row.get::<_, String>(2)?,
-                "created_at": row.get::<_, Option<String>>(3)?,
-            }))
-        })
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap_or_default();
-
-    Ok(Json(serde_json::json!({ "pending_pairings": pending })))
+    admin_json(crate::services::admin::pending_pairings(&state.db))
 }
 
 async fn approve_pending_pairing(
     State(state): State<Arc<DashboardState>>,
     Path(code): Path<String>,
 ) -> Result<String, StatusCode> {
-    let pending = state
-        .db
-        .get_pending_pairing(&code)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let pending = match pending {
-        Some(p) => p,
-        None => return Err(StatusCode::NOT_FOUND),
-    };
-
-    let user_id = uuid::Uuid::new_v4().to_string();
-    state
-        .db
-        .create_pairing(&user_id, &pending.discord_user_id, None)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    state
-        .db
-        .delete_pending_pairing(&code)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    Ok(format!(
-        "Pairing approved for Discord user {}",
-        pending.discord_user_id
-    ))
+    let discord_user_id =
+        crate::services::admin::approve_pairing(&state.db, &code).map_err(admin_status)?;
+    Ok(format!("Pairing approved for Discord user {discord_user_id}"))
 }
 
 async fn delete_pending_pairing(
     State(state): State<Arc<DashboardState>>,
     Path(code): Path<String>,
 ) -> Result<String, StatusCode> {
-    state
-        .db
-        .delete_pending_pairing(&code)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    crate::services::admin::delete_pending_pairing(&state.db, &code).map_err(admin_status)?;
     Ok("Pending pairing deleted".to_string())
 }
 
@@ -1326,42 +762,7 @@ async fn list_sm_files(
     State(state): State<Arc<DashboardState>>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let _ = state; // Workflows use the same canonical root as runtime routing.
-    let sm_dir = std::path::Path::new("contexts");
-    let mut files = Vec::new();
-
-    for dir in [sm_dir] {
-        if dir.exists() {
-            if let Ok(entries) = std::fs::read_dir(dir) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    let ext = path.extension().and_then(|e| e.to_str());
-                    if ext == Some("sm") || ext == Some("cl") {
-                        let name = path
-                            .file_name()
-                            .unwrap_or_default()
-                            .to_string_lossy()
-                            .to_string();
-                        if !files
-                            .iter()
-                            .any(|f: &serde_json::Value| f["name"].as_str() == Some(&name))
-                        {
-                            files.push(serde_json::json!({
-                                "name": name,
-                                "path": path.to_string_lossy(),
-                            }));
-                        }
-                    }
-                }
-            }
-        }
-    }
-    files.sort_by(|a, b| {
-        a["name"]
-            .as_str()
-            .unwrap_or("")
-            .cmp(b["name"].as_str().unwrap_or(""))
-    });
-    Ok(Json(serde_json::json!({ "sm_files": files })))
+    Ok(Json(crate::services::admin::sm_files(std::path::Path::new("contexts"))))
 }
 
 async fn get_sm_file(
@@ -1369,8 +770,7 @@ async fn get_sm_file(
     Path(name): Path<String>,
 ) -> Result<String, StatusCode> {
     let _ = state;
-    let path = crate::sm::resolve_file_in(std::path::Path::new("contexts"), &name).map_err(|_| StatusCode::NOT_FOUND)?;
-    std::fs::read_to_string(path).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+    crate::services::admin::sm_file(std::path::Path::new("contexts"), &name).map_err(admin_status)
 }
 
 async fn save_sm_file(
@@ -1379,7 +779,8 @@ async fn save_sm_file(
     Json(update): Json<SmFileUpdate>,
 ) -> Result<String, StatusCode> {
     let _ = state;
-    crate::sm::save_file_in(std::path::Path::new("contexts"), &name, &update.content).map_err(|_| StatusCode::BAD_REQUEST)?;
+    crate::services::admin::save_sm_file(std::path::Path::new("contexts"), &name, &update.content)
+        .map_err(admin_status)?;
     Ok("SM file saved".to_string())
 }
 
@@ -1388,56 +789,14 @@ async fn save_sm_file(
 async fn list_cron_jobs(
     State(state): State<Arc<DashboardState>>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let conn = state.db.conn();
-    let mut stmt = conn
-        .prepare(
-            "SELECT id, name, schedule, enabled, last_run, run_count FROM cron_jobs ORDER BY name",
-        )
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let jobs: Vec<serde_json::Value> = stmt
-        .query_map([], |row| {
-            Ok(serde_json::json!({
-                "id": row.get::<_, String>(0)?,
-                "name": row.get::<_, String>(1)?,
-                "schedule": row.get::<_, String>(2)?,
-                "enabled": row.get::<_, i32>(3)? != 0,
-                "last_run": row.get::<_, Option<String>>(4)?,
-                "run_count": row.get::<_, i64>(5)?,
-            }))
-        })
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap_or_default();
-
-    Ok(Json(serde_json::json!({ "cron_jobs": jobs })))
+    admin_json(crate::services::admin::cron_jobs(&state.db))
 }
 
 pub(crate) async fn tool_activity(
     State(state): State<Arc<DashboardState>>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let conn = state.db.conn();
-    let limit = params.get("limit").and_then(|v| v.parse::<i64>().ok()).unwrap_or(50).clamp(1, 500);
-    let mut stmt = conn
-        .prepare("SELECT vm_id, action, input, output, created_at FROM vm_activity_log ORDER BY id DESC LIMIT ?1")
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let activities: Vec<serde_json::Value> = stmt
-        .query_map([limit], |row| {
-            Ok(serde_json::json!({
-                "vm_id": row.get::<_, String>(0)?,
-                "action": row.get::<_, String>(1)?,
-                "input": row.get::<_, Option<String>>(2)?,
-                "output": row.get::<_, Option<String>>(3)?,
-                "created_at": row.get::<_, Option<String>>(4)?,
-            }))
-        })
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap_or_default();
-
-    Ok(Json(serde_json::json!({ "activities": activities })))
+    Ok(Json(crate::runtime::web_proxy::activity(&state.db, &params)))
 }
 
 #[derive(Deserialize)]
@@ -1450,53 +809,22 @@ struct AgentInputRequest {
 async fn send_agent_input(
     Json(req): Json<AgentInputRequest>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let mut full_message = req.message.clone();
-    if let Some(ref atts) = req.attachments {
-        for a in atts {
-            full_message.push_str(&format!("\n[Attachment: {}]", a));
-        }
-    }
-    match crate::gateway::agent_loop::get_user_input_sender(&req.user_id).await {
-        Some(sender) => {
-            if let Err(e) = sender.send(full_message) {
-                return Ok(Json(serde_json::json!({
-                    "error": format!("Failed to send message: {}", e)
-                })));
-            }
-            Ok(Json(serde_json::json!({
-                "success": true,
-                "message": "Message sent"
-            })))
-        }
-        None => Ok(Json(serde_json::json!({
-            "error": "No active agent loop found for this user"
-        }))),
-    }
+    let full = crate::services::agent::with_attachments(
+        &req.message,
+        req.attachments.as_deref().unwrap_or_default(),
+    );
+    Ok(Json(crate::services::agent::send_input(&req.user_id, full).await))
 }
 
 async fn begin_agent(
     State(state): State<Arc<DashboardState>>,
     Json(req): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let user_id = req["user_id"].as_str().unwrap_or("default").to_string();
-    let message = req["message"].as_str().unwrap_or("").to_string();
-    let gateway_key = state.gateway_api_key.clone();
-
-    tokio::spawn(async move {
-        let client = reqwest::Client::new();
-        let url = "http://127.0.0.1:3537/v1/chat";
-        let body = serde_json::json!({
-            "user_id": user_id,
-            "message": message,
-        });
-        let _ = client
-            .post(url)
-            .bearer_auth(&gateway_key)
-            .json(&body)
-            .send()
-            .await;
-    });
-
+    crate::services::agent::dispatch_via_gateway(
+        state.gateway_api_key.clone(),
+        req["user_id"].as_str().unwrap_or("default").to_string(),
+        req["message"].as_str().unwrap_or("").to_string(),
+    );
     Ok(Json(serde_json::json!({
         "success": true,
         "message": "Agent dispatched to gateway"
@@ -1506,14 +834,13 @@ async fn begin_agent(
 async fn get_agent_status(
     Path(user_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let has_loop = crate::gateway::agent_loop::get_user_input_sender(&user_id).await.is_some();
-    Ok(Json(serde_json::json!({ "active": has_loop })))
+    Ok(Json(serde_json::json!({ "active": crate::services::agent::active(&user_id).await })))
 }
 
 async fn stop_agent(
     Path(user_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    crate::gateway::agent_loop::stop_agent_loop(&user_id).await;
+    crate::services::agent::stop(&user_id).await;
     Ok(Json(serde_json::json!({ "success": true })))
 }
 
@@ -1521,27 +848,21 @@ async fn upload_avatar(
     State(_state): State<Arc<DashboardState>>,
     mut multipart: Multipart,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let data_dir = std::env::var("DATA_DIR").unwrap_or_else(|_| "./data".to_string());
-    std::fs::create_dir_all(format!("{}/avatars", data_dir)).ok();
-
+    let root = crate::services::media::data_dir();
     while let Ok(Some(mut field)) = multipart.next_field().await {
         let name = field.name().unwrap_or("unknown").to_string();
         let mut data = Vec::new();
         while let Ok(Some(chunk)) = field.chunk().await {
             data.extend_from_slice(&chunk);
+            if data.len() > crate::services::media::MAX_AVATAR {
+                break;
+            }
         }
-        if data.len() > 2_000_000 {
-            return Ok(Json(serde_json::json!({"error": "File too large (max 2MB)"})));
-        }
-        let ext = if data.starts_with(&[0x89, 0x50, 0x4E, 0x47]) { "png" }
-            else if data.starts_with(&[0xFF, 0xD8, 0xFF]) { "jpg" }
-            else if data.starts_with(b"GIF8") { "gif" }
-            else if data.starts_with(b"RIFF") && data.len() > 8 && &data[8..12] == b"WEBP" { "webp" }
-            else { return Ok(Json(serde_json::json!({"error": "Unsupported format. Use PNG, JPG, GIF, or WebP."}))); };
-
-        let path = format!("{}/avatars/{}.{}", data_dir, name, ext);
-        std::fs::write(&path, &data).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        return Ok(Json(serde_json::json!({"success": true, "url": format!("/api/avatar/{}", name)})));
+        return Ok(Json(match crate::services::media::store_avatar(&root, &name, &data) {
+            Ok(url) => serde_json::json!({"success": true, "url": url}),
+            Err(crate::services::admin::Failure::BadRequest(error)) => serde_json::json!({"error": error}),
+            Err(other) => return Err(admin_status(other)),
+        }));
     }
     Ok(Json(serde_json::json!({"error": "No file uploaded"})))
 }
@@ -1549,42 +870,33 @@ async fn upload_avatar(
 async fn get_avatar(
     Path(name): Path<String>,
 ) -> Result<impl IntoResponse, StatusCode> {
-    let data_dir = std::env::var("DATA_DIR").unwrap_or_else(|_| "./data".to_string());
-    for ext in &["png", "jpg", "jpeg", "gif", "webp"] {
-        let path = format!("{}/avatars/{}.{}", data_dir, name, ext);
-        if let Ok(data) = std::fs::read(&path) {
-            let ct = match *ext {
-                "png" => "image/png",
-                "jpg" | "jpeg" => "image/jpeg",
-                "gif" => "image/gif",
-                "webp" => "image/webp",
-                _ => "application/octet-stream",
-            };
-            return Ok(([(axum::http::header::CONTENT_TYPE, ct)], data));
-        }
-    }
-    Err(StatusCode::NOT_FOUND)
+    let (content_type, data) =
+        crate::services::media::read_avatar(&crate::services::media::data_dir(), &name)
+            .map_err(admin_status)?;
+    Ok(([(axum::http::header::CONTENT_TYPE, content_type)], data))
 }
 
 async fn upload_chat_file(
     mut multipart: Multipart,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let data_dir = std::env::var("DATA_DIR").unwrap_or_else(|_| "./data".to_string());
-    std::fs::create_dir_all(format!("{}/uploads", data_dir)).ok();
+    let root = crate::services::media::data_dir();
     let mut files = Vec::new();
-
     while let Ok(Some(mut field)) = multipart.next_field().await {
         let filename = field.file_name().unwrap_or("file").to_string();
         let mut data = Vec::new();
         while let Ok(Some(chunk)) = field.chunk().await {
             data.extend_from_slice(&chunk);
+            if data.len() > crate::services::media::MAX_UPLOAD {
+                break;
+            }
         }
-        if data.len() > 50_000_000 {
-            return Ok(Json(serde_json::json!({"error": "File too large (max 50MB)"})));
+        match crate::services::media::store_upload(&root, &filename, &data) {
+            Ok(url) => files.push(url),
+            Err(crate::services::admin::Failure::BadRequest(error)) => {
+                return Ok(Json(serde_json::json!({"error": error})))
+            }
+            Err(other) => return Err(admin_status(other)),
         }
-        let path = format!("{}/uploads/{}", data_dir, filename);
-        std::fs::write(&path, &data).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        files.push(format!("/api/files/{}", filename));
     }
     if files.is_empty() {
         return Ok(Json(serde_json::json!({"error": "No files found"})));
@@ -1595,41 +907,24 @@ async fn upload_chat_file(
 async fn get_chat_file(
     Path(name): Path<String>,
 ) -> Result<impl IntoResponse, StatusCode> {
-    let data_dir = std::env::var("DATA_DIR").unwrap_or_else(|_| "./data".to_string());
-    let path = format!("{}/uploads/{}", data_dir, name);
-    match std::fs::read(&path) {
-        Ok(data) => Ok((
-            [(axum::http::header::CONTENT_TYPE, "application/octet-stream")],
-            data,
-        )),
-        Err(_) => Err(StatusCode::NOT_FOUND),
-    }
+    let data = crate::services::media::read_upload(&crate::services::media::data_dir(), &name)
+        .map_err(admin_status)?;
+    Ok((
+        [
+            (axum::http::header::CONTENT_TYPE, "application/octet-stream"),
+            (axum::http::header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+        ],
+        data,
+    ))
 }
 
 async fn get_screenshot(
     Path(path): Path<String>,
 ) -> Result<impl IntoResponse, StatusCode> {
-    let data_dir = std::env::var("DATA_DIR").unwrap_or_else(|_| "./data".to_string());
-    let full_path = format!("{}/{}", data_dir, path);
-    // Security: ensure path stays under data_dir
-    let canonical = std::fs::canonicalize(&full_path).unwrap_or_default();
-    let base = std::fs::canonicalize(&data_dir).unwrap_or_default();
-    if !canonical.starts_with(&base) {
-        return Err(StatusCode::FORBIDDEN);
-    }
-    let data = std::fs::read(&canonical).map_err(|_| StatusCode::NOT_FOUND)?;
-    let ct = if path.ends_with(".png") {
-        "image/png"
-    } else if path.ends_with(".jpg") || path.ends_with(".jpeg") {
-        "image/jpeg"
-    } else if path.ends_with(".gif") {
-        "image/gif"
-    } else if path.ends_with(".webp") {
-        "image/webp"
-    } else {
-        "application/octet-stream"
-    };
-    Ok(([(axum::http::header::CONTENT_TYPE, ct)], data))
+    let (content_type, data) =
+        crate::services::media::read_screenshot(&crate::services::media::data_dir(), &path)
+            .map_err(admin_status)?;
+    Ok(([(axum::http::header::CONTENT_TYPE, content_type)], data))
 }
 
 /// Dashboard chat speech-to-text: accepts a browser MediaRecorder blob
@@ -1670,39 +965,10 @@ async fn dashboard_stt(
     if body.is_empty() {
         return Err(StatusCode::BAD_REQUEST);
     }
-    let ctx = state.db.load_context(&user_id).map_err(|_| StatusCode::NOT_FOUND)?;
-    let secrets = crate::db::secrets::get_secrets();
-    let api_key = secrets
-        .elevenlabs_api_key
-        .clone()
-        .unwrap_or_default();
-    if ctx.settings.voice_stt_type == "elevenlabs" && api_key.is_empty() {
-        return Ok(Json(serde_json::json!({"error": "ElevenLabs API key not configured"})));
-    }
-    let stt_config = crate::voice::STTConfig {
-        engine: ctx.settings.voice_stt_type.clone(),
-        api_key: (!api_key.is_empty()).then_some(api_key),
-        model_path: if ctx.settings.voice_stt_type == "vosk" {
-            ctx.settings.voice_vosk_model_path.clone()
-        } else {
-            ctx.settings.voice_whisper_model_path.clone()
-        },
-        vosk_url: ctx.settings.voice_vosk_url.clone(),
-        elevenlabs_model: ctx.settings.elevenlabs_stt_model.clone(),
-        elevenlabs_language: ctx.settings.elevenlabs_stt_language.clone(),
-        elevenlabs_tag_audio_events: ctx.settings.elevenlabs_stt_tag_audio_events,
-        elevenlabs_no_verbatim: ctx.settings.elevenlabs_stt_no_verbatim,
-    };
-    let stt_threshold = ctx.settings.stt_low_confidence_threshold;
-    match crate::voice::transcribe_audio(&body, &stt_config).await {
-        Ok(text) => Ok(Json(serde_json::json!({
-            "text": text,
-            "confidence": crate::voice::last_stt_confidence(),
-            "low_confidence": crate::voice::last_stt_confidence().map_or(false, |c| c < stt_threshold),
-            "threshold": stt_threshold,
-        }))),
-        Err(e) => Ok(Json(serde_json::json!({"error": e.to_string()}))),
-    }
+    crate::services::media::transcribe(&state.db, &user_id, &body)
+        .await
+        .map(Json)
+        .map_err(admin_status)
 }
 
 /// Context profiles: named, complete context snapshots ("Marvin-Default", ...)
@@ -1711,184 +977,38 @@ async fn dashboard_stt(
 async fn list_profiles(
     State(state): State<Arc<DashboardState>>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let conn = state.db.conn();
-    let _ = conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS context_profiles (
-            name TEXT PRIMARY KEY,
-            data TEXT NOT NULL,
-            created_at TEXT NOT NULL
-        );",
-    );
-    let mut stmt = conn
-        .prepare("SELECT name, created_at FROM context_profiles ORDER BY created_at")
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let rows = stmt
-        .query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-            ))
-        })
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let profiles: Vec<_> = rows
-        .filter_map(|row| {
-            let (name, created_at) = match row {
-                Ok((n, c)) => (n, c),
-                Err(_) => return None,
-            };
-            Some(serde_json::json!({
-                "name": name,
-                "created_at": created_at,
-            }))
-        })
-        .collect();
-    Ok(Json(serde_json::json!({"profiles": profiles})))
+    admin_json(crate::services::profiles::list(&state.db))
 }
 
 async fn save_profile(
     State(state): State<Arc<DashboardState>>,
     Json(req): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let name = req["name"].as_str().unwrap_or("").trim().to_string();
+    let name = req["name"].as_str().unwrap_or("");
     let source_user = req["source_user_id"].as_str().unwrap_or("default");
-    if name.is_empty() || !name.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_') {
-        return Err(StatusCode::BAD_REQUEST);
-    }
-    let ctx = state
-        .db
-        .load_context(source_user)
-        .map_err(|_| StatusCode::NOT_FOUND)?;
-    // Strip volatile fields: keep settings + custom_data + sm_file choice.
-    let snapshot = serde_json::json!({
-        "settings": ctx.settings,
-        "custom_data": ctx.custom_data,
-        "sm_file": ctx.sm_file,
-    });
-    let conn = state.db.conn();
-    let _ = conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS context_profiles (
-            name TEXT PRIMARY KEY,
-            data TEXT NOT NULL,
-            created_at TEXT NOT NULL
-        );",
-    );
-    conn.execute(
-        "INSERT INTO context_profiles (name, data, created_at) VALUES (?1, ?2, datetime('now'))
-         ON CONFLICT(name) DO UPDATE SET data = ?2, created_at = datetime('now')",
-        rusqlite::params![name, snapshot.to_string()],
-    )
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(serde_json::json!({"success": true, "name": name})))
+    admin_json(crate::services::profiles::save(&state.db, name, source_user))
 }
 
 async fn apply_profile(
     State(state): State<Arc<DashboardState>>,
     Path((name, user_id)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    // Read the profile snapshot in its own lock scope, then drop the guard
-    // BEFORE merge_context takes the lock again (avoids self-deadlock).
-    let update = {
-        let conn = state.db.conn();
-        let data: String = conn
-            .query_row(
-                "SELECT data FROM context_profiles WHERE name = ?1",
-                rusqlite::params![name],
-                |row| row.get(0),
-            )
-            .map_err(|_| StatusCode::NOT_FOUND)?;
-        let snapshot: serde_json::Value =
-            serde_json::from_str(&data).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        serde_json::json!({
-            "settings": snapshot.get("settings").cloned().unwrap_or_default(),
-            "custom_data": snapshot.get("custom_data").cloned().unwrap_or_default(),
-            "sm_file": snapshot.get("sm_file").cloned().unwrap_or_default(),
-        })
-    }; // MutexGuard dropped here
-    let ctx = state
-        .db
-        .merge_context(&user_id, update)
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
-    Ok(Json(serde_json::to_value(ctx).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?))
+    admin_json(crate::services::profiles::apply(&state.db, &name, &user_id))
 }
 
 async fn delete_profile(
     State(state): State<Arc<DashboardState>>,
     Path(name): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let conn = state.db.conn();
-    conn.execute(
-        "DELETE FROM context_profiles WHERE name = ?1",
-        rusqlite::params![name],
-    )
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(serde_json::json!({"success": true})))
+    admin_json(crate::services::profiles::delete(&state.db, &name))
 }
 
 async fn chat_query(
     State(state): State<Arc<DashboardState>>,
     Json(req): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let user_id = req["user_id"].as_str().unwrap_or("default");
-    let message = req["message"].as_str().unwrap_or("");
-    let is_option = req["is_option"].as_bool().unwrap_or(false);
-    let option_index = req["option_index"].as_u64();
-    let question_id = req["question_id"].as_str().unwrap_or("");
-    tracing::info!(user_id = %user_id, message = %message, "[DASHBOARD] chat_query received");
-
-    // Handle option selection
-    if is_option && !question_id.is_empty() {
-        crate::tools::web_interactive::handle_web_option(question_id, option_index.unwrap_or(0) as usize).await;
-        return Ok(Json(serde_json::json!({"success": true, "type": "option"})));
-    }
-
-    // Handle text reply to pending question
-    if !message.is_empty() {
-        let consumed = crate::tools::web_interactive::handle_web_message_reply(user_id, message).await;
-        if consumed {
-            return Ok(Json(serde_json::json!({"success": true, "type": "question_reply"})));
-        }
-    }
-
-    // Overwrite custom_data.user_prompt with the current message
-    if !message.is_empty() {
-        let _ = state.db.merge_context(user_id, serde_json::json!({"custom_data": {"user_prompt": message}}));
-    }
-
-    // Check if agent loop is active
-    let has_loop = crate::gateway::agent_loop::get_user_input_sender(user_id).await.is_some();
-    if !has_loop {
-        // Auto-start agent loop via gateway API
-        let gateway_key = state.gateway_api_key.clone();
-        let uid = user_id.to_string();
-        let msg = message.to_string();
-        tokio::spawn(async move {
-            let client = reqwest::Client::new();
-            let body = serde_json::json!({"user_id": uid, "message": msg});
-            let _ = client
-                .post("http://127.0.0.1:3537/v1/chat")
-                .bearer_auth(&gateway_key)
-                .json(&body)
-                .send()
-                .await;
-        });
-        return Ok(Json(serde_json::json!({
-            "success": true,
-            "type": "agent_started",
-            "message": "Agent loop started. Response will appear shortly."
-        })));
-    }
-
-    // Agent loop is running: inject message
-    if let Some(sender) = crate::gateway::agent_loop::get_user_input_sender(user_id).await {
-        let mut full = message.to_string();
-        if let Some(atts) = req["attachments"].as_array() {
-            for a in atts { if let Some(s) = a.as_str() { full.push_str(&format!("\n[Attachment: {}]", s)); } }
-        }
-        sender.send(full).ok();
-        Ok(Json(serde_json::json!({"success": true, "type": "injected"})))
-    } else {
-        Ok(Json(serde_json::json!({"error": "Agent loop not available"})))
-    }
+    tracing::info!(user_id = %req["user_id"].as_str().unwrap_or("default"), "[DASHBOARD] chat_query received");
+    Ok(Json(crate::services::agent::chat(&state.db, state.gateway_api_key.clone(), &req).await))
 }
 
 async fn chat_stream_auth(
@@ -2002,27 +1122,9 @@ async fn get_sm_info(
     State(state): State<Arc<DashboardState>>,
     Path(user_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let ctx = state.db.load_context(&user_id).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let templates: Vec<String> = ctx.active_templates.clone();
-    let sm_data = if ctx.sm_data.is_object() {
-        let mut flat = serde_json::Map::new();
-        for (k, v) in ctx.sm_data.as_object().unwrap() {
-            if !v.is_null() {
-                flat.insert(k.clone(), v.clone());
-            }
-        }
-        serde_json::Value::Object(flat)
-    } else {
-        serde_json::json!({})
-    };
-    Ok(Json(serde_json::json!({
-        "sm_file": crate::gateway::prompt::workflow_name(&ctx),
-        "system_template": ctx.settings.system_template.as_deref().unwrap_or("standard"),
-        "active_skill": ctx.settings.active_skill,
-        "active_state": ctx.active_state,
-        "active_templates": templates,
-        "sm_data": sm_data,
-    })))
+    crate::services::sessions::sm_info(&state.db, &user_id)
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 #[cfg(test)]
@@ -2032,6 +1134,10 @@ mod audio_tests;
 #[cfg(test)]
 #[path = "tool_tests.rs"]
 mod tool_tests;
+
+#[cfg(test)]
+#[path = "media_tests.rs"]
+mod media_tests;
 
 #[cfg(test)]
 mod dashboard_tests {
@@ -2083,9 +1189,9 @@ mod dashboard_tests {
         .await
         .unwrap()
         .0;
-        assert_eq!(memory.learned_facts, vec!["one"]);
-        assert_eq!(memory.user_preferences["brief"], true);
-        assert_eq!(memory.custom_variables["n"], 3);
+        assert_eq!(memory["learned_facts"], serde_json::json!(["one"]));
+        assert_eq!(memory["user_preferences"]["brief"], true);
+        assert_eq!(memory["custom_variables"]["n"], 3);
         let clear: MemoryUpdate =
             serde_json::from_value(serde_json::json!({"learned_facts":[], "user_preferences":{}}))
                 .unwrap();
@@ -2100,9 +1206,9 @@ mod dashboard_tests {
         .await
         .unwrap()
         .0;
-        assert!(memory.learned_facts.is_empty());
-        assert!(memory.user_preferences.is_empty());
-        assert_eq!(memory.custom_variables["n"], 3);
+        assert_eq!(memory["learned_facts"], serde_json::json!([]));
+        assert_eq!(memory["user_preferences"], serde_json::json!({}));
+        assert_eq!(memory["custom_variables"]["n"], 3);
         assert!(get_memory(
             State(state),
             Path("bob".into()),
@@ -2110,8 +1216,9 @@ mod dashboard_tests {
         )
         .await
         .unwrap()
-        .0
-        .custom_variables
+        .0["custom_variables"]
+        .as_object()
+        .unwrap()
         .is_empty());
     }
 
@@ -2140,8 +1247,8 @@ mod dashboard_tests {
         .await
         .unwrap()
         .0;
-        assert_eq!(selected.profile, "standard");
-        assert!(selected.custom_variables.is_empty());
+        assert_eq!(selected["profile"], "standard");
+        assert!(selected["custom_variables"].as_object().unwrap().is_empty());
         let lesson = get_memory(
             State(state.clone()),
             Path("alice".into()),
@@ -2152,8 +1259,8 @@ mod dashboard_tests {
         .await
         .unwrap()
         .0;
-        assert_eq!(lesson.custom_variables["xp"], 2);
-        assert_eq!(lesson.active_profile, "standard");
+        assert_eq!(lesson["custom_variables"]["xp"], 2);
+        assert_eq!(lesson["active_profile"], "standard");
         for body in [
             serde_json::json!({"profile":"shared", "custom_variables":{"name":"Alex"}}),
             serde_json::json!({"profile":"shared", "reason":"Explicit synthetic permission", "custom_variables":{"xp":2}}),
@@ -2179,7 +1286,7 @@ mod dashboard_tests {
             .await
             .unwrap()
             .0
-            .shared["name"],
+            ["shared"]["name"],
             "Alex"
         );
     }
@@ -2249,32 +1356,8 @@ async fn list_media(
     State(_state): State<Arc<DashboardState>>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let data_dir = std::env::var("DATA_DIR").unwrap_or_else(|_| "./data".to_string());
-    let uploads = format!("{}/uploads", data_dir);
-    let filter = params.get("q").map(|q| q.to_lowercase()).unwrap_or_default();
-    let mut files: Vec<serde_json::Value> = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(&uploads) {
-        for entry in entries_flat(entries) {
-            let path = entry.path();
-            if !path.is_file() { continue; }
-            let name = entry.file_name().to_string_lossy().to_string();
-            if !filter.is_empty() && !name.to_lowercase().contains(&filter) { continue; }
-            let meta = entry.metadata().ok();
-            files.push(serde_json::json!({
-                "name": name,
-                "url": format!("/api/files/{}", name),
-                "size": meta.as_ref().map(|m| m.len()).unwrap_or(0),
-                "modified": meta.and_then(|m| m.modified().ok())
-                    .map(|t| chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339()),
-            }));
-        }
-    }
-    files.sort_by(|a, b| {
-        let am = a["modified"].as_str().unwrap_or("");
-        let bm = b["modified"].as_str().unwrap_or("");
-        bm.cmp(am)
-    });
-    Ok(Json(serde_json::json!({ "files": files, "count": files.len() })))
+    let root = crate::services::media::data_dir();
+    Ok(Json(crate::services::media::list(&root, params.get("q").map(String::as_str))))
 }
 
 fn entries_flat(rd: std::fs::ReadDir) -> Vec<std::fs::DirEntry> {
