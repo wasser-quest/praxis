@@ -21,6 +21,7 @@ use tokio_util::sync::CancellationToken;
 struct ApiState {
     db: crate::db::Database,
     plugins: Arc<crate::plugins::PluginRegistry>,
+    http: reqwest::Client,
     token: String,
     scopes: BTreeSet<String>,
     gateway_port: u16,
@@ -53,6 +54,7 @@ impl HostApi {
         let state = Arc::new(ApiState {
             db,
             plugins,
+            http: crate::runtime::web_proxy::client(),
             token: token.clone(),
             scopes: scopes.iter().cloned().collect(),
             gateway_port,
@@ -148,6 +150,9 @@ fn router(_state: Arc<ApiState>) -> Router<Arc<ApiState>> {
         .route(&route("/messages/:user/compact"), post(compact))
         .route(&route("/secrets"), get(secrets).put(update_secrets))
         .route(&route("/decision-probe"), post(decision_probe))
+        .route(&route("/features"), get(features))
+        .route(&route("/features/:owner"), axum::routing::any(feature))
+        .route(&route("/features/:owner/*path"), axum::routing::any(feature))
         .route(&route("/media"), get(media_list))
         .route(
             &route("/media/files"),
@@ -186,6 +191,7 @@ fn required_scope(method: &axum::http::Method, path: &str) -> Option<&'static st
         "secrets" => "secrets",
         "media" => "media",
         "decision-probe" => "agent",
+        "features" => "features",
         "admin" if read => "admin:read",
         "admin" => "admin:write",
         _ => return None,
@@ -570,6 +576,57 @@ async fn update_secrets(Json(req): Json<crate::services::secrets::SecretsUpdate>
         .map_err(admin_fail)
 }
 
+// ── Feature page slots ──────────────────────────────────────────────────
+
+/// Installed feature web services (same descriptors as the built-in
+/// dashboard's extension list): page title, entry asset, API and sockets.
+async fn features(State(s): State<Arc<ApiState>>) -> Json<Value> {
+    let mut descriptors: Vec<_> = s
+        .plugins
+        .web_services()
+        .into_iter()
+        .filter_map(|service| service.web_endpoint().map(|endpoint| endpoint.info.descriptor))
+        .collect();
+    descriptors.sort_by(|a, b| a.id.cmp(&b.id));
+    Json(json!({ "features": descriptors }))
+}
+
+/// `/host/v1/features/<owner>/<service path>`: the service path must be in
+/// the owner's `/api/plugins/<owner>` or `/plugins/<owner>` namespace or a
+/// host-registered alias target. Forwarded as operator over loopback.
+async fn feature(
+    State(s): State<Arc<ApiState>>,
+    Path(params): Path<HashMap<String, String>>,
+    request: Request,
+) -> Response {
+    let owner = params.get("owner").cloned().unwrap_or_default();
+    let path = format!("/{}", params.get("path").map(String::as_str).unwrap_or(""));
+    let path = path.trim_end_matches('/').to_string();
+    let path = if path.is_empty() { "/".to_string() } else { path };
+    if !crate::runtime::web_proxy::safe_path(&path) {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let Some(service) = s
+        .plugins
+        .web_services()
+        .into_iter()
+        .find(|service| service.descriptor().owner == owner)
+    else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let Some(assets) = crate::runtime::web_proxy::target_kind(&service, &path) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if assets && !matches!(*request.method(), axum::http::Method::GET | axum::http::Method::HEAD) {
+        return StatusCode::METHOD_NOT_ALLOWED.into_response();
+    }
+    let query: HashMap<String, String> = axum::extract::Query::try_from_uri(request.uri())
+        .map(|q| q.0)
+        .unwrap_or_default();
+    let is_socket = crate::runtime::web_proxy::is_socket(&service, &path);
+    crate::runtime::web_proxy::forward(&service, &s.http, &path, query, is_socket, request, &s.db).await
+}
+
 // ── Media ───────────────────────────────────────────────────────────────
 
 use crate::services::media;
@@ -841,6 +898,115 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(empty.status(), 400);
+    }
+
+    mod feature_fixture {
+        use crate::runtime::{
+            features::{InvocationContext, NativeService},
+            web::{WebAlias, WebEndpoint},
+        };
+        use praxis_plugin_api::web::{WebDescriptor, WebInfo, WEB_API_VERSION};
+        use serde_json::{json, Value};
+        pub struct Fixture {
+            pub port: u16,
+        }
+        #[async_trait::async_trait]
+        impl NativeService for Fixture {
+            fn web_descriptor(&self) -> Option<WebDescriptor> {
+                let mut descriptor = WebDescriptor::for_package("vm", "Fixture");
+                descriptor.websockets.push("/api/plugins/vm/vnc/ws".into());
+                Some(descriptor)
+            }
+            fn web_endpoint(&self) -> Option<WebEndpoint> {
+                Some(WebEndpoint::new(
+                    WebInfo { version: WEB_API_VERSION, port: self.port, descriptor: self.web_descriptor().unwrap() },
+                    "private-host-fixture".into(),
+                ))
+            }
+            fn web_aliases(&self) -> Vec<WebAlias> {
+                vec![WebAlias::api("/api/vm/activity", "/api/tool-activity")]
+            }
+            async fn invoke(&self, _: InvocationContext, _: &str, _: Value) -> anyhow::Result<Value> {
+                Ok(json!({}))
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn feature_slots_reach_only_the_owners_namespace_as_operator() {
+        use futures_util::{SinkExt, StreamExt};
+        use praxis_plugin_api::web::{PRINCIPAL_HEADER, PRIVATE_HEADER};
+        let backend = axum::Router::new()
+            .route("/api/plugins/vm/guests", axum::routing::any(|request: axum::extract::Request| async move {
+                Json(json!({
+                    "private": request.headers().get(PRIVATE_HEADER).and_then(|v| v.to_str().ok()),
+                    "principal": request.headers().get(PRINCIPAL_HEADER).and_then(|v| v.to_str().ok()),
+                    "authorization": request.headers().get("authorization").is_some(),
+                    "query": request.uri().query(),
+                }))
+            }))
+            .route("/plugins/vm/index.html", get(|| async { "vm-page" }))
+            .route("/api/plugins/vm/vnc/ws", get(|ws: axum::extract::ws::WebSocketUpgrade| async {
+                ws.on_upgrade(|mut socket| async move {
+                    while let Some(Ok(message)) = socket.recv().await {
+                        if socket.send(message).await.is_err() { break; }
+                    }
+                })
+            }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let worker = tokio::spawn(async move { axum::serve(listener, backend).await.unwrap() });
+        let mut plugins = crate::plugins::PluginRegistry::new();
+        plugins
+            .try_register(serde_json::from_str(include_str!("../plugins/vm/plugin.json")).unwrap())
+            .unwrap();
+        plugins
+            .register_service("vm", "vm", 1, crate::runtime::vm::TOOL_NAMES, Arc::new(feature_fixture::Fixture { port }))
+            .unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let db = crate::db::Database::new(dir.path()).unwrap();
+        let api = HostApi::start(db, Arc::new(plugins), "d", &["features".into()], 3537).await.unwrap();
+        let grant = api.grant().clone();
+        let http = reqwest::Client::new();
+        let url = |p: &str| format!("{}{HOST_API_PREFIX}{p}", grant.url);
+        let list: Value = http.get(url("/features")).bearer_auth(&grant.token).send().await.unwrap().json().await.unwrap();
+        assert_eq!(list["features"][0]["id"], "vm", "{list}");
+        let forwarded: Value = http
+            .get(url("/features/vm/api/plugins/vm/guests?limit=2"))
+            .bearer_auth(&grant.token)
+            .header(PRIVATE_HEADER, "forged")
+            .send().await.unwrap().json().await.unwrap();
+        assert_eq!(forwarded["private"], "private-host-fixture");
+        assert_eq!(forwarded["principal"], "operator");
+        assert_eq!(forwarded["authorization"], false);
+        assert_eq!(forwarded["query"], "limit=2");
+        let page = http.get(url("/features/vm/plugins/vm/index.html")).bearer_auth(&grant.token).send().await.unwrap();
+        assert_eq!(page.text().await.unwrap(), "vm-page");
+        let asset_write = http.post(url("/features/vm/plugins/vm/index.html")).bearer_auth(&grant.token).send().await.unwrap();
+        assert_eq!(asset_write.status(), 405);
+        // Host-owned alias target (VM activity) is served by the host.
+        let activity: Value = http.get(url("/features/vm/api/tool-activity")).bearer_auth(&grant.token).send().await.unwrap().json().await.unwrap();
+        assert_eq!(activity["activities"], json!([]));
+        for path in [
+            "/features/vm/api/plugins/other",
+            "/features/vm/api/sessions",
+            "/features/vm/api/plugins/vm/..%2F..%2Fsecrets",
+            "/features/nope/api/plugins/nope",
+        ] {
+            let status = http.get(url(path)).bearer_auth(&grant.token).send().await.unwrap().status();
+            assert!(status == 404 || status == 400, "{path}: {status}");
+        }
+        // WebSocket upgrade with the package token header (never a query token).
+        use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+        let mut request = url("/features/vm/api/plugins/vm/vnc/ws").replacen("http:", "ws:", 1).into_client_request().unwrap();
+        request.headers_mut().insert("authorization", format!("Bearer {}", grant.token).parse().unwrap());
+        let (mut socket, _) = tokio_tungstenite::connect_async(request).await.unwrap();
+        socket.send(tokio_tungstenite::tungstenite::Message::Text("ping".into())).await.unwrap();
+        let echoed = socket.next().await.unwrap().unwrap();
+        assert_eq!(echoed.into_text().unwrap(), "ping");
+        let unauthenticated = url("/features/vm/api/plugins/vm/vnc/ws").replacen("http:", "ws:", 1);
+        assert!(tokio_tungstenite::connect_async(format!("{unauthenticated}?token={}", grant.token)).await.is_err());
+        worker.abort();
     }
 
     #[tokio::test]

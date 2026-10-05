@@ -794,27 +794,7 @@ pub(crate) async fn tool_activity(
     State(state): State<Arc<DashboardState>>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let conn = state.db.conn();
-    let limit = params.get("limit").and_then(|v| v.parse::<i64>().ok()).unwrap_or(50).clamp(1, 500);
-    let mut stmt = conn
-        .prepare("SELECT vm_id, action, input, output, created_at FROM vm_activity_log ORDER BY id DESC LIMIT ?1")
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let activities: Vec<serde_json::Value> = stmt
-        .query_map([limit], |row| {
-            Ok(serde_json::json!({
-                "vm_id": row.get::<_, String>(0)?,
-                "action": row.get::<_, String>(1)?,
-                "input": row.get::<_, Option<String>>(2)?,
-                "output": row.get::<_, Option<String>>(3)?,
-                "created_at": row.get::<_, Option<String>>(4)?,
-            }))
-        })
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap_or_default();
-
-    Ok(Json(serde_json::json!({ "activities": activities })))
+    Ok(Json(crate::runtime::web_proxy::activity(&state.db, &params)))
 }
 
 #[derive(Deserialize)]

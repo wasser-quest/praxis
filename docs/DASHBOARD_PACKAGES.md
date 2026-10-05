@@ -89,6 +89,26 @@ route requires a scope; undeclared scopes return 403.
 | `GET /media/screenshots/vm/:guest/screenshots/:file` | `media` |
 | `GET /media/audio/:user/:message_id`, `POST /media/stt/:user` (raw audio, 25 MB) | `media` |
 | `POST /decision-probe` `{profile, contexts}` (classification only, spends inference) | `agent` |
+| `GET /features` (installed feature pages: id, title, entry, API, sockets) | `features` |
+| `ANY /features/:owner/<service path>` (HTTP and WebSocket) | `features` |
+
+### Feature page slots
+
+Feature packages such as VM declare a web descriptor (page title, entry asset,
+API prefix, WebSocket paths). A dashboard package lists them with
+`GET /features` and reaches them through
+`/host/v1/features/<owner>/<service path>`, for example
+`/host/v1/features/vm/plugins/vm/index.html` (assets, GET/HEAD only),
+`/host/v1/features/vm/api/plugins/vm/guests` (API) or
+`/host/v1/features/vm/api/plugins/vm/vnc/ws` (noVNC WebSocket). Only the
+owner's `/api/plugins/<owner>` and `/plugins/<owner>` namespaces and
+host-registered alias targets are reachable. The host forwards over loopback
+with the service's private key and the operator principal, strips the
+package's credentials, and applies the same 2 MB/300 s limits as the built-in
+dashboard. WebSockets authenticate with the `Authorization` header only (no
+query tokens), so a package proxies sockets from its own backend and never
+hands the Host API token to a browser. The built-in dashboard's extension
+routes use the same transport (`runtime::web_proxy`).
 
 Media names are a single `[A-Za-z0-9._:@+-]` component (uploads are
 sanitized to that); screenshots are served only from
@@ -98,6 +118,26 @@ sanitized to that); screenshots are served only from
 | `GET /media/screenshots/vm/:guest/screenshots/:file` | `media` |
 | `GET /media/audio/:user/:message_id`, `POST /media/stt/:user` (raw audio, 25 MB) | `media` |
 | `POST /decision-probe` `{profile, contexts}` (classification only, spends inference) | `agent` |
+| `GET /features` (installed feature pages: id, title, entry, API, sockets) | `features` |
+| `ANY /features/:owner/<service path>` (HTTP and WebSocket) | `features` |
+
+### Feature page slots
+
+Feature packages such as VM declare a web descriptor (page title, entry asset,
+API prefix, WebSocket paths). A dashboard package lists them with
+`GET /features` and reaches them through
+`/host/v1/features/<owner>/<service path>`, for example
+`/host/v1/features/vm/plugins/vm/index.html` (assets, GET/HEAD only),
+`/host/v1/features/vm/api/plugins/vm/guests` (API) or
+`/host/v1/features/vm/api/plugins/vm/vnc/ws` (noVNC WebSocket). Only the
+owner's `/api/plugins/<owner>` and `/plugins/<owner>` namespaces and
+host-registered alias targets are reachable. The host forwards over loopback
+with the service's private key and the operator principal, strips the
+package's credentials, and applies the same 2 MB/300 s limits as the built-in
+dashboard. WebSockets authenticate with the `Authorization` header only (no
+query tokens), so a package proxies sockets from its own backend and never
+hands the Host API token to a browser. The built-in dashboard's extension
+routes use the same transport (`runtime::web_proxy`).
 
 Media names are a single `[A-Za-z0-9._:@+-]` component (uploads are
 sanitized to that); screenshots are served only from
@@ -130,7 +170,7 @@ the Host API grants, but they are not an OS sandbox.
 
 ## Not yet in v1
 
-Feature page slots (e.g. the VM page and its noVNC console) are still only
-reachable through the built-in dashboard's extension proxy. Provider setup
+Everything the built-in dashboard does is now reachable through Host API v1.
+Next: ship the built-in dashboard itself as a package on top of it. Provider setup
 stays on the gateway client API (`/v1/...`). They move into services and
 Host API scopes next; the built-in dashboard then becomes a package itself.

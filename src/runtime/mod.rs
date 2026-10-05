@@ -7,6 +7,7 @@ pub mod services;
 pub mod templates;
 pub mod vm;
 pub mod web;
+pub mod web_proxy;
 
 #[cfg(test)]
 mod vm_tests;

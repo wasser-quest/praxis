@@ -32,6 +32,9 @@ pub const SCOPES: &[&str] = &[
     "secrets",
     // Uploads, avatars, VM screenshots, message audio and speech-to-text.
     "media",
+    // Feature page slots: list installed feature web services and reach their
+    // API/asset/WebSocket endpoints (e.g. the VM page and noVNC) as operator.
+    "features",
 ];
 
 pub fn valid_scope(scope: &str) -> bool {
