@@ -133,7 +133,9 @@ once those packages are extracted. `praxis install-preset compatibility`
 continues to install the shipped assets and binary packages in the meantime.
 The preset runs each package's hook under the configured policy; the lockfile
 (`praxis.lock.json`) lands with manifest v2 (PR 8b). A minimal preset is the
-kernel plus one runtime engine and `file_ops`.
+kernel plus one runtime engine and `file_ops`. The separate
+[`xis` setup/package manager](../docs/XIS_PACKAGE_MANAGER.md) is the future
+front end for whole-setup installs from self-hosted repositories.
 
 `praxis.lock.json` pins id/version/source/manifest hash/script hashes/enabled
 state. Startup loads exactly the lock; upgrades stage a new revision and keep

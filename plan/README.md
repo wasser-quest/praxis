@@ -64,6 +64,12 @@ optional workflow packs add assets rather than replacing the core interpreter.
   Progress: `praxis-tui` now exists as a standalone executable and the `tui`
   frontend package (`packages/tui`, `scripts/install-tui-package.sh`), pending
   the crate extraction so the kernel does not link it.
+- [ ] Future: **`xis`**, a separate setup/package manager executable that
+  installs whole setups (plugins, skills, templates, state machines, config
+  profiles) from self-hosted repositories, with keep/backup/overwrite policy
+  and a MOTD of required changes. Not part of the kernel; talks to Praxis over
+  its CLI and documented files. See
+  [the xis design](../docs/XIS_PACKAGE_MANAGER.md).
 
 These are ordered reviewable milestones, not time estimates. Each milestone
 includes migration and acceptance checks in the full roadmap. VM is the first
