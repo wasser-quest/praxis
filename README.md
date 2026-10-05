@@ -634,7 +634,8 @@ The dashboard can list/edit/create `.sm` files and still read legacy `.cl`. See 
 The [pluginization roadmap](plan/PLUGINIZATION.md) starts with VM support and
 the full dashboard, then moves the remaining tools, providers and workflows
 into optional packages. Its target is a small runtime with three builtin
-`file_ops` tools. See the [delivery checklist](plan/README.md) and
+`file_ops` tools. See the [delivery checklist](plan/README.md),
+[the pluginization handoff](docs/PLUGINIZATION_HANDOFF.md) and
 [architecture overview](docs/PLUGIN_FIRST_PLAN.md). Current plugins install
 tools and native service bindings. The VM engine now lives in an optional Rust
 package and an independently installed worker. The legacy `read_file`/`edit_file`
