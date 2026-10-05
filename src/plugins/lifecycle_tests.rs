@@ -497,3 +497,47 @@ async fn verify_reports_ok_changed_and_missing() {
     let report = lifecycle::verify(&plugins).unwrap();
     assert_eq!(report.unlocked, vec!["stray"]);
 }
+
+#[tokio::test]
+async fn uninstall_purge_removes_scoped_data_without_a_hook() {
+    let root = tempfile::tempdir().unwrap();
+    let plugins = root.path().join("plugins");
+    let data = root.path().join("data");
+    let source = root.path().join("source");
+    write_plugin(&source, None, None);
+    lifecycle::install(&install_req(&source, &plugins, &data, true))
+        .await
+        .unwrap();
+    std::fs::create_dir_all(data.join("hooked")).unwrap();
+    std::fs::write(data.join("hooked/state"), "x").unwrap();
+    // Without --purge the convention data directory survives.
+    lifecycle::uninstall(&UninstallRequest {
+        name: "hooked",
+        plugins_dir: &plugins,
+        data_dir: &data,
+        run_hooks: false,
+        force: false,
+        purge: false,
+        dry_run: false,
+    })
+    .await
+    .unwrap();
+    assert!(data.join("hooked/state").is_file());
+
+    // Reinstall, then --purge removes it.
+    lifecycle::install(&install_req(&source, &plugins, &data, true))
+        .await
+        .unwrap();
+    lifecycle::uninstall(&UninstallRequest {
+        name: "hooked",
+        plugins_dir: &plugins,
+        data_dir: &data,
+        run_hooks: false,
+        force: false,
+        purge: true,
+        dry_run: false,
+    })
+    .await
+    .unwrap();
+    assert!(!data.join("hooked").exists());
+}

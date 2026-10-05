@@ -819,6 +819,14 @@ pub async fn uninstall(request: &UninstallRequest<'_>) -> anyhow::Result<Uninsta
     }
 
     std::fs::remove_dir_all(&plugin_dir)?;
+    if request.purge {
+        // Convention fallback for plugins that do not implement --purge in their
+        // uninstall hook: remove DATA_DIR/<id>. Explicit operator opt-in only.
+        let scoped = request.data_dir.join(request.name);
+        if scoped.is_dir() {
+            let _ = std::fs::remove_dir_all(&scoped);
+        }
+    }
     let mut records = load_records(request.plugins_dir)?;
     records.remove(request.name);
     save_records(request.plugins_dir, &records)?;
