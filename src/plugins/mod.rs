@@ -68,6 +68,86 @@ impl PluginRequires {
     }
 }
 
+fn valid_provides_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 128
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"_-./".contains(&b))
+        && !name.starts_with('/')
+        && !name.ends_with('/')
+        && !name.split('/').any(|part| part.is_empty() || part == "." || part == "..")
+}
+
+/// Manifest v2 contributions. Tools keep their own owner check; routes, UI
+/// slots, assets and migration ids are declared namespaces with one enabled
+/// owner each. Later phases load these declarations; today they are validated
+/// and pinned in the registry revision.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ProvidesDeclaration {
+    /// External tool schema file relative to the package. When set, inline
+    /// `tools` must be empty.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tools: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub routes: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ui: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub assets: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub migrations: Vec<String>,
+}
+
+impl ProvidesDeclaration {
+    pub fn is_empty(&self) -> bool {
+        self.tools.is_none()
+            && self.routes.is_empty()
+            && self.ui.is_empty()
+            && self.assets.is_empty()
+            && self.migrations.is_empty()
+    }
+
+    /// Non-tool ownership claims.
+    pub fn claims(&self) -> impl Iterator<Item = (&'static str, &str)> {
+        self.routes
+            .iter()
+            .map(|value| ("route", value.as_str()))
+            .chain(self.ui.iter().map(|value| ("ui", value.as_str())))
+            .chain(self.assets.iter().map(|value| ("asset", value.as_str())))
+            .chain(self.migrations.iter().map(|value| ("migration", value.as_str())))
+    }
+
+    pub fn validate(&self) -> anyhow::Result<()> {
+        for (kind, name) in self.claims() {
+            anyhow::ensure!(valid_provides_name(name), "Invalid {kind} name '{name}'");
+        }
+        if let Some(tools) = &self.tools {
+            let path = Path::new(tools);
+            anyhow::ensure!(
+                path.is_relative()
+                    && path
+                        .components()
+                        .all(|c| matches!(c, std::path::Component::Normal(_))),
+                "Tools file must be a path inside its package"
+            );
+        }
+        for (kind, values) in [
+            ("route", &self.routes),
+            ("ui", &self.ui),
+            ("asset", &self.assets),
+            ("migration", &self.migrations),
+        ] {
+            let mut seen = std::collections::HashSet::new();
+            for value in values {
+                anyhow::ensure!(seen.insert(value), "Duplicate {kind} '{value}'");
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Plugin {
     pub name: String,
@@ -94,6 +174,9 @@ pub struct Plugin {
     /// Optional frontend executable contributed by the package.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub frontend: Option<FrontendDeclaration>,
+    /// Manifest v2 declared contributions (routes, UI, assets, migrations).
+    #[serde(default, skip_serializing_if = "ProvidesDeclaration::is_empty")]
+    pub provides: ProvidesDeclaration,
 }
 
 fn default_true() -> bool {
@@ -679,6 +762,8 @@ struct PluginManifest {
     requires: PluginRequires,
     #[serde(default)]
     frontend: Option<FrontendDeclaration>,
+    #[serde(default)]
+    provides: ProvidesDeclaration,
 }
 
 pub fn load_plugins_from_dir(dir: &Path) -> anyhow::Result<Vec<Plugin>> {
@@ -726,9 +811,35 @@ pub fn load_plugins_from_dir(dir: &Path) -> anyhow::Result<Vec<Plugin>> {
 fn load_plugin_from_manifest(manifest_path: &Path, plugin_dir: &Path) -> anyhow::Result<Plugin> {
     let data = std::fs::read_to_string(manifest_path)?;
     let manifest: PluginManifest = serde_json::from_str(&data)?;
+    manifest.provides.validate()?;
 
-    let tools = manifest
-        .tools
+    // Tools are declared inline or in an external file named by provides.tools.
+    let declared_tools = match &manifest.provides.tools {
+        Some(file) => {
+            anyhow::ensure!(
+                manifest.tools.is_empty(),
+                "Manifest cannot declare both inline tools and provides.tools"
+            );
+            let root = plugin_dir.canonicalize()?;
+            let relative = Path::new(file);
+            anyhow::ensure!(
+                relative.is_relative()
+                    && relative
+                        .components()
+                        .all(|c| matches!(c, std::path::Component::Normal(_))),
+                "Tools file must be a path inside its package"
+            );
+            let resolved = root.join(relative).canonicalize()?;
+            anyhow::ensure!(
+                resolved.starts_with(&root) && resolved.is_file(),
+                "Tools file escapes its package or is not a regular file"
+            );
+            serde_json::from_slice::<Vec<PluginTool>>(&std::fs::read(&resolved)?)?
+        }
+        None => manifest.tools,
+    };
+
+    let tools = declared_tools
         .into_iter()
         .map(|mut tool| {
             contracts::validate_tool(&manifest.name, &tool)?;
@@ -785,6 +896,7 @@ fn load_plugin_from_manifest(manifest_path: &Path, plugin_dir: &Path) -> anyhow:
         hooks: validate_hooks(plugin_dir, manifest.hooks)?,
         requires: manifest.requires,
         frontend: validate_frontend(plugin_dir, manifest.frontend)?,
+        provides: manifest.provides,
     })
 }
 
@@ -846,6 +958,13 @@ pub fn register_builtin_plugins(_registry: &mut PluginRegistry) {
     // No built-in plugins — install plugins via the plugins/ directory
 }
 
+/// Load and validate an installed package directory, including an external
+/// `provides.tools` file. Used by management commands that need the real tool
+/// set rather than the raw manifest.
+pub fn load_installed_plugin(plugin_dir: &Path) -> anyhow::Result<Plugin> {
+    load_plugin_from_manifest(&plugin_dir.join("plugin.json"), plugin_dir)
+}
+
 pub fn load_all_plugins(plugins_dir: &Path) -> PluginRegistry {
     let mut registry = PluginRegistry::new();
 
@@ -886,6 +1005,7 @@ mod plugin_tests {
             hooks: Default::default(),
             requires: Default::default(),
             frontend: None,
+            provides: Default::default(),
         });
         assert!(registry.get("test").is_some());
         assert_eq!(registry.list().len(), 1);
@@ -933,6 +1053,7 @@ mod plugin_tests {
             hooks: Default::default(),
             requires: Default::default(),
             frontend: None,
+            provides: Default::default(),
         });
         assert_eq!(registry.enabled_tools().len(), 1);
     }
@@ -960,6 +1081,7 @@ mod plugin_tests {
             hooks: Default::default(),
             requires: Default::default(),
             frontend: None,
+            provides: Default::default(),
         });
         assert_eq!(registry.enabled_tools().len(), 0);
     }
@@ -1106,6 +1228,7 @@ mod plugin_tests {
             hooks: Default::default(),
             requires: Default::default(),
             frontend: None,
+            provides: Default::default(),
         });
         assert!(registry.context_defaults().is_empty());
     }
@@ -1125,6 +1248,7 @@ mod plugin_tests {
             hooks: Default::default(),
             requires: Default::default(),
             frontend: None,
+            provides: Default::default(),
         });
         let sec = registry.collect_secrets();
         assert_eq!(sec.len(), 2);
@@ -1155,5 +1279,89 @@ mod plugin_tests {
         bad["frontend"]["executable"] = serde_json::json!("../run");
         std::fs::write(plugin_dir.join("plugin.json"), bad.to_string()).unwrap();
         assert!(load_plugin_from_manifest(&plugin_dir.join("plugin.json"), &plugin_dir).is_err());
+    }
+
+    #[test]
+    fn loader_reads_external_tools_file_and_rejects_escapes() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugin_dir = dir.path().join("ext");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+        std::fs::write(plugin_dir.join("echo.sh"), "printf ok\n").unwrap();
+        std::fs::write(
+            plugin_dir.join("tools.json"),
+            serde_json::json!([{
+                "name": "ext_echo",
+                "description": "x",
+                "parameters": {"type": "object"},
+                "handler": {"type": "script", "path": "echo.sh", "interpreter": "sh"}
+            }])
+            .to_string(),
+        )
+        .unwrap();
+        let manifest = serde_json::json!({
+            "name": "ext", "description": "x", "version": "1",
+            "provides": {"tools": "tools.json", "routes": ["ext"], "ui": ["ext.panel"], "assets": ["ext/a"], "migrations": ["ext_1"]},
+            "tools": []
+        });
+        std::fs::write(plugin_dir.join("plugin.json"), manifest.to_string()).unwrap();
+        let plugin =
+            load_plugin_from_manifest(&plugin_dir.join("plugin.json"), &plugin_dir).unwrap();
+        assert_eq!(plugin.tools.len(), 1);
+        assert_eq!(plugin.tools[0].name, "ext_echo");
+        assert!(matches!(&plugin.tools[0].handler, PluginHandler::Script { path, interpreter } if path.ends_with("echo.sh") && interpreter == "sh"));
+        assert_eq!(plugin.provides.routes, vec!["ext"]);
+        assert_eq!(plugin.provides.migrations, vec!["ext_1"]);
+
+        // A tools file that escapes the package is rejected.
+        let mut bad = manifest.clone();
+        bad["provides"]["tools"] = serde_json::json!("../tools.json");
+        std::fs::write(plugin_dir.join("plugin.json"), bad.to_string()).unwrap();
+        assert!(load_plugin_from_manifest(&plugin_dir.join("plugin.json"), &plugin_dir).is_err());
+
+        // Inline and external tools cannot both be declared.
+        let mut bad = manifest.clone();
+        bad["tools"] = serde_json::json!([{
+            "name": "x", "description": "x", "parameters": {"type": "object"},
+            "handler": {"type": "builtin", "name": "x"}
+        }]);
+        std::fs::write(plugin_dir.join("plugin.json"), bad.to_string()).unwrap();
+        assert!(load_plugin_from_manifest(&plugin_dir.join("plugin.json"), &plugin_dir).is_err());
+    }
+
+    #[test]
+    fn duplicate_provides_claims_are_rejected_atomically() {
+        let fixture = |owner: &str, route: &str| -> Plugin {
+            serde_json::from_value(serde_json::json!({
+                "name": owner, "description": "x", "version": "1",
+                "provides": {"routes": [route]},
+                "tools": []
+            }))
+            .unwrap()
+        };
+        let mut registry = PluginRegistry::new();
+        registry.try_register(fixture("one", "api")).unwrap();
+        assert!(registry.try_register(fixture("two", "api")).is_err());
+        assert_eq!(registry.list().len(), 1);
+        // A second, non-conflicting claim is accepted.
+        registry.try_register(fixture("three", "other")).unwrap();
+        assert_eq!(registry.list().len(), 2);
+    }
+
+    #[test]
+    fn invalid_provides_names_are_rejected() {
+        let plugin: Plugin = serde_json::from_value(serde_json::json!({
+            "name": "bad", "description": "x", "version": "1",
+            "provides": {"routes": ["../escape"]},
+            "tools": []
+        }))
+        .unwrap();
+        assert!(plugin.provides.validate().is_err());
+        let plugin: Plugin = serde_json::from_value(serde_json::json!({
+            "name": "dup", "description": "x", "version": "1",
+            "provides": {"ui": ["a", "a"]},
+            "tools": []
+        }))
+        .unwrap();
+        assert!(plugin.provides.validate().is_err());
     }
 }

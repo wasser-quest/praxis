@@ -1,0 +1,14 @@
+{
+  "name": "file_tools",
+  "description": "Example package whose tools are declared in an external tools.json and that declares v2 route/UI/asset/migration namespaces",
+  "version": "0.1.0",
+  "enabled": true,
+  "provides": {
+    "tools": "tools.json",
+    "routes": ["file_tools"],
+    "ui": ["file_tools.panel"],
+    "assets": ["file_tools/readme.md"],
+    "migrations": ["file_tools_0001"]
+  },
+  "tools": []
+}

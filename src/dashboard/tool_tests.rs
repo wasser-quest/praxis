@@ -95,6 +95,7 @@ fn backend_tool_toggle_builtin_ownership_is_preserved() {
         hooks: Default::default(),
         requires: Default::default(),
         frontend: None,
+        provides: Default::default(),
     }).is_err());
     assert!(plugins.list().is_empty());
     for enabled in [false, true] {

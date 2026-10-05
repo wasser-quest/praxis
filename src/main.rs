@@ -1107,37 +1107,43 @@ async fn handle_plugin_action(action: &PluginAction) -> anyhow::Result<()> {
                 if !manifest.exists() {
                     continue;
                 }
-                match std::fs::read_to_string(&manifest) {
-                    Ok(data) => match serde_json::from_str::<praxis::plugins::Plugin>(&data) {
-                        Ok(plugin) => {
-                            let status = if plugin.enabled {
-                                "enabled"
-                            } else {
-                                "disabled"
-                            };
+                match praxis::plugins::load_installed_plugin(&dir) {
+                    Ok(plugin) => {
+                        let status = if plugin.enabled {
+                            "enabled"
+                        } else {
+                            "disabled"
+                        };
+                        println!(
+                            "  {} v{} [{}] — {} tool(s), {} secret(s)",
+                            plugin.name,
+                            plugin.version,
+                            status,
+                            plugin.tools.len(),
+                            plugin.secrets.len()
+                        );
+                        if let Some(frontend) = &plugin.frontend {
                             println!(
-                                "  {} v{} [{}] — {} tool(s), {} secret(s)",
-                                plugin.name,
-                                plugin.version,
-                                status,
-                                plugin.tools.len(),
-                                plugin.secrets.len()
+                                "      frontend: {} {}",
+                                frontend.executable,
+                                frontend.args.join(" ")
                             );
-                            if let Some(frontend) = &plugin.frontend {
-                                println!(
-                                    "      frontend: {} {}",
-                                    frontend.executable,
-                                    frontend.args.join(" ")
-                                );
-                            }
-                            found = true;
                         }
-                        Err(e) => {
-                            println!("  {} — invalid manifest: {}", dir.display(), e);
-                            found = true;
+                        if !plugin.provides.is_empty() {
+                            println!(
+                                "      provides: routes={} ui={} assets={} migrations={}",
+                                plugin.provides.routes.len(),
+                                plugin.provides.ui.len(),
+                                plugin.provides.assets.len(),
+                                plugin.provides.migrations.len()
+                            );
                         }
-                    },
-                    Err(_) => continue,
+                        found = true;
+                    }
+                    Err(e) => {
+                        println!("  {} — invalid manifest: {}", dir.display(), e);
+                        found = true;
+                    }
                 }
             }
             if !found {

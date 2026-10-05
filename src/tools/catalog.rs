@@ -5,7 +5,10 @@ use crate::{
     gateway::llm::provider::ToolDefinition,
     plugins::{Plugin, PluginRegistry, PluginTool},
 };
-use std::{collections::HashSet, sync::LazyLock};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::LazyLock,
+};
 
 static BUILTINS: LazyLock<HashSet<String>> = LazyLock::new(|| {
     crate::db::tools::get_default_tools()
@@ -101,6 +104,19 @@ pub(crate) fn validate(plugins: &PluginRegistry) -> anyhow::Result<()> {
     names.dedup();
     for name in names {
         owner(plugins, name)?;
+    }
+    // Manifest v2 contributions: one enabled owner per declared namespace.
+    let mut claims: HashMap<(&'static str, &str), String> = HashMap::new();
+    for plugin in plugins.list().into_iter().filter(|plugin| plugin.enabled) {
+        plugin.provides.validate()?;
+        for (kind, name) in plugin.provides.claims() {
+            if let Some(owner) = claims.insert((kind, name), plugin.name.clone()) {
+                anyhow::bail!(
+                    "Package owner_conflict: {kind} '{name}' is claimed by '{owner}' and '{}'",
+                    plugin.name
+                );
+            }
+        }
     }
     Ok(())
 }
