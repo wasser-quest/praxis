@@ -98,7 +98,9 @@ registry revision. A changed uninstall script or mismatched hook hash requires
 
 A preset is a signed list of plugin ids, versions, sources, enabled flags,
 secret prompts and the hook policy. `praxis plugin install-default` installs the
-bundled example set now; the full `--install-default` standard set (runtime
+bundled example set now, resolving `requires.plugins` among preset entries in
+dependency order and reporting cycles instead of guessing; the full
+`--install-default` standard set (runtime
 engine, `file_ops`, `runtime_control`, providers, memory, RAG, cron, skills,
 shell, vision, dashboard, `praxis-tui`, and opt-in VM and legacy assets) lands
 once those packages are extracted. `praxis install-preset compatibility`
