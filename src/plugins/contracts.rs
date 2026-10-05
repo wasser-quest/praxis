@@ -80,6 +80,9 @@ pub struct ActionReceipt {
     pub outcome: &'static str,
     pub failure: Option<&'static str>,
     pub verified: bool,
+    /// The package that defined the check policy, as `<id>@<version>`. The
+    /// kernel ran the checks and observed their exit codes and resources.
+    pub verified_by: String,
     pub compensation_attempted: bool,
     pub compensation_verified: bool,
     pub conditions: Vec<ConditionReceipt>,
@@ -603,6 +606,7 @@ pub(crate) fn start_receipt(
         outcome: "precondition_failed",
         failure: None,
         verified: false,
+        verified_by: format!("{}@{}", plugin.name, plugin.version),
         compensation_attempted: false,
         compensation_verified: false,
         conditions: Vec::new(),

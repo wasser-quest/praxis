@@ -53,8 +53,10 @@ optional workflow packs add assets rather than replacing the core interpreter.
   receipts, replaceable runtime engine interface).
   Progress: the `role` declaration and the operator trust store
   (`praxis plugin trust`, `DATA_DIR/plugin_trust.json`) are implemented; a
-  package requesting more than its grant is not activated. The evidence
-  observer, receipt signing and replaceable engine interface remain.
+  package requesting more than its grant is not activated. Receipts now record
+  `verified_by` ("kernel" for native checks, `<package>@<version>` for
+  contracted actions) while the kernel observes the evidence. Receipt signing
+  and the replaceable engine interface remain.
 - [ ] PR 8d: extract the remaining packages and ship the `--install-default` and
   minimal presets; make the TUI a separate `praxis-tui` frontend plugin.
   Progress: `praxis-tui` now exists as a standalone executable and the `tui`

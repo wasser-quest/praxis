@@ -85,6 +85,9 @@ pub struct ExecutionReceipt {
     pub outcome: Outcome,
     pub exit_code: Option<i32>,
     pub verified: bool,
+    /// Who defined the check policy. The kernel always observed the exit code,
+    /// timeout and resource bytes; `kernel` is the built-in `run_check`.
+    pub verified_by: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resources: Option<ResourceSnapshot>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -324,6 +327,7 @@ impl VerificationState {
                             .map(|contract| evidence.current(contract, root))
                     })
                     .unwrap_or(false),
+            verified_by: "kernel".into(),
             resources: evidence.resources,
             workspace_revision: evidence.workspace_revision,
         };

@@ -542,6 +542,7 @@ pub async fn run(user: &str, call: &str, args: &serde_json::Value) -> anyhow::Re
                     outcome,
                     exit_code: code,
                     verified: false,
+                    verified_by: "kernel".into(),
                     resources: evidence.resources,
                     workspace_revision: evidence.workspace_revision,
                 });
