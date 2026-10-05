@@ -12,6 +12,7 @@ pub fn create_plugin() -> Plugin {
         hooks: Default::default(),
         requires: Default::default(),
         frontend: None,
+        provides: Default::default(),
         tools: vec![
             PluginTool {
                 name: "image_generate".to_string(),

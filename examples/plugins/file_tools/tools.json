@@ -1,0 +1,8 @@
+[
+  {
+    "name": "file_tools_echo",
+    "description": "Echo JSON arguments (external tools.json example)",
+    "parameters": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]},
+    "handler": {"type": "script", "path": "echo.sh", "interpreter": "sh"}
+  }
+]

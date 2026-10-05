@@ -836,6 +836,7 @@ pub async fn uninstall(request: &UninstallRequest<'_>) -> anyhow::Result<Uninsta
 /// reported, not fatal.
 pub const DEFAULT_PRESET_PLUGINS: &[&str] = &[
     "examples/plugins/hooks_demo",
+    "examples/plugins/file_tools",
     "examples/tool-packages/allowlist_shell",
 ];
 

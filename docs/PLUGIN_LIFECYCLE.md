@@ -129,6 +129,33 @@ A manifest may declare `requires`:
   a dependency change invalidates prior task receipts. The lockfile
   (`praxis.lock.json`) records installed revisions.
 
+## Declarative contributions (manifest v2)
+
+A manifest may declare `provides` instead of (or beside) inline tools:
+
+```json
+"provides": {
+  "tools": "tools.json",
+  "routes": ["file_tools"],
+  "ui": ["file_tools.panel"],
+  "assets": ["file_tools/readme.md"],
+  "migrations": ["file_tools_0001"]
+}
+```
+
+* `tools` names an external `tools.json` inside the package. Inline `tools`
+  must then be empty; the loader resolves handler paths exactly as for inline
+  tools. This is the “everything is a file” form.
+* `routes`, `ui`, `assets` and `migrations` are declared namespaces with **one
+  enabled owner each**; a duplicate claim is rejected atomically at activation
+  with `owner_conflict`. Names must be package-relative and cannot escape.
+* The whole `provides` declaration is part of the registry revision, so a
+  change invalidates task receipts.
+* Route/UI/asset/migration *loading* is the next phase; today the declarations
+  establish ownership and are reported by `praxis plugin list`.
+
+See `examples/plugins/file_tools` for a working external-`tools.json` package.
+
 ## Frontends
 
 `praxis-tui` and the dashboard are ordinary frontend plugins. They talk to the

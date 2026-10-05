@@ -44,8 +44,11 @@ optional workflow packs add assets rather than replacing the core interpreter.
   ownership across tools/routes/UI/assets, immutable revision, rollback).
   Progress: `requires.plugins`/`requires.commands` preflight and uninstall
   dependent protection are implemented, `PLUGINS_DIR/praxis.lock.json` records
-  manifest/hook hashes with `praxis plugin verify` reporting drift, and
-  `install-default` resolves preset dependencies in order with cycle detection.
+  manifest/hook hashes with `praxis plugin verify` reporting drift,
+  `install-default` resolves preset dependencies in order with cycle detection,
+  and `provides` now declares an external `tools.json` plus route/UI/asset/
+  migration namespaces with one-owner checks. Loading routes/UI/assets and
+  executing migrations remain.
 - [ ] PR 8c: kernel interfaces (trust levels, evidence observer and signed
   receipts, replaceable runtime engine interface).
 - [ ] PR 8d: extract the remaining packages and ship the `--install-default` and

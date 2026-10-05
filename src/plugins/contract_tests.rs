@@ -34,6 +34,7 @@ fn fixture(handler: &str) -> (tempfile::TempDir, PluginRegistry) {
         hooks: Default::default(),
         requires: Default::default(),
         frontend: None,
+        provides: Default::default(),
     });
     (dir, registry)
 }
