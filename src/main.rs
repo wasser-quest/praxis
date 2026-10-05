@@ -868,6 +868,9 @@ async fn handle_plugin_action(action: &PluginAction) -> anyhow::Result<()> {
     let plugins_path = Path::new(&plugins_dir);
 
     let data_dir = std::path::PathBuf::from(std::env::var("DATA_DIR").unwrap_or_else(|_| "./data".to_string()));
+    // Declared assets mirror their package-relative path under ROOT_DIR.
+    let assets_root = std::env::var("ROOT_DIR").unwrap_or_else(|_| ".".to_string());
+    let assets_root = Path::new(&assets_root);
     match action {
         PluginAction::Builtins => {
             let state = praxis::tools::packages::load(&data_dir)?;
@@ -917,6 +920,18 @@ async fn handle_plugin_action(action: &PluginAction) -> anyhow::Result<()> {
                 return Ok(());
             }
             println!("Plugin '{}' installed to {}", report.name, report.dest.display());
+            let assets = praxis::plugins::lifecycle::apply_assets(
+                &report.dest,
+                &report.plugin,
+                &data_dir,
+                assets_root,
+            )?;
+            for asset in &assets.written {
+                println!("  asset installed {asset}");
+            }
+            for asset in &assets.kept {
+                println!("  asset kept (existing file) {asset}");
+            }
             println!("  Tools: {}", report.plugin.tools.len());
             println!("  Context vars: {}", report.plugin.context.len());
             println!("  Secrets: {}", report.plugin.secrets.len());
@@ -956,6 +971,14 @@ async fn handle_plugin_action(action: &PluginAction) -> anyhow::Result<()> {
                 return Ok(());
             }
             println!("Removed plugin directory: {}", plugins_path.join(name).display());
+            let assets =
+                praxis::plugins::lifecycle::remove_assets(&data_dir, assets_root, name)?;
+            for asset in &assets.removed {
+                println!("  asset removed {asset}");
+            }
+            for asset in &assets.kept {
+                println!("  asset kept (operator edit) {asset}");
+            }
             let context_keys = report.context_keys;
             let secret_keys = report.secret_keys;
 
@@ -1036,6 +1059,18 @@ async fn handle_plugin_action(action: &PluginAction) -> anyhow::Result<()> {
                 return Ok(());
             }
             println!("Plugin '{}' upgraded at {}", report.name, report.dest.display());
+            let assets = praxis::plugins::lifecycle::apply_assets(
+                &report.dest,
+                &report.plugin,
+                &data_dir,
+                assets_root,
+            )?;
+            for asset in &assets.written {
+                println!("  asset installed {asset}");
+            }
+            for asset in &assets.kept {
+                println!("  asset kept (existing file) {asset}");
+            }
         }
         PluginAction::InstallDefault {
             preset,

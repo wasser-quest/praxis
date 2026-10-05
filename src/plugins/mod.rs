@@ -862,6 +862,7 @@ fn load_plugin_from_manifest(manifest_path: &Path, plugin_dir: &Path) -> anyhow:
     let data = std::fs::read_to_string(manifest_path)?;
     let manifest: PluginManifest = serde_json::from_str(&data)?;
     manifest.provides.validate()?;
+    validate_assets(plugin_dir, &manifest.provides.assets)?;
 
     // Tools are declared inline or in an external file named by provides.tools.
     let declared_tools = match &manifest.provides.tools {
@@ -1003,6 +1004,29 @@ pub(crate) fn validate_frontend(
         "Too many frontend arguments"
     );
     Ok(Some(frontend))
+}
+
+/// Every declared asset must exist as a regular file inside the package.
+pub(crate) fn validate_assets(plugin_dir: &Path, assets: &[String]) -> anyhow::Result<()> {
+    let root = plugin_dir.canonicalize()?;
+    for asset in assets {
+        let relative = Path::new(asset);
+        anyhow::ensure!(
+            relative.is_relative()
+                && relative
+                    .components()
+                    .all(|c| matches!(c, std::path::Component::Normal(_))),
+            "Asset must be a path inside its package"
+        );
+        let resolved = root.join(relative).canonicalize().map_err(|_| {
+            anyhow::anyhow!("Declared asset '{asset}' is missing from the package")
+        })?;
+        anyhow::ensure!(
+            resolved.starts_with(&root) && resolved.is_file(),
+            "Asset escapes its package or is not a regular file"
+        );
+    }
+    Ok(())
 }
 
 pub fn register_builtin_plugins(_registry: &mut PluginRegistry) {
@@ -1362,6 +1386,8 @@ mod plugin_tests {
         let plugin_dir = dir.path().join("ext");
         std::fs::create_dir_all(&plugin_dir).unwrap();
         std::fs::write(plugin_dir.join("echo.sh"), "printf ok\n").unwrap();
+        std::fs::create_dir_all(plugin_dir.join("ext")).unwrap();
+        std::fs::write(plugin_dir.join("ext/a"), "asset").unwrap();
         std::fs::write(
             plugin_dir.join("tools.json"),
             serde_json::json!([{
@@ -1484,5 +1510,26 @@ mod plugin_tests {
         assert!(TrustRole::parse("nope").is_err());
         assert!(TrustRole::Tool < TrustRole::Data);
         assert!(TrustRole::Authority < TrustRole::Runtime);
+    }
+
+    #[test]
+    fn declared_assets_must_exist() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugin_dir = dir.path().join("a");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+        std::fs::write(
+            plugin_dir.join("plugin.json"),
+            serde_json::to_string(&serde_json::json!({
+                "name": "a", "description": "x", "version": "1",
+                "provides": {"assets": ["templates/missing.poml"]},
+                "tools": []
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(load_plugin_from_manifest(&plugin_dir.join("plugin.json"), &plugin_dir).is_err());
+        std::fs::create_dir_all(plugin_dir.join("templates")).unwrap();
+        std::fs::write(plugin_dir.join("templates/missing.poml"), "x").unwrap();
+        assert!(load_plugin_from_manifest(&plugin_dir.join("plugin.json"), &plugin_dir).is_ok());
     }
 }
