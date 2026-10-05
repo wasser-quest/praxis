@@ -67,8 +67,10 @@ stage -> validate -> hooks.install -> publish -> register (disabled) -> enable -
   It is idempotent and runs from the package directory with
   `PRAXIS_PLUGIN_DIR`, `PRAXIS_DATA_DIR`, `PRAXIS_PLUGINS_DIR`, `PATH` and public
   process settings only.
-* `hooks.uninstall` removes what install created. Data under `DATA_DIR` is
-  preserved unless the operator passes `--purge`.
+* `hooks.uninstall` removes what install created. The hook receives
+  `PRAXIS_PURGE=1` when the operator passes `--purge`; the host also removes the
+  conventional `DATA_DIR/<id>` directory as a fallback. Data is otherwise
+  preserved.
 * Hooks are operator-trusted code, not sandboxed. Safety comes from policy,
   staging/rollback, bounded execution and hashed scripts.
 
