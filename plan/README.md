@@ -37,7 +37,10 @@ optional workflow packs add assets rather than replacing the core interpreter.
 - [x] PR 8a: lifecycle hooks (`allow|ask|deny`), staged install/uninstall,
   script hashing, install record and example plugins. See
   [plugin lifecycle](../docs/PLUGIN_LIFECYCLE.md).
-- [ ] PR 8b: manifest v2 and `praxis.lock.json` (declared `requires`/`provides`,
+- [x] First-class `requires`/`frontend` declarations: validated in the loader
+  and included in the registry revision, so a dependency or frontend change
+  invalidates task receipts. The raw manifest helpers are gone.
+- [ ] PR 8b: manifest v2 and `praxis.lock.json` (declared `provides`,
   ownership across tools/routes/UI/assets, immutable revision, rollback).
   Progress: `requires.plugins`/`requires.commands` preflight and uninstall
   dependent protection are implemented, `PLUGINS_DIR/praxis.lock.json` records

@@ -10,6 +10,8 @@ pub fn create_plugin() -> Plugin {
         context: HashMap::new(),
         secrets: Vec::new(),
         hooks: Default::default(),
+        requires: Default::default(),
+        frontend: None,
         tools: vec![
             PluginTool {
                 name: "image_generate".to_string(),

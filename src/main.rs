@@ -1123,9 +1123,7 @@ async fn handle_plugin_action(action: &PluginAction) -> anyhow::Result<()> {
                                 plugin.tools.len(),
                                 plugin.secrets.len()
                             );
-                            if let Ok(Some(frontend)) =
-                                praxis::plugins::frontend_declaration(&manifest)
-                            {
+                            if let Some(frontend) = &plugin.frontend {
                                 println!(
                                     "      frontend: {} {}",
                                     frontend.executable,

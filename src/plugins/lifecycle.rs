@@ -405,9 +405,7 @@ fn dependents(plugins_dir: &Path, name: &str) -> Vec<String> {
         if plugin.name == name || !plugin.enabled {
             continue;
         }
-        if crate::plugins::requires_declaration(&manifest)
-            .is_ok_and(|requires| requires.plugins.iter().any(|id| id == name))
-        {
+        if plugin.requires.plugins.iter().any(|id| id == name) {
             out.push(plugin.name);
         }
     }
@@ -483,10 +481,7 @@ pub async fn install(request: &InstallRequest<'_>) -> anyhow::Result<InstallRepo
     // Parsing a manifest does not validate hook paths; do it before any copy.
     let source_root = request.source.canonicalize()?;
     let hooks = validate_hooks(&source_root, plugin.hooks.clone())?;
-    preflight_requires(
-        request.plugins_dir,
-        &crate::plugins::requires_declaration(&manifest_path)?,
-    )?;
+    preflight_requires(request.plugins_dir, &plugin.requires)?;
 
     let dest = request.plugins_dir.join(&plugin.name);
     anyhow::ensure!(
@@ -612,10 +607,7 @@ pub async fn upgrade(request: &UpgradeRequest<'_>) -> anyhow::Result<InstallRepo
     let plugin: Plugin = serde_json::from_slice(&manifest_bytes)?;
     let source_root = request.source.canonicalize()?;
     let hooks = validate_hooks(&source_root, plugin.hooks.clone())?;
-    preflight_requires(
-        request.plugins_dir,
-        &crate::plugins::requires_declaration(&manifest_path)?,
-    )?;
+    preflight_requires(request.plugins_dir, &plugin.requires)?;
     let dest = request.plugins_dir.join(&plugin.name);
     anyhow::ensure!(
         dest.exists(),
@@ -902,7 +894,7 @@ pub async fn install_default(request: &PresetRequest<'_>) -> anyhow::Result<Pres
             continue;
         }
         let plugin: Plugin = serde_json::from_slice(&std::fs::read(&manifest)?)?;
-        let requires = crate::plugins::requires_declaration(&manifest)?;
+        let requires = plugin.requires.clone();
         entries.insert(plugin.name, Entry { source, requires });
     }
 
