@@ -91,28 +91,11 @@ route requires a scope; undeclared scopes return 403.
 | `POST /decision-probe` `{profile, contexts}` (classification only, spends inference) | `agent` |
 | `GET /features` (installed feature pages: id, title, entry, API, sockets) | `features` |
 | `ANY /features/:owner/<service path>` (HTTP and WebSocket) | `features` |
+| `GET /sm/:user` (workflow file, template, skill, state, SM data) | `sessions:read` |
+| `POST /contexts/:user/exec` `{line}` (the `/context` command language) | `admin:write` |
+| `POST /chat/send` (chat box semantics: question replies, options, start or inject) | `agent` |
+| `GET /admin/tool-records`, `GET /admin/tool-activity?…` | `admin:read` |
 
-### Feature page slots
-
-Feature packages such as VM declare a web descriptor (page title, entry asset,
-API prefix, WebSocket paths). A dashboard package lists them with
-`GET /features` and reaches them through
-`/host/v1/features/<owner>/<service path>`, for example
-`/host/v1/features/vm/plugins/vm/index.html` (assets, GET/HEAD only),
-`/host/v1/features/vm/api/plugins/vm/guests` (API) or
-`/host/v1/features/vm/api/plugins/vm/vnc/ws` (noVNC WebSocket). Only the
-owner's `/api/plugins/<owner>` and `/plugins/<owner>` namespaces and
-host-registered alias targets are reachable. The host forwards over loopback
-with the service's private key and the operator principal, strips the
-package's credentials, and applies the same 2 MB/300 s limits as the built-in
-dashboard. WebSockets authenticate with the `Authorization` header only (no
-query tokens), so a package proxies sockets from its own backend and never
-hands the Host API token to a browser. The built-in dashboard's extension
-routes use the same transport (`runtime::web_proxy`).
-
-Media names are a single `[A-Za-z0-9._:@+-]` component (uploads are
-sanitized to that); screenshots are served only from
-`vm/<guest>/screenshots/`, never other DATA_DIR content.
 | `GET /media?q=`, `GET /media/files/:name`, `POST /media/files?name=` (raw body, 50 MB) | `media` |
 | `GET`/`POST /media/avatars/:name` (PNG/JPG/GIF/WebP, 2 MB) | `media` |
 | `GET /media/screenshots/vm/:guest/screenshots/:file` | `media` |
@@ -120,6 +103,10 @@ sanitized to that); screenshots are served only from
 | `POST /decision-probe` `{profile, contexts}` (classification only, spends inference) | `agent` |
 | `GET /features` (installed feature pages: id, title, entry, API, sockets) | `features` |
 | `ANY /features/:owner/<service path>` (HTTP and WebSocket) | `features` |
+| `GET /sm/:user` (workflow file, template, skill, state, SM data) | `sessions:read` |
+| `POST /contexts/:user/exec` `{line}` (the `/context` command language) | `admin:write` |
+| `POST /chat/send` (chat box semantics: question replies, options, start or inject) | `agent` |
+| `GET /admin/tool-records`, `GET /admin/tool-activity?…` | `admin:read` |
 
 ### Feature page slots
 
@@ -161,6 +148,30 @@ state-local Decision IR); execution includes transitions, receipts and
 compaction telemetry. `agent/begin` goes through the gateway chat API, so
 routing, budgets, IR enforcement and receipts are unchanged.
 
+## The standard dashboard package
+
+The full Praxis dashboard ships as a package too (`crates/praxis-dashboard`,
+manifest in `packages/dashboard/plugin.json`):
+
+```bash
+./scripts/install-dashboard-package.sh            # builds, installs plugins/dashboard
+cargo build --release --no-default-features       # optional: core without dashboard code
+DASHBOARD_PACKAGE=dashboard praxis run
+```
+
+It serves the unchanged browser UI (`static/`, copied into the package) and
+implements every URL the UI uses — `/api/*`, the chat SSE streams,
+multipart uploads/STT, `/api/dashboard/extensions`, `/plugins/<owner>/…`,
+`/api/plugins/<owner>/…` and host aliases such as `/api/vm`, `/websockify`
+(HTTP and WebSocket) — as an adapter over Host API v1. It has no database,
+secrets or workflow access of its own. Browser requests carry the operator
+login token, which the package verifies with `auth/verify` (cached 30 s)
+before forwarding; the Host API token stays in the package process. A
+different dashboard is just a different package in `DASHBOARD_PACKAGE`.
+
+The built-in dashboard (`dashboard` feature) stays available for one release
+as the compatibility path and is now a thin layer over the same services.
+
 ## Trust
 
 The package token is never sent to browsers in the example; browser calls are
@@ -171,6 +182,5 @@ the Host API grants, but they are not an OS sandbox.
 ## Not yet in v1
 
 Everything the built-in dashboard does is now reachable through Host API v1.
-Next: ship the built-in dashboard itself as a package on top of it. Provider setup
-stays on the gateway client API (`/v1/...`). They move into services and
+Provider setup stays on the gateway client API (`/v1/...`). They move into services and
 Host API scopes next; the built-in dashboard then becomes a package itself.

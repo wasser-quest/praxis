@@ -423,23 +423,9 @@ async fn context_exec(
     State(state): State<Arc<DashboardState>>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let user_id = body
-        .get("user_id")
-        .and_then(|v| v.as_str())
-        .ok_or(StatusCode::BAD_REQUEST)?
-        .to_string();
-    let line = body
-        .get("line")
-        .and_then(|v| v.as_str())
-        .ok_or(StatusCode::BAD_REQUEST)?;
-
-    match crate::context_cmd::parse(line) {
-        Ok(op) => {
-            let response = crate::context_cmd::apply(&state.db, &user_id, &op);
-            Ok(Json(serde_json::json!({ "response": response })))
-        }
-        Err(e) => Ok(Json(serde_json::json!({ "error": e.to_string() }))),
-    }
+    let user_id = body.get("user_id").and_then(|v| v.as_str()).ok_or(StatusCode::BAD_REQUEST)?;
+    let line = body.get("line").and_then(|v| v.as_str()).ok_or(StatusCode::BAD_REQUEST)?;
+    Ok(Json(crate::services::sessions::exec(&state.db, user_id, line)))
 }
 
 // ── Messages ─────────────────────────────────────────────────────────────────
@@ -590,8 +576,7 @@ async fn delete_template(
 async fn list_tools(
     State(state): State<Arc<DashboardState>>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let tools = crate::db::tools::list(&state.db).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(serde_json::json!({ "tools": tools })))
+    admin_json(crate::services::admin::tool_records(&state.db))
 }
 
 async fn list_all_tools(
@@ -1005,58 +990,8 @@ async fn chat_query(
     State(state): State<Arc<DashboardState>>,
     Json(req): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let user_id = req["user_id"].as_str().unwrap_or("default");
-    let message = req["message"].as_str().unwrap_or("");
-    let is_option = req["is_option"].as_bool().unwrap_or(false);
-    let option_index = req["option_index"].as_u64();
-    let question_id = req["question_id"].as_str().unwrap_or("");
-    tracing::info!(user_id = %user_id, message = %message, "[DASHBOARD] chat_query received");
-
-    // Handle option selection
-    if is_option && !question_id.is_empty() {
-        crate::tools::web_interactive::handle_web_option(question_id, option_index.unwrap_or(0) as usize).await;
-        return Ok(Json(serde_json::json!({"success": true, "type": "option"})));
-    }
-
-    // Handle text reply to pending question
-    if !message.is_empty() {
-        let consumed = crate::tools::web_interactive::handle_web_message_reply(user_id, message).await;
-        if consumed {
-            return Ok(Json(serde_json::json!({"success": true, "type": "question_reply"})));
-        }
-    }
-
-    // Overwrite custom_data.user_prompt with the current message
-    if !message.is_empty() {
-        let _ = state.db.merge_context(user_id, serde_json::json!({"custom_data": {"user_prompt": message}}));
-    }
-
-    // Check if agent loop is active
-    if !crate::services::agent::active(user_id).await {
-        // Auto-start agent loop via gateway API
-        crate::services::agent::dispatch_via_gateway(
-            state.gateway_api_key.clone(),
-            user_id.to_string(),
-            message.to_string(),
-        );
-        return Ok(Json(serde_json::json!({
-            "success": true,
-            "type": "agent_started",
-            "message": "Agent loop started. Response will appear shortly."
-        })));
-    }
-
-    // Agent loop is running: inject message
-    if let Some(sender) = crate::gateway::agent_loop::get_user_input_sender(user_id).await {
-        let mut full = message.to_string();
-        if let Some(atts) = req["attachments"].as_array() {
-            for a in atts { if let Some(s) = a.as_str() { full.push_str(&format!("\n[Attachment: {}]", s)); } }
-        }
-        sender.send(full).ok();
-        Ok(Json(serde_json::json!({"success": true, "type": "injected"})))
-    } else {
-        Ok(Json(serde_json::json!({"error": "Agent loop not available"})))
-    }
+    tracing::info!(user_id = %req["user_id"].as_str().unwrap_or("default"), "[DASHBOARD] chat_query received");
+    Ok(Json(crate::services::agent::chat(&state.db, state.gateway_api_key.clone(), &req).await))
 }
 
 async fn chat_stream_auth(
@@ -1170,27 +1105,9 @@ async fn get_sm_info(
     State(state): State<Arc<DashboardState>>,
     Path(user_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let ctx = state.db.load_context(&user_id).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let templates: Vec<String> = ctx.active_templates.clone();
-    let sm_data = if ctx.sm_data.is_object() {
-        let mut flat = serde_json::Map::new();
-        for (k, v) in ctx.sm_data.as_object().unwrap() {
-            if !v.is_null() {
-                flat.insert(k.clone(), v.clone());
-            }
-        }
-        serde_json::Value::Object(flat)
-    } else {
-        serde_json::json!({})
-    };
-    Ok(Json(serde_json::json!({
-        "sm_file": crate::gateway::prompt::workflow_name(&ctx),
-        "system_template": ctx.settings.system_template.as_deref().unwrap_or("standard"),
-        "active_skill": ctx.settings.active_skill,
-        "active_state": ctx.active_state,
-        "active_templates": templates,
-        "sm_data": sm_data,
-    })))
+    crate::services::sessions::sm_info(&state.db, &user_id)
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 #[cfg(test)]

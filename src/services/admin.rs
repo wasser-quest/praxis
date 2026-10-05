@@ -53,6 +53,11 @@ pub fn all_tools(db: &crate::db::Database, plugins: &crate::plugins::PluginRegis
     json!({ "tools": all, "total": all.len() })
 }
 
+/// Stored builtin tool records (dashboard `/tools`).
+pub fn tool_records(db: &crate::db::Database) -> Outcome<Value> {
+    Ok(json!({ "tools": crate::db::tools::list(db)? }))
+}
+
 pub fn set_tool_enabled(
     db: &crate::db::Database,
     plugins: &crate::plugins::PluginRegistry,

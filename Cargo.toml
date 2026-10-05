@@ -5,7 +5,7 @@ edition = "2021"
 description = "AI Agent Platform — Praxis"
 
 [workspace]
-members = ["crates/praxis-vm", "crates/praxis-plugin-api", "crates/praxis-vm-web", "crates/praxis-vm-worker"]
+members = ["crates/praxis-vm", "crates/praxis-plugin-api", "crates/praxis-vm-web", "crates/praxis-vm-worker", "crates/praxis-dashboard"]
 default-members = ["."]
 resolver = "2"
 

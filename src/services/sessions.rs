@@ -1,7 +1,7 @@
 //! Frontend-independent session, context and message APIs. Dashboard, TUI,
 //! gateway and future clients call these; none of them owns the queries.
 use crate::db::Database;
-use serde_json::Value;
+use serde_json::{json, Value};
 
 /// All chat sessions known to the server (context rows are authoritative;
 /// message stats/preview resolve forked `user:::session` keys too).
@@ -192,6 +192,36 @@ pub fn fork(
         "success": true, "user_id": ctx.user_id, "username": ctx.username,
         "parent_user_id": parent,
     }))
+}
+
+/// Workflow status of a session (dashboard `/sm/:user`).
+pub fn sm_info(db: &Database, user_id: &str) -> anyhow::Result<Value> {
+    let ctx = db.load_context(user_id)?;
+    let sm_data = match ctx.sm_data.as_object() {
+        Some(map) => Value::Object(
+            map.iter()
+                .filter(|(_, v)| !v.is_null())
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+        ),
+        None => json!({}),
+    };
+    Ok(json!({
+        "sm_file": crate::gateway::prompt::workflow_name(&ctx),
+        "system_template": ctx.settings.system_template.as_deref().unwrap_or("standard"),
+        "active_skill": ctx.settings.active_skill,
+        "active_state": ctx.active_state,
+        "active_templates": ctx.active_templates,
+        "sm_data": sm_data,
+    }))
+}
+
+/// Apply one `/context` command line (same parser as chat `/context`).
+pub fn exec(db: &Database, user_id: &str, line: &str) -> Value {
+    match crate::context_cmd::parse(line) {
+        Ok(op) => json!({ "response": crate::context_cmd::apply(db, user_id, &op) }),
+        Err(e) => json!({ "error": e.to_string() }),
+    }
 }
 
 #[cfg(test)]

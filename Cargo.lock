@@ -3741,6 +3741,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "praxis-dashboard"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "axum-server",
+ "futures-util",
+ "praxis-plugin-api",
+ "reqwest",
+ "rustls 0.23.40",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-tungstenite 0.24.0",
+ "tower-http",
+ "urlencoding",
+]
+
+[[package]]
 name = "praxis-plugin-api"
 version = "0.1.0"
 dependencies = [

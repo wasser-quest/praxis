@@ -181,9 +181,12 @@ clipboard) remains an operator smoke check.
 - [x] Feature page slots for dashboard packages: `features` scope, feature
   list, owner-confined HTTP/WebSocket forwarding through the shared
   `runtime::web_proxy` transport.
-- [ ] Package the frontend/static assets with the dashboard package and add
-  navigation slots for absent features.
-- [ ] Convert the built-in dashboard into a package on Host API v1. Runtime-control and the remaining
+- [x] Standard dashboard package (`crates/praxis-dashboard`,
+  `packages/dashboard`, `scripts/install-dashboard-package.sh`): ships the
+  frontend assets and serves the whole UI on Host API v1; verified end to end
+  against a `--no-default-features` core.
+- [ ] Navigation slots for absent features; remove the built-in dashboard
+  feature after one release. Runtime-control and the remaining
 feature/tool packages follow; POML/context/SM/IR verification stays in core.
 
 Existing setup guides remain applicable during migration:

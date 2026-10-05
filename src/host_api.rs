@@ -151,6 +151,11 @@ fn router(_state: Arc<ApiState>) -> Router<Arc<ApiState>> {
         .route(&route("/secrets"), get(secrets).put(update_secrets))
         .route(&route("/decision-probe"), post(decision_probe))
         .route(&route("/features"), get(features))
+        .route(&route("/sm/:user"), get(sm_info))
+        .route(&route("/contexts/:user/exec"), post(context_exec))
+        .route(&route("/chat/send"), post(chat_send))
+        .route(&route("/admin/tool-records"), get(admin_tool_records))
+        .route(&route("/admin/tool-activity"), get(admin_tool_activity))
         .route(&route("/features/:owner"), axum::routing::any(feature))
         .route(&route("/features/:owner/*path"), axum::routing::any(feature))
         .route(&route("/media"), get(media_list))
@@ -184,7 +189,8 @@ fn required_scope(method: &axum::http::Method, path: &str) -> Option<&'static st
         "sessions" | "messages" if !read => "sessions:write",
         // Context writes can change workflow, templates and permissions.
         "contexts" if !read => "admin:write",
-        "sessions" | "contexts" | "messages" | "graphs" | "execution" | "usage" => "sessions:read",
+        "sessions" | "contexts" | "messages" | "graphs" | "execution" | "usage" | "sm" => "sessions:read",
+        "chat" => "agent",
         "agent" => "agent",
         "events" => "events",
         "auth" => "auth",
@@ -576,19 +582,58 @@ async fn update_secrets(Json(req): Json<crate::services::secrets::SecretsUpdate>
         .map_err(admin_fail)
 }
 
+async fn sm_info(State(s): State<Arc<ApiState>>, Path(user): Path<String>) -> ApiResult {
+    crate::services::sessions::sm_info(&s.db, &user).map(Json).map_err(internal)
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExecLine {
+    line: String,
+}
+async fn context_exec(
+    State(s): State<Arc<ApiState>>,
+    Path(user): Path<String>,
+    Json(req): Json<ExecLine>,
+) -> Json<Value> {
+    Json(crate::services::sessions::exec(&s.db, &user, &req.line))
+}
+/// Same semantics as the built-in dashboard chat box (question replies,
+/// options, start-or-inject through the gateway path).
+async fn chat_send(State(s): State<Arc<ApiState>>, Json(req): Json<Value>) -> Json<Value> {
+    let key = crate::services::auth::OperatorAuth::resolve().gateway_api_key;
+    Json(crate::services::agent::chat(&s.db, key, &req).await)
+}
+async fn admin_tool_records(State(s): State<Arc<ApiState>>) -> ApiResult {
+    admin_ok(admin::tool_records(&s.db))
+}
+async fn admin_tool_activity(
+    State(s): State<Arc<ApiState>>,
+    Query(q): Query<HashMap<String, String>>,
+) -> Json<Value> {
+    Json(crate::runtime::web_proxy::activity(&s.db, &q))
+}
+
 // ── Feature page slots ──────────────────────────────────────────────────
 
 /// Installed feature web services (same descriptors as the built-in
 /// dashboard's extension list): page title, entry asset, API and sockets.
 async fn features(State(s): State<Arc<ApiState>>) -> Json<Value> {
-    let mut descriptors: Vec<_> = s
-        .plugins
-        .web_services()
-        .into_iter()
-        .filter_map(|service| service.web_endpoint().map(|endpoint| endpoint.info.descriptor))
-        .collect();
+    let mut descriptors: Vec<_> = Vec::new();
+    let mut routes: Vec<Value> = Vec::new();
+    for service in s.plugins.web_services() {
+        let Some(endpoint) = service.web_endpoint() else { continue };
+        let owner = service.descriptor().owner.clone();
+        // Host-registered public aliases, so a frontend can keep legacy URLs
+        // (e.g. `/api/vm`, `/websockify`) pointing at the same service paths.
+        for alias in service.web_aliases() {
+            routes.push(json!({
+                "owner": owner, "source": alias.source, "target": alias.target, "assets": alias.assets,
+            }));
+        }
+        descriptors.push(endpoint.info.descriptor);
+    }
     descriptors.sort_by(|a, b| a.id.cmp(&b.id));
-    Json(json!({ "features": descriptors }))
+    Json(json!({ "features": descriptors, "routes": routes }))
 }
 
 /// `/host/v1/features/<owner>/<service path>`: the service path must be in
@@ -704,6 +749,17 @@ async fn media_stt(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dashboard_package_routes_have_scopes() {
+        use axum::http::Method;
+        let scope = |m: Method, p: &str| required_scope(&m, &format!("{HOST_API_PREFIX}{p}"));
+        assert_eq!(scope(Method::GET, "/sm/u"), Some("sessions:read"));
+        assert_eq!(scope(Method::POST, "/chat/send"), Some("agent"));
+        assert_eq!(scope(Method::POST, "/contexts/u/exec"), Some("admin:write"));
+        assert_eq!(scope(Method::GET, "/admin/tool-records"), Some("admin:read"));
+        assert_eq!(scope(Method::GET, "/admin/tool-activity"), Some("admin:read"));
+    }
 
     #[tokio::test]
     async fn host_api_requires_token_and_enforces_declared_scopes() {
