@@ -88,6 +88,9 @@ pub struct ExecutionReceipt {
     /// Who defined the check policy. The kernel always observed the exit code,
     /// timeout and resource bytes; `kernel` is the built-in `run_check`.
     pub verified_by: String,
+    /// Kernel HMAC over the receipt fields. Empty for unissued fallbacks.
+    #[serde(default)]
+    pub signature: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resources: Option<ResourceSnapshot>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -236,6 +239,9 @@ impl VerificationState {
             .filter(|name| {
                 !self.receipts.get(*name).is_some_and(|r| {
                     r.verified
+                        && crate::gateway::receipt_sign::verify(
+                            &serde_json::to_value(r).unwrap_or_default(),
+                        )
                         && r.revision == self.revision
                         && r.workspace_revision == workspace_revision
                         && definitions
@@ -251,6 +257,9 @@ impl VerificationState {
             .filter(|key| {
                 !self.actions.get(*key).is_some_and(|action| {
                     action.receipt.verified
+                        && crate::gateway::receipt_sign::verify(
+                            &serde_json::to_value(&action.receipt).unwrap_or_default(),
+                        )
                         && action.receipt.task_id == self.task_id
                         && action.receipt.revision == self.revision
                         && action.receipt.workspace_revision == workspace_revision
@@ -328,9 +337,13 @@ impl VerificationState {
                     })
                     .unwrap_or(false),
             verified_by: "kernel".into(),
+            signature: String::new(),
             resources: evidence.resources,
             workspace_revision: evidence.workspace_revision,
         };
+        let mut receipt = receipt;
+        receipt.signature =
+            crate::gateway::receipt_sign::sign(&serde_json::to_value(&receipt).unwrap_or_default());
         self.receipts.insert(name.into(), receipt.clone());
         receipt
     }
@@ -463,6 +476,10 @@ pub(crate) fn publish_action_finalized(
         );
         let mut authority = receipt.clone();
         authority.conditions.clear(); // tool archive owns diagnostics; ledger stores authority only
+        authority.signature.clear();
+        if let Ok(value) = serde_json::to_value(&authority) {
+            authority.signature = crate::gateway::receipt_sign::sign(&value);
+        }
         ledger.actions.insert(
             receipt.action.clone(),
             ActionEvidence {

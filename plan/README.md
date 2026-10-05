@@ -56,11 +56,12 @@ optional workflow packs add assets rather than replacing the core interpreter.
   (`praxis plugin trust`, `DATA_DIR/plugin_trust.json`) are implemented; a
   package requesting more than its grant is not activated. Receipts now record
   `verified_by` ("kernel" for native checks, `<package>@<version>` for
-  contracted actions) while the kernel observes the evidence. The rendering
-  path is behind a `runtime::engine::RuntimeEngine` seam with `KernelEngine` as
+  contracted actions) while the kernel observes the evidence, and receipts are
+  kernel-signed with `require` verifying the signature. The rendering path is
+  behind a `runtime::engine::RuntimeEngine` seam with `KernelEngine` as
   the default, covering rendering and state-machine guard/transition condition
-  evaluation. Receipt signing and the host bridge that lets a `runtime` package
-  install an engine remain.
+  evaluation. The host bridge that lets a `runtime` package install an engine
+  remains.
 - [ ] PR 8d: extract the remaining packages and ship the `--install-default` and
   minimal presets; make the TUI a separate `praxis-tui` frontend plugin.
   Progress: `praxis-tui` now exists as a standalone executable and the `tui`

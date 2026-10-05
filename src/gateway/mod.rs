@@ -31,6 +31,7 @@ pub mod providers;
 pub mod rate_limiter;
 #[cfg(test)]
 mod resource_contract_tests;
+pub(crate) mod receipt_sign;
 pub(crate) mod resource_snapshots;
 #[cfg(test)]
 mod state_machine_tests;

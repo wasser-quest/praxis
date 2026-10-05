@@ -83,6 +83,9 @@ pub struct ActionReceipt {
     /// The package that defined the check policy, as `<id>@<version>`. The
     /// kernel ran the checks and observed their exit codes and resources.
     pub verified_by: String,
+    /// Kernel HMAC over the receipt fields.
+    #[serde(default)]
+    pub signature: String,
     pub compensation_attempted: bool,
     pub compensation_verified: bool,
     pub conditions: Vec<ConditionReceipt>,
@@ -514,6 +517,7 @@ pub(crate) async fn execute_with_service(
         }
         receipt.outcome = "committed";
         receipt.verified = true;
+        sign_receipt(&mut receipt);
         action_contracts::publish_action(
             user,
             &ticket,
@@ -567,6 +571,7 @@ pub(crate) async fn execute_with_service(
             }
         }
     }
+    sign_receipt(&mut receipt);
     Ok(serde_json::json!({"receipt":receipt,"result":result}).to_string())
 }
 
@@ -607,11 +612,20 @@ pub(crate) fn start_receipt(
         failure: None,
         verified: false,
         verified_by: format!("{}@{}", plugin.name, plugin.version),
+        signature: String::new(),
         compensation_attempted: false,
         compensation_verified: false,
         conditions: Vec::new(),
     };
     Ok((ticket, receipt))
+}
+
+/// Sign (or re-sign) a receipt with the kernel key. Idempotent.
+pub(crate) fn sign_receipt(receipt: &mut ActionReceipt) {
+    receipt.signature.clear();
+    if let Ok(value) = serde_json::to_value(&*receipt) {
+        receipt.signature = crate::gateway::receipt_sign::sign(&value);
+    }
 }
 
 async fn handler(

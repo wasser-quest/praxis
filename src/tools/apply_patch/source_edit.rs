@@ -107,6 +107,7 @@ pub(crate) async fn run(
         tx.unchanged().map_err(|_| "files_changed_during_checks")?;
         receipt.outcome = "committed";
         receipt.verified = true;
+        contracts::sign_receipt(&mut receipt);
         action_contracts::publish_action_finalized(
             user,
             &ticket,
@@ -154,5 +155,6 @@ pub(crate) async fn run(
             json!({"files":[], "rollback_conflicts":[], "recovery_pending":journal::pending_exists(&root)})
         }
     };
+    contracts::sign_receipt(&mut receipt);
     Ok(json!({"receipt":receipt,"result":result}).to_string())
 }
