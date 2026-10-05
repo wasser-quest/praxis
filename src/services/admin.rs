@@ -345,6 +345,33 @@ pub fn save_decision_profile(name: &str, content: &str) -> Outcome<()> {
         .map_err(|e| Failure::BadRequest(e.to_string()))
 }
 
+/// Classification-only playground: runs the decision model, changes nothing.
+pub async fn decision_probe(
+    profile: &crate::gateway::decision_profiles::DecisionProfile,
+    contexts: Vec<String>,
+) -> Outcome<Value> {
+    let start = std::time::Instant::now();
+    let results = crate::gateway::decision_client::decide(
+        profile,
+        contexts,
+        &tokio_util::sync::CancellationToken::new(),
+    )
+    .await
+    .map_err(|e| Failure::BadRequest(format!("Decision error: {e}")))?;
+    Ok(json!({
+        "results": results.iter().map(|d| json!({
+            "label": d.label,
+            "state": profile.state_map.get(&d.label),
+            "probability": d.probability,
+            "confidence": d.confidence,
+            "usage": d.usage,
+            "meets_threshold": d.probability >= profile.minimum_probability,
+        })).collect::<Vec<_>>(),
+        "elapsed_ms": start.elapsed().as_millis(),
+        "notice": "Classification only: no context, state, history or permissions changed. Probabilities are not calibrated certainty.",
+    }))
+}
+
 // ── Pairings, cron, delegations ──────────────────────────────────────────
 
 fn query(db: &crate::db::Database, sql: &str, row: impl Fn(&rusqlite::Row) -> rusqlite::Result<Value>) -> Outcome<Vec<Value>> {

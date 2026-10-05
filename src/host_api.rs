@@ -147,6 +147,25 @@ fn router(_state: Arc<ApiState>) -> Router<Arc<ApiState>> {
         .route(&route("/messages/:user"), get(messages).delete(clear_messages))
         .route(&route("/messages/:user/compact"), post(compact))
         .route(&route("/secrets"), get(secrets).put(update_secrets))
+        .route(&route("/decision-probe"), post(decision_probe))
+        .route(&route("/media"), get(media_list))
+        .route(
+            &route("/media/files"),
+            post(media_upload).layer(axum::extract::DefaultBodyLimit::max(
+                crate::services::media::MAX_UPLOAD,
+            )),
+        )
+        .route(&route("/media/files/:name"), get(media_file))
+        .route(
+            &route("/media/avatars/:name"),
+            get(media_avatar).post(media_store_avatar),
+        )
+        .route(&route("/media/screenshots/*path"), get(media_screenshot))
+        .route(&route("/media/audio/:user/:id"), get(media_audio))
+        .route(
+            &route("/media/stt/:user"),
+            post(media_stt).layer(axum::extract::DefaultBodyLimit::max(25 * 1024 * 1024)),
+        )
         .route(&route("/admin/delegations/:user"), get(admin_delegations))
 }
 
@@ -165,6 +184,8 @@ fn required_scope(method: &axum::http::Method, path: &str) -> Option<&'static st
         "events" => "events",
         "auth" => "auth",
         "secrets" => "secrets",
+        "media" => "media",
+        "decision-probe" => "agent",
         "admin" if read => "admin:read",
         "admin" => "admin:write",
         _ => return None,
@@ -549,6 +570,80 @@ async fn update_secrets(Json(req): Json<crate::services::secrets::SecretsUpdate>
         .map_err(admin_fail)
 }
 
+// ── Media ───────────────────────────────────────────────────────────────
+
+use crate::services::media;
+
+fn bytes(content_type: impl Into<String>, data: Vec<u8>) -> Response {
+    (
+        [
+            (axum::http::header::CONTENT_TYPE, content_type.into()),
+            (axum::http::header::CACHE_CONTROL, "private, no-store".to_string()),
+            (axum::http::header::X_CONTENT_TYPE_OPTIONS, "nosniff".to_string()),
+        ],
+        data,
+    )
+        .into_response()
+}
+fn media_fail(failure: Failure) -> Response {
+    admin_fail(failure).into_response()
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Probe {
+    profile: crate::gateway::decision_profiles::DecisionProfile,
+    contexts: Vec<String>,
+}
+async fn decision_probe(Json(req): Json<Probe>) -> ApiResult {
+    admin_ok(admin::decision_probe(&req.profile, req.contexts).await)
+}
+async fn media_list(Query(q): Query<HashMap<String, String>>) -> Json<Value> {
+    Json(media::list(&media::data_dir(), q.get("q").map(String::as_str)))
+}
+/// Raw body upload: `POST /media/files?name=<file name>`.
+async fn media_upload(Query(q): Query<HashMap<String, String>>, body: axum::body::Bytes) -> ApiResult {
+    let name = q.get("name").map(String::as_str).unwrap_or("file");
+    media::store_upload(&media::data_dir(), name, &body)
+        .map(|url| Json(json!({"success": true, "url": url})))
+        .map_err(admin_fail)
+}
+async fn media_file(Path(name): Path<String>) -> Response {
+    match media::read_upload(&media::data_dir(), &name) {
+        Ok(data) => bytes("application/octet-stream", data),
+        Err(e) => media_fail(e),
+    }
+}
+async fn media_avatar(Path(name): Path<String>) -> Response {
+    match media::read_avatar(&media::data_dir(), &name) {
+        Ok((kind, data)) => bytes(kind, data),
+        Err(e) => media_fail(e),
+    }
+}
+async fn media_store_avatar(Path(name): Path<String>, body: axum::body::Bytes) -> ApiResult {
+    media::store_avatar(&media::data_dir(), &name, &body)
+        .map(|url| Json(json!({"success": true, "url": url})))
+        .map_err(admin_fail)
+}
+async fn media_screenshot(Path(path): Path<String>) -> Response {
+    match media::read_screenshot(&media::data_dir(), &path) {
+        Ok((kind, data)) => bytes(kind, data),
+        Err(e) => media_fail(e),
+    }
+}
+async fn media_audio(State(s): State<Arc<ApiState>>, Path((user, id)): Path<(String, i64)>) -> Response {
+    match media::message_audio(&s.db, &user, id) {
+        Ok((kind, data)) => bytes(kind, data),
+        Err(e) => media_fail(e),
+    }
+}
+async fn media_stt(
+    State(s): State<Arc<ApiState>>,
+    Path(user): Path<String>,
+    body: axum::body::Bytes,
+) -> ApiResult {
+    admin_ok(media::transcribe(&s.db, &user, &body).await)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -598,6 +693,15 @@ mod tests {
         // Administration and secrets need their own scopes.
         assert_eq!(get("/admin/tools", t).send().await.unwrap().status(), 403);
         assert_eq!(get("/secrets", t).send().await.unwrap().status(), 403);
+        assert_eq!(get("/media", t).send().await.unwrap().status(), 403);
+        let probe = http
+            .post(format!("{}{HOST_API_PREFIX}/decision-probe", grant.url))
+            .bearer_auth(&grant.token)
+            .json(&json!({}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(probe.status(), 403);
         // Context and history writes are not covered by sessions:read.
         let ctx = get("/contexts/u", t).send().await.unwrap();
         assert_eq!(ctx.status(), 200);
@@ -705,6 +809,38 @@ mod tests {
             Some("gateway-key-abcdef-123456")
         );
         crate::db::secrets::init_secrets(original);
+    }
+
+    #[tokio::test]
+    async fn media_scope_serves_message_audio_and_refuses_traversal() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = crate::db::Database::new(dir.path()).unwrap();
+        db.save_context(&db.load_context("alice").unwrap()).unwrap();
+        let id = db
+            .add_message("alice", &crate::db::messages::Message::assistant("r".into()))
+            .unwrap();
+        db.save_message_audio("alice", id, "audio/wav", b"wav").unwrap();
+        let api = HostApi::start(db, Arc::new(crate::plugins::PluginRegistry::new()), "d", &["media".into()], 3537)
+            .await
+            .unwrap();
+        let grant = api.grant().clone();
+        let http = reqwest::Client::new();
+        let get = |p: &str| http.get(format!("{}{HOST_API_PREFIX}{p}", grant.url)).bearer_auth(&grant.token);
+        let audio = get(&format!("/media/audio/alice/{id}")).send().await.unwrap();
+        assert_eq!(audio.status(), 200);
+        assert_eq!(audio.headers()["content-type"], "audio/wav");
+        assert_eq!(audio.bytes().await.unwrap().as_ref(), b"wav");
+        assert_eq!(get(&format!("/media/audio/bob/{id}")).send().await.unwrap().status(), 404);
+        for path in ["/media/files/..%2F..%2FCargo.toml", "/media/screenshots/praxis.db", "/media/avatars/..%2Fx"] {
+            assert_eq!(get(path).send().await.unwrap().status(), 404, "{path}");
+        }
+        let empty = http
+            .post(format!("{}{HOST_API_PREFIX}/media/stt/alice", grant.url))
+            .bearer_auth(&grant.token)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(empty.status(), 400);
     }
 
     #[tokio::test]

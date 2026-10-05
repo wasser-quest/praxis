@@ -3,7 +3,7 @@
 use axum::{extract::Path, http::StatusCode, Json};
 use serde::Deserialize;
 use serde_json::{json,Value};
-use crate::gateway::{decision_client,decision_profiles::{self as profiles,DecisionProfile}};
+use crate::gateway::decision_profiles::{self as profiles,DecisionProfile};
 
 type Error=(StatusCode,Json<Value>);
 fn bad(error:impl std::fmt::Display)->Error {(StatusCode::BAD_REQUEST,Json(json!({"error":error.to_string()})))}
@@ -26,13 +26,9 @@ pub async fn save(Path(name):Path<String>,Json(update):Json<FileUpdate>)->Result
 #[serde(deny_unknown_fields)]
 pub struct Probe {profile:DecisionProfile,contexts:Vec<String>}
 pub async fn probe(Json(probe):Json<Probe>)->Result<Json<Value>,Error> {
-    let start=std::time::Instant::now();
-    let results=decision_client::decide(&probe.profile,probe.contexts,&tokio_util::sync::CancellationToken::new()).await
-        .map_err(|e|bad(format!("Decision error: {e}")))?;
-    Ok(Json(json!({"results":results.iter().map(|d|json!({
-        "label":d.label,"state":probe.profile.state_map.get(&d.label),"probability":d.probability,
-        "confidence":d.confidence,"usage":d.usage,
-        "meets_threshold":d.probability>=probe.profile.minimum_probability,
-    })).collect::<Vec<_>>(),"elapsed_ms":start.elapsed().as_millis(),
-        "notice":"Classification only: no context, state, history or permissions changed. Probabilities are not calibrated certainty."})))
+    match crate::services::admin::decision_probe(&probe.profile,probe.contexts).await {
+        Ok(value)=>Ok(Json(value)),
+        Err(crate::services::admin::Failure::BadRequest(message))=>Err(bad(message)),
+        Err(other)=>Err((StatusCode::INTERNAL_SERVER_ERROR,Json(json!({"error":format!("{other:?}")})))),
+    }
 }

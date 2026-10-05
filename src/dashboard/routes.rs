@@ -203,6 +203,14 @@ pub(crate) fn router_with_state(state: Arc<DashboardState>) -> Router {
         .route("/profiles/:name/apply/:user_id", axum::routing::post(apply_profile))
         .route("/profiles/:name", axum::routing::delete(delete_profile))
         .route("/media", axum::routing::get(list_media))
+        // Uploads write to DATA_DIR and always need an operator token.
+        .route("/upload-avatar", axum::routing::post(upload_avatar))
+        .route(
+            "/upload-file",
+            axum::routing::post(upload_chat_file).layer(axum::extract::DefaultBodyLimit::max(
+                crate::services::media::MAX_UPLOAD + 1024 * 1024,
+            )),
+        )
         .layer(middleware::from_fn_with_state(
             state.clone(),
             dashboard_auth_middleware,
@@ -221,8 +229,6 @@ pub(crate) fn router_with_state(state: Arc<DashboardState>) -> Router {
         .route("/api/avatar/:name", axum::routing::get(get_avatar))
         .route("/api/files/:name", axum::routing::get(get_chat_file))
         .route("/api/screenshots/*path", axum::routing::get(get_screenshot))
-        .route("/api/upload-avatar", axum::routing::post(upload_avatar))
-        .route("/api/upload-file", axum::routing::post(upload_chat_file))
         .nest("/api", protected_extra)
         .nest_service("/static", static_service)
         .layer(middleware::from_fn(static_no_cache_middleware))
@@ -452,9 +458,8 @@ async fn get_chat_audio(
     State(state): State<Arc<DashboardState>>,
     Path((user_id, message_id)): Path<(String, i64)>,
 ) -> Result<axum::response::Response, StatusCode> {
-    let (mime, audio) = state.db.get_message_audio(&user_id, message_id)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
+    let (mime, audio) = crate::services::media::message_audio(&state.db, &user_id, message_id)
+        .map_err(admin_status)?;
     Ok(([
         (axum::http::header::CONTENT_TYPE, mime),
         (axum::http::header::CACHE_CONTROL, "private, no-store".to_string()),
@@ -861,27 +866,21 @@ async fn upload_avatar(
     State(_state): State<Arc<DashboardState>>,
     mut multipart: Multipart,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let data_dir = std::env::var("DATA_DIR").unwrap_or_else(|_| "./data".to_string());
-    std::fs::create_dir_all(format!("{}/avatars", data_dir)).ok();
-
+    let root = crate::services::media::data_dir();
     while let Ok(Some(mut field)) = multipart.next_field().await {
         let name = field.name().unwrap_or("unknown").to_string();
         let mut data = Vec::new();
         while let Ok(Some(chunk)) = field.chunk().await {
             data.extend_from_slice(&chunk);
+            if data.len() > crate::services::media::MAX_AVATAR {
+                break;
+            }
         }
-        if data.len() > 2_000_000 {
-            return Ok(Json(serde_json::json!({"error": "File too large (max 2MB)"})));
-        }
-        let ext = if data.starts_with(&[0x89, 0x50, 0x4E, 0x47]) { "png" }
-            else if data.starts_with(&[0xFF, 0xD8, 0xFF]) { "jpg" }
-            else if data.starts_with(b"GIF8") { "gif" }
-            else if data.starts_with(b"RIFF") && data.len() > 8 && &data[8..12] == b"WEBP" { "webp" }
-            else { return Ok(Json(serde_json::json!({"error": "Unsupported format. Use PNG, JPG, GIF, or WebP."}))); };
-
-        let path = format!("{}/avatars/{}.{}", data_dir, name, ext);
-        std::fs::write(&path, &data).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        return Ok(Json(serde_json::json!({"success": true, "url": format!("/api/avatar/{}", name)})));
+        return Ok(Json(match crate::services::media::store_avatar(&root, &name, &data) {
+            Ok(url) => serde_json::json!({"success": true, "url": url}),
+            Err(crate::services::admin::Failure::BadRequest(error)) => serde_json::json!({"error": error}),
+            Err(other) => return Err(admin_status(other)),
+        }));
     }
     Ok(Json(serde_json::json!({"error": "No file uploaded"})))
 }
@@ -889,42 +888,33 @@ async fn upload_avatar(
 async fn get_avatar(
     Path(name): Path<String>,
 ) -> Result<impl IntoResponse, StatusCode> {
-    let data_dir = std::env::var("DATA_DIR").unwrap_or_else(|_| "./data".to_string());
-    for ext in &["png", "jpg", "jpeg", "gif", "webp"] {
-        let path = format!("{}/avatars/{}.{}", data_dir, name, ext);
-        if let Ok(data) = std::fs::read(&path) {
-            let ct = match *ext {
-                "png" => "image/png",
-                "jpg" | "jpeg" => "image/jpeg",
-                "gif" => "image/gif",
-                "webp" => "image/webp",
-                _ => "application/octet-stream",
-            };
-            return Ok(([(axum::http::header::CONTENT_TYPE, ct)], data));
-        }
-    }
-    Err(StatusCode::NOT_FOUND)
+    let (content_type, data) =
+        crate::services::media::read_avatar(&crate::services::media::data_dir(), &name)
+            .map_err(admin_status)?;
+    Ok(([(axum::http::header::CONTENT_TYPE, content_type)], data))
 }
 
 async fn upload_chat_file(
     mut multipart: Multipart,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let data_dir = std::env::var("DATA_DIR").unwrap_or_else(|_| "./data".to_string());
-    std::fs::create_dir_all(format!("{}/uploads", data_dir)).ok();
+    let root = crate::services::media::data_dir();
     let mut files = Vec::new();
-
     while let Ok(Some(mut field)) = multipart.next_field().await {
         let filename = field.file_name().unwrap_or("file").to_string();
         let mut data = Vec::new();
         while let Ok(Some(chunk)) = field.chunk().await {
             data.extend_from_slice(&chunk);
+            if data.len() > crate::services::media::MAX_UPLOAD {
+                break;
+            }
         }
-        if data.len() > 50_000_000 {
-            return Ok(Json(serde_json::json!({"error": "File too large (max 50MB)"})));
+        match crate::services::media::store_upload(&root, &filename, &data) {
+            Ok(url) => files.push(url),
+            Err(crate::services::admin::Failure::BadRequest(error)) => {
+                return Ok(Json(serde_json::json!({"error": error})))
+            }
+            Err(other) => return Err(admin_status(other)),
         }
-        let path = format!("{}/uploads/{}", data_dir, filename);
-        std::fs::write(&path, &data).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        files.push(format!("/api/files/{}", filename));
     }
     if files.is_empty() {
         return Ok(Json(serde_json::json!({"error": "No files found"})));
@@ -935,41 +925,24 @@ async fn upload_chat_file(
 async fn get_chat_file(
     Path(name): Path<String>,
 ) -> Result<impl IntoResponse, StatusCode> {
-    let data_dir = std::env::var("DATA_DIR").unwrap_or_else(|_| "./data".to_string());
-    let path = format!("{}/uploads/{}", data_dir, name);
-    match std::fs::read(&path) {
-        Ok(data) => Ok((
-            [(axum::http::header::CONTENT_TYPE, "application/octet-stream")],
-            data,
-        )),
-        Err(_) => Err(StatusCode::NOT_FOUND),
-    }
+    let data = crate::services::media::read_upload(&crate::services::media::data_dir(), &name)
+        .map_err(admin_status)?;
+    Ok((
+        [
+            (axum::http::header::CONTENT_TYPE, "application/octet-stream"),
+            (axum::http::header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+        ],
+        data,
+    ))
 }
 
 async fn get_screenshot(
     Path(path): Path<String>,
 ) -> Result<impl IntoResponse, StatusCode> {
-    let data_dir = std::env::var("DATA_DIR").unwrap_or_else(|_| "./data".to_string());
-    let full_path = format!("{}/{}", data_dir, path);
-    // Security: ensure path stays under data_dir
-    let canonical = std::fs::canonicalize(&full_path).unwrap_or_default();
-    let base = std::fs::canonicalize(&data_dir).unwrap_or_default();
-    if !canonical.starts_with(&base) {
-        return Err(StatusCode::FORBIDDEN);
-    }
-    let data = std::fs::read(&canonical).map_err(|_| StatusCode::NOT_FOUND)?;
-    let ct = if path.ends_with(".png") {
-        "image/png"
-    } else if path.ends_with(".jpg") || path.ends_with(".jpeg") {
-        "image/jpeg"
-    } else if path.ends_with(".gif") {
-        "image/gif"
-    } else if path.ends_with(".webp") {
-        "image/webp"
-    } else {
-        "application/octet-stream"
-    };
-    Ok(([(axum::http::header::CONTENT_TYPE, ct)], data))
+    let (content_type, data) =
+        crate::services::media::read_screenshot(&crate::services::media::data_dir(), &path)
+            .map_err(admin_status)?;
+    Ok(([(axum::http::header::CONTENT_TYPE, content_type)], data))
 }
 
 /// Dashboard chat speech-to-text: accepts a browser MediaRecorder blob
@@ -1010,39 +983,10 @@ async fn dashboard_stt(
     if body.is_empty() {
         return Err(StatusCode::BAD_REQUEST);
     }
-    let ctx = state.db.load_context(&user_id).map_err(|_| StatusCode::NOT_FOUND)?;
-    let secrets = crate::db::secrets::get_secrets();
-    let api_key = secrets
-        .elevenlabs_api_key
-        .clone()
-        .unwrap_or_default();
-    if ctx.settings.voice_stt_type == "elevenlabs" && api_key.is_empty() {
-        return Ok(Json(serde_json::json!({"error": "ElevenLabs API key not configured"})));
-    }
-    let stt_config = crate::voice::STTConfig {
-        engine: ctx.settings.voice_stt_type.clone(),
-        api_key: (!api_key.is_empty()).then_some(api_key),
-        model_path: if ctx.settings.voice_stt_type == "vosk" {
-            ctx.settings.voice_vosk_model_path.clone()
-        } else {
-            ctx.settings.voice_whisper_model_path.clone()
-        },
-        vosk_url: ctx.settings.voice_vosk_url.clone(),
-        elevenlabs_model: ctx.settings.elevenlabs_stt_model.clone(),
-        elevenlabs_language: ctx.settings.elevenlabs_stt_language.clone(),
-        elevenlabs_tag_audio_events: ctx.settings.elevenlabs_stt_tag_audio_events,
-        elevenlabs_no_verbatim: ctx.settings.elevenlabs_stt_no_verbatim,
-    };
-    let stt_threshold = ctx.settings.stt_low_confidence_threshold;
-    match crate::voice::transcribe_audio(&body, &stt_config).await {
-        Ok(text) => Ok(Json(serde_json::json!({
-            "text": text,
-            "confidence": crate::voice::last_stt_confidence(),
-            "low_confidence": crate::voice::last_stt_confidence().map_or(false, |c| c < stt_threshold),
-            "threshold": stt_threshold,
-        }))),
-        Err(e) => Ok(Json(serde_json::json!({"error": e.to_string()}))),
-    }
+    crate::services::media::transcribe(&state.db, &user_id, &body)
+        .await
+        .map(Json)
+        .map_err(admin_status)
 }
 
 /// Context profiles: named, complete context snapshots ("Marvin-Default", ...)
@@ -1278,6 +1222,10 @@ mod audio_tests;
 mod tool_tests;
 
 #[cfg(test)]
+#[path = "media_tests.rs"]
+mod media_tests;
+
+#[cfg(test)]
 mod dashboard_tests {
     use super::*;
     use tempfile::TempDir;
@@ -1494,32 +1442,8 @@ async fn list_media(
     State(_state): State<Arc<DashboardState>>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let data_dir = std::env::var("DATA_DIR").unwrap_or_else(|_| "./data".to_string());
-    let uploads = format!("{}/uploads", data_dir);
-    let filter = params.get("q").map(|q| q.to_lowercase()).unwrap_or_default();
-    let mut files: Vec<serde_json::Value> = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(&uploads) {
-        for entry in entries_flat(entries) {
-            let path = entry.path();
-            if !path.is_file() { continue; }
-            let name = entry.file_name().to_string_lossy().to_string();
-            if !filter.is_empty() && !name.to_lowercase().contains(&filter) { continue; }
-            let meta = entry.metadata().ok();
-            files.push(serde_json::json!({
-                "name": name,
-                "url": format!("/api/files/{}", name),
-                "size": meta.as_ref().map(|m| m.len()).unwrap_or(0),
-                "modified": meta.and_then(|m| m.modified().ok())
-                    .map(|t| chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339()),
-            }));
-        }
-    }
-    files.sort_by(|a, b| {
-        let am = a["modified"].as_str().unwrap_or("");
-        let bm = b["modified"].as_str().unwrap_or("");
-        bm.cmp(am)
-    });
-    Ok(Json(serde_json::json!({ "files": files, "count": files.len() })))
+    let root = crate::services::media::data_dir();
+    Ok(Json(crate::services::media::list(&root, params.get("q").map(String::as_str))))
 }
 
 fn entries_flat(rd: std::fs::ReadDir) -> Vec<std::fs::DirEntry> {

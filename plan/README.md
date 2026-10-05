@@ -175,7 +175,10 @@ clipboard) remains an operator smoke check.
   templates, workflow files, memory profiles, pairings, cron list, delegations.
 - [x] Secrets (masked, `secrets` scope), context profiles, skills, decision
   profiles, router state, context/history writes in services + Host API.
-- [ ] Uploads/media, STT/TTS, chat audio, decision probe, feature page slots.
+- [x] Media (uploads, avatars, screenshots, message audio, STT) and decision
+  probe in services + Host API; dashboard uploads now require auth and media
+  names cannot traverse DATA_DIR.
+- [ ] Feature page slots (VM page/noVNC) for dashboard packages.
 - [ ] Package the frontend/static assets with the dashboard package and add
   navigation slots for absent features.
 - [ ] Convert the built-in dashboard into a package on Host API v1. Runtime-control and the remaining

@@ -84,6 +84,24 @@ route requires a scope; undeclared scopes return 403.
 | `PUT`/`DELETE /contexts/:user` (context writes can change workflow and permissions) | `admin:write` |
 | `DELETE /messages/:user`, `POST /messages/:user/compact` | `sessions:write` |
 | `GET /secrets` (masked only), `PUT /secrets` | `secrets` |
+| `GET /media?q=`, `GET /media/files/:name`, `POST /media/files?name=` (raw body, 50 MB) | `media` |
+| `GET`/`POST /media/avatars/:name` (PNG/JPG/GIF/WebP, 2 MB) | `media` |
+| `GET /media/screenshots/vm/:guest/screenshots/:file` | `media` |
+| `GET /media/audio/:user/:message_id`, `POST /media/stt/:user` (raw audio, 25 MB) | `media` |
+| `POST /decision-probe` `{profile, contexts}` (classification only, spends inference) | `agent` |
+
+Media names are a single `[A-Za-z0-9._:@+-]` component (uploads are
+sanitized to that); screenshots are served only from
+`vm/<guest>/screenshots/`, never other DATA_DIR content.
+| `GET /media?q=`, `GET /media/files/:name`, `POST /media/files?name=` (raw body, 50 MB) | `media` |
+| `GET`/`POST /media/avatars/:name` (PNG/JPG/GIF/WebP, 2 MB) | `media` |
+| `GET /media/screenshots/vm/:guest/screenshots/:file` | `media` |
+| `GET /media/audio/:user/:message_id`, `POST /media/stt/:user` (raw audio, 25 MB) | `media` |
+| `POST /decision-probe` `{profile, contexts}` (classification only, spends inference) | `agent` |
+
+Media names are a single `[A-Za-z0-9._:@+-]` component (uploads are
+sanitized to that); screenshots are served only from
+`vm/<guest>/screenshots/`, never other DATA_DIR content.
 
 `PUT /secrets` keeps the built-in guards: empty `gateway_api_key` /
 `dashboard_admin_password` are ignored (no lockout), and with
@@ -112,7 +130,7 @@ the Host API grants, but they are not an OS sandbox.
 
 ## Not yet in v1
 
-Uploads/media, STT/TTS, chat audio, the decision probe, and feature page slots
-(e.g. the VM page) are still only in the built-in dashboard. Provider setup
+Feature page slots (e.g. the VM page and its noVNC console) are still only
+reachable through the built-in dashboard's extension proxy. Provider setup
 stays on the gateway client API (`/v1/...`). They move into services and
 Host API scopes next; the built-in dashboard then becomes a package itself.

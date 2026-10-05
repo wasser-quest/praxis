@@ -14,7 +14,8 @@ pub const SCOPES: &[&str] = &[
     "sessions:read",
     // Fork sessions, clear the chat view.
     "sessions:write",
-    // Start, inject input into and stop agent loops (through the host path).
+    // Start, inject input into and stop agent loops (through the host path),
+    // and run the classification-only decision probe (spends inference).
     "agent",
     // Per-user live event stream (chat tokens, node updates, compaction).
     "events",
@@ -29,6 +30,8 @@ pub const SCOPES: &[&str] = &[
     // Masked secret view and secret updates (master-password guarded).
     // Values are never returned.
     "secrets",
+    // Uploads, avatars, VM screenshots, message audio and speech-to-text.
+    "media",
 ];
 
 pub fn valid_scope(scope: &str) -> bool {

@@ -4,6 +4,7 @@ pub mod agent;
 pub mod admin;
 pub mod auth;
 pub mod graphs;
+pub mod media;
 pub mod profiles;
 pub mod secrets;
 pub mod sessions;
