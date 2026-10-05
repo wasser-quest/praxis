@@ -61,6 +61,13 @@ async fn plugin_dispatch_allows_vm_prefix_without_stealing_a_builtin_name() {
         serde_json::from_str(&result).unwrap_or_else(|error| panic!("{error}: {result}"));
     assert_eq!(result["receipt"]["verified"], true, "{result}");
     assert_eq!(result["receipt"]["verified_by"], "fixture@1");
+    assert!(
+        crate::gateway::receipt_sign::verify(&result["receipt"]),
+        "capability receipt must be kernel-signed"
+    );
+    let mut tampered = result["receipt"].clone();
+    tampered["verified"] = serde_json::json!(false);
+    assert!(!crate::gateway::receipt_sign::verify(&tampered));
     assert_eq!(result["receipt"]["action"], "fixture/vm_probe");
     action_contracts::require(&user, "_complete").unwrap();
     crate::db::tools::set_plugin_tool_enabled(&db, "vm_probe", false).unwrap();

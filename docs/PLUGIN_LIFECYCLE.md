@@ -65,8 +65,11 @@ The kernel-observed evidence seam now records identity too: native `run_check`
 receipts carry `verified_by: "kernel"` and contracted plugin actions carry
 `verified_by: "<package>@<version>"`. In both cases the kernel ran the check
 and observed the exit code, timeout and resource bytes; the owner only defined
-the policy. Receipt signing and the swappable `RuntimeEngine` are the next
-implementation step.
+the policy. Receipts are also **kernel-signed**: an HMAC-SHA256 over the
+canonical fields (excluding the `signature` field itself), and
+`action_contracts::require` verifies that signature before accepting a receipt,
+so a stored or archived receipt cannot be edited to satisfy a guard. The key is
+per-process unless `PRAXIS_RECEIPT_KEY` is set to 64 hex characters.
 
 ## Runtime engine seam
 
