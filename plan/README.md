@@ -12,6 +12,10 @@ Start with [the full app roadmap](PLUGINIZATION.md). The order is:
 4. Move the remaining tools, providers, channels and workflow assets into packages.
 5. Ship a minimal runtime and a compatibility preset with independent packages.
 
+For the current state, big ideas and the concrete remaining work, read
+[the pluginization handoff](../docs/PLUGINIZATION_HANDOFF.md) first. It links the
+trust model, the `xis` design and every implemented milestone.
+
 An agreed follow-on architecture makes the loader itself the kernel and every
 capability an installable, replaceable plugin, including the default POML/SM/
 guard engine and the TUI. Install/uninstall may run operator-approved lifecycle
