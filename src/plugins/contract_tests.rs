@@ -81,6 +81,7 @@ async fn capability_commits_independent_evidence_and_rejects_replay() {
     let result = invoke(&registry, user, "first").await;
     assert_eq!(result["receipt"]["outcome"], "committed");
     assert_eq!(result["receipt"]["verified"], true);
+    assert_eq!(result["receipt"]["verified_by"], "sample@1");
     assert_eq!(result["result"]["verified"], false);
     action_contracts::require(user, "done").unwrap();
     assert!(registry

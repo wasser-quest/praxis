@@ -60,6 +60,7 @@ async fn plugin_dispatch_allows_vm_prefix_without_stealing_a_builtin_name() {
     let result: serde_json::Value =
         serde_json::from_str(&result).unwrap_or_else(|error| panic!("{error}: {result}"));
     assert_eq!(result["receipt"]["verified"], true, "{result}");
+    assert_eq!(result["receipt"]["verified_by"], "fixture@1");
     assert_eq!(result["receipt"]["action"], "fixture/vm_probe");
     action_contracts::require(&user, "_complete").unwrap();
     crate::db::tools::set_plugin_tool_enabled(&db, "vm_probe", false).unwrap();

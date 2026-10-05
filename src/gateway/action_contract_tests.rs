@@ -182,6 +182,7 @@ async fn contract_runner_records_real_exit_status_and_rejects_model_command_over
             serde_json::from_str(&run(user, "actual", &json!({"name":"tests"})).await.unwrap())
                 .unwrap();
         assert_eq!(result["receipt"]["verified"], verified);
+        assert_eq!(result["receipt"]["verified_by"], "kernel");
         assert_eq!(require(user, "_complete").is_ok(), verified);
         before_tool(user, "read_file").unwrap();
         assert_eq!(require(user, "_complete").is_ok(), verified);

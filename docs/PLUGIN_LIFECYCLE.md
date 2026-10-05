@@ -61,8 +61,12 @@ package whose requested role exceeds its grant is not activated, so a package
 cannot promote itself to `runtime` or `authority`. The effective role is part
 of the registry revision.
 
-The kernel-observed evidence/signing seam (the swappable `RuntimeEngine` and
-verifier identity in receipts) is the next implementation step.
+The kernel-observed evidence seam now records identity too: native `run_check`
+receipts carry `verified_by: "kernel"` and contracted plugin actions carry
+`verified_by: "<package>@<version>"`. In both cases the kernel ran the check
+and observed the exit code, timeout and resource bytes; the owner only defined
+the policy. Receipt signing and the swappable `RuntimeEngine` are the next
+implementation step.
 
 ## Lifecycle
 
