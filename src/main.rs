@@ -250,6 +250,17 @@ enum PluginAction {
     },
     /// Verify installed plugins against praxis.lock.json
     Verify,
+    /// Apply a package's declared migrations to its own database (or revert)
+    Migrate {
+        #[arg(value_name = "PLUGIN_NAME")]
+        name: String,
+        /// Revert applied migrations in reverse order instead of applying
+        #[arg(long)]
+        down: bool,
+        /// Print the plan without changing the package database
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Enable an installed plugin
     Enable {
         #[arg(value_name = "PLUGIN_NAME")]
@@ -1153,6 +1164,55 @@ async fn handle_plugin_action(action: &PluginAction) -> anyhow::Result<()> {
                 );
             }
         }
+        PluginAction::Migrate {
+            name,
+            down,
+            dry_run,
+        } => {
+            let plugin_dir = plugins_path.join(name);
+            let plugin = praxis::plugins::load_installed_plugin(&plugin_dir)
+                .map_err(|error| anyhow::anyhow!("Cannot load plugin '{name}': {error}"))?;
+            if plugin.provides.migrations.is_empty() {
+                println!("Plugin '{name}' declares no migrations.");
+                return Ok(());
+            }
+            let migrations =
+                praxis::plugins::migrations::load(&plugin_dir, &plugin.provides.migrations)?;
+            if *dry_run {
+                let applied = praxis::plugins::migrations::history(&data_dir, name)?
+                    .into_iter()
+                    .map(|(id, _)| id)
+                    .collect::<std::collections::HashSet<_>>();
+                for migration in &migrations {
+                    let state = if applied.contains(&migration.id) {
+                        "applied"
+                    } else {
+                        "pending"
+                    };
+                    println!(
+                        "  {state} {}{}",
+                        migration.id,
+                        if migration.down.is_some() { "" } else { " (irreversible)" }
+                    );
+                }
+                return Ok(());
+            }
+            if *down {
+                let reverted = praxis::plugins::migrations::revert(&data_dir, name, &migrations)?;
+                if reverted.is_empty() {
+                    println!("Plugin '{name}': no applied migrations to revert.");
+                } else {
+                    println!("Plugin '{name}' reverted: {}", reverted.join(", "));
+                }
+            } else {
+                let applied = praxis::plugins::migrations::apply(&data_dir, name, &migrations)?;
+                if applied.is_empty() {
+                    println!("Plugin '{name}': migrations already up to date.");
+                } else {
+                    println!("Plugin '{name}' applied: {}", applied.join(", "));
+                }
+            }
+        }
         PluginAction::List => {
             if !plugins_path.exists() {
                 println!("No plugins directory found at '{}'", plugins_dir);
@@ -1734,6 +1794,26 @@ mod tests {
             Cli::Plugin {
                 action: PluginAction::Untrust { name }
             } if name == "engine"
+        ));
+    }
+
+    #[test]
+    fn test_cli_parsing_plugin_migrate() {
+        let cli = Cli::try_parse_from(["praxis", "plugin", "migrate", "demo", "--down"])
+            .unwrap();
+        assert!(matches!(
+            cli,
+            Cli::Plugin {
+                action: PluginAction::Migrate { name, down: true, dry_run: false }
+            } if name == "demo"
+        ));
+        let cli = Cli::try_parse_from(["praxis", "plugin", "migrate", "demo", "--dry-run"])
+            .unwrap();
+        assert!(matches!(
+            cli,
+            Cli::Plugin {
+                action: PluginAction::Migrate { name, down: false, dry_run: true }
+            } if name == "demo"
         ));
     }
 }

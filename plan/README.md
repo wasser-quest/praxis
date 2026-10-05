@@ -52,8 +52,11 @@ optional workflow packs add assets rather than replacing the core interpreter.
   `install-default` resolves preset dependencies in order with cycle detection,
   and `provides` now declares an external `tools.json` plus route/UI/asset/
   migration namespaces with one-owner checks, and places declared assets into
-  `ROOT_DIR` with operator-edit preservation (`plugin_assets.json`). Loading
-  routes/UI and executing migrations remain.
+  `ROOT_DIR` with operator-edit preservation (`plugin_assets.json`). A package
+  can bind a service to an authenticated web contribution (`provides.web` +
+  worker `web_info`), proxied through the dashboard/Host API feature routes, and
+  run namespaced, reversible migrations (`provides.migrations` → `migrations/*.sql`
+  against `DATA_DIR/plugin_data/<owner>.db`, `praxis plugin migrate [--down]`).
 - [ ] PR 8c: kernel interfaces (trust levels, evidence observer and signed
   receipts, replaceable runtime engine interface).
   Progress: the `role` declaration and the operator trust store

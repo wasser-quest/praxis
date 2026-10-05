@@ -62,8 +62,34 @@ module/request finishes after the page was hidden. Failed/stopped bindings are
 removed when the extension list is refreshed.
 
 These are **trusted first-party pages**, running with the dashboard's origin and
-shared host helpers. General third-party UI isolation, manifest-v2 contributions
-and immutable package publication remain future work. Guest operations preserve
+shared host helpers. General third-party UI isolation and immutable package
+publication remain future work; manifest-v2 contributions are now loaded.
+
+## Manifest-declared contributions
+
+Any package can contribute a web service without a host-native adapter. Declare
+it in the manifest and have the worker expose the matching `web_info` control:
+
+```json
+"provides": {
+  "routes": ["ext"],
+  "ui": ["ext.panel"],
+  "web": {"service": "ext", "title": "Extension"}
+}
+```
+
+The host derives the descriptor from the owner (default
+`/plugins/<owner>/ui/page.html`, `.js`, `.css`; optional `websockets` list) and
+requires the worker's `web_info` descriptor to match it byte for byte. The
+worker gets a per-launch `web_token` in its initialization, must bind a
+loopback listener, and must reject requests without the private
+`x-praxis-plugin-key` header. From then on the service is listed and proxied by
+the same authenticated dashboard/Host API paths and with the same bounded
+transport, drain and forced-disconnect behavior as the VM. One owner per
+namespace; a descriptor mismatch, a missing control or a bad handshake fails
+startup closed, and install/enable never starts the worker.
+
+Guest operations preserve
 the existing global administrator policy; per-user guest ownership is a remaining
 PR 3 milestone.
 

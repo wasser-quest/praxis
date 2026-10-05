@@ -1,11 +1,35 @@
 #!/usr/bin/python3
-"""Local declared-service fixture; no network, credentials or host access."""
+"""Local declared-service fixture; no external network, credentials or host access."""
 import json
 import pathlib
 import struct
 import sys
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 root = pathlib.Path.cwd()
+web = {"port": 0, "key": None}
+
+
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        # Enforce the host-issued private key, like a real contribution.
+        if self.headers.get("x-praxis-plugin-key") != web["key"]:
+            self.send_response(403)
+            self.end_headers()
+            return
+        body = json.dumps({
+            "path": self.path,
+            "principal": self.headers.get("x-praxis-principal"),
+        }).encode()
+        self.send_response(200)
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args):
+        pass
 
 
 def read():
@@ -24,6 +48,11 @@ def write(value):
 
 hello = read()
 mode = (root / "worker.mode").read_text()
+if mode == "web":
+    web["key"] = hello["initialization"].get("web_token")
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    web["port"] = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
 (root / "worker.ready").touch()
 write({
     "type": "ready",
@@ -32,7 +61,7 @@ write({
     "service": "probe",
     "nonce": hello["nonce"],
     "operations": ["probe_echo"],
-    "controls": [],
+    "controls": ["web_info"] if mode == "web" else [],
 })
 while True:
     request = read()
@@ -49,6 +78,19 @@ while True:
         result = {
             "caller": {k: v for k, v in context.items() if k not in ("attributes", "secrets")},
             "initialization": hello["initialization"],
+        }
+    elif request["type"] == "control" and request["operation"] == "web_info":
+        result = {
+            "version": 1,
+            "port": web["port"],
+            "descriptor": {
+                "id": "probe",
+                "title": "Probe",
+                "page": "/plugins/probe/ui/page.html",
+                "script": "/plugins/probe/ui/probe.js",
+                "style": "/plugins/probe/ui/probe.css",
+                "websockets": [],
+            },
         }
     else:
         result = {"healthy": True}

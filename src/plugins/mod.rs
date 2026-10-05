@@ -4,6 +4,7 @@ mod contract_tests;
 mod source_contract_tests;
 pub mod contracts;
 pub mod lifecycle;
+pub mod migrations;
 pub mod minimax_image;
 pub mod trust;
 mod executable;
@@ -12,6 +13,8 @@ mod executable;
 mod comfyui_tests;
 #[cfg(test)]
 mod media_tests;
+#[cfg(test)]
+mod migration_tests;
 
 #[cfg(all(test, unix))]
 mod executable_tests;
@@ -90,10 +93,73 @@ fn valid_provides_name(name: &str) -> bool {
         && !name.split('/').any(|part| part.is_empty() || part == "." || part == "..")
 }
 
+/// Manifest v2 web contribution binding. The named service's worker must
+/// declare a matching `web_info` descriptor; the host then proxies the
+/// contribution through authenticated dashboard/Host API routes. Paths default
+/// to the owner's `/plugins/<owner>/ui/*` namespace.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct WebDeclaration {
+    /// Service (from a `service` tool handler) that hosts the pages.
+    pub service: String,
+    /// Operator-facing page/slot title.
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub script: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub style: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub websockets: Vec<String>,
+}
+
+impl WebDeclaration {
+    /// The deterministic descriptor the worker's `web_info` must match. The
+    /// descriptor id is the package owner, so a contribution cannot claim
+    /// another package's namespace.
+    pub fn descriptor(&self, owner: &str) -> praxis_plugin_api::web::WebDescriptor {
+        let mut descriptor = praxis_plugin_api::web::WebDescriptor::for_package(owner, &self.title);
+        if let Some(page) = &self.page {
+            descriptor.page = page.clone();
+        }
+        if let Some(script) = &self.script {
+            descriptor.script = script.clone();
+        }
+        if let Some(style) = &self.style {
+            descriptor.style = style.clone();
+        }
+        if !self.websockets.is_empty() {
+            descriptor.websockets = self.websockets.clone();
+        }
+        descriptor
+    }
+
+    pub fn validate(&self, owner: &str) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            !self.service.is_empty()
+                && self.service.len() <= 128
+                && self
+                    .service
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"_.-".contains(&b)),
+            "Invalid web service name"
+        );
+        anyhow::ensure!(
+            !self.title.trim().is_empty()
+                && self.title.len() <= 80
+                && !self.title.chars().any(char::is_control),
+            "Invalid web title"
+        );
+        self.descriptor(owner).validate(owner)?;
+        Ok(())
+    }
+}
+
 /// Manifest v2 contributions. Tools keep their own owner check; routes, UI
 /// slots, assets and migration ids are declared namespaces with one enabled
-/// owner each. Later phases load these declarations; today they are validated
-/// and pinned in the registry revision.
+/// owner each. A declared `web` block binds a service to an authenticated web
+/// contribution loaded at startup.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProvidesDeclaration {
@@ -109,6 +175,8 @@ pub struct ProvidesDeclaration {
     pub assets: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub migrations: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub web: Option<WebDeclaration>,
 }
 
 impl ProvidesDeclaration {
@@ -118,6 +186,7 @@ impl ProvidesDeclaration {
             && self.ui.is_empty()
             && self.assets.is_empty()
             && self.migrations.is_empty()
+            && self.web.is_none()
     }
 
     /// Non-tool ownership claims.
@@ -130,7 +199,7 @@ impl ProvidesDeclaration {
             .chain(self.migrations.iter().map(|value| ("migration", value.as_str())))
     }
 
-    pub fn validate(&self) -> anyhow::Result<()> {
+    pub fn validate(&self, owner: &str) -> anyhow::Result<()> {
         for (kind, name) in self.claims() {
             anyhow::ensure!(valid_provides_name(name), "Invalid {kind} name '{name}'");
         }
@@ -154,6 +223,15 @@ impl ProvidesDeclaration {
             for value in values {
                 anyhow::ensure!(seen.insert(value), "Duplicate {kind} '{value}'");
             }
+        }
+        if let Some(web) = &self.web {
+            // A web contribution must declare the namespace it owns so the
+            // one-owner registry check covers it.
+            anyhow::ensure!(
+                !self.routes.is_empty() || !self.ui.is_empty(),
+                "provides.web requires a declared route or UI namespace"
+            );
+            web.validate(owner)?;
         }
         Ok(())
     }
@@ -876,8 +954,10 @@ pub fn load_plugins_from_dir(dir: &Path) -> anyhow::Result<Vec<Plugin>> {
 fn load_plugin_from_manifest(manifest_path: &Path, plugin_dir: &Path) -> anyhow::Result<Plugin> {
     let data = std::fs::read_to_string(manifest_path)?;
     let manifest: PluginManifest = serde_json::from_str(&data)?;
-    manifest.provides.validate()?;
+    manifest.provides.validate(&manifest.name)?;
     validate_assets(plugin_dir, &manifest.provides.assets)?;
+    // Declared migrations must resolve to readable SQL scripts inside the package.
+    migrations::load(plugin_dir, &manifest.provides.migrations)?;
 
     // Tools are declared inline or in an external file named by provides.tools.
     let declared_tools = match &manifest.provides.tools {
@@ -904,6 +984,16 @@ fn load_plugin_from_manifest(manifest_path: &Path, plugin_dir: &Path) -> anyhow:
         }
         None => manifest.tools,
     };
+
+    if let Some(web) = &manifest.provides.web {
+        anyhow::ensure!(
+            declared_tools.iter().any(|tool| {
+                matches!(&tool.handler, PluginHandler::Service(adapter) if adapter.service == web.service)
+            }),
+            "provides.web.service '{}' is not a declared service",
+            web.service
+        );
+    }
 
     let tools = declared_tools
         .into_iter()
@@ -1441,6 +1531,12 @@ mod plugin_tests {
         std::fs::write(plugin_dir.join("echo.sh"), "printf ok\n").unwrap();
         std::fs::create_dir_all(plugin_dir.join("ext")).unwrap();
         std::fs::write(plugin_dir.join("ext/a"), "asset").unwrap();
+        std::fs::create_dir_all(plugin_dir.join("migrations")).unwrap();
+        std::fs::write(
+            plugin_dir.join("migrations/ext_1.sql"),
+            "CREATE TABLE IF NOT EXISTS ext_1(x);",
+        )
+        .unwrap();
         std::fs::write(
             plugin_dir.join("tools.json"),
             serde_json::json!([{
@@ -1483,6 +1579,32 @@ mod plugin_tests {
     }
 
     #[test]
+    fn loader_requires_web_contribution_to_name_a_declared_service() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugin_dir = dir.path().join("webpkg");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+        std::fs::write(plugin_dir.join("worker"), "#!/bin/sh\n").unwrap();
+        let base = serde_json::json!({
+            "name": "webpkg", "description": "x", "version": "1",
+            "provides": {"routes": ["webpkg"], "web": {"service": "ext", "title": "Ext"}},
+            "tools": [{
+                "name": "ext_echo", "description": "x",
+                "parameters": {"type": "object"},
+                "handler": {"type": "service", "service": "ext", "operation": "echo", "api_version": 1, "timeout_secs": 5, "executable": "worker"}
+            }]
+        });
+        std::fs::write(plugin_dir.join("plugin.json"), base.to_string()).unwrap();
+        let plugin =
+            load_plugin_from_manifest(&plugin_dir.join("plugin.json"), &plugin_dir).unwrap();
+        assert_eq!(plugin.provides.web.as_ref().unwrap().service, "ext");
+
+        let mut bad = base.clone();
+        bad["provides"]["web"]["service"] = serde_json::json!("missing");
+        std::fs::write(plugin_dir.join("plugin.json"), bad.to_string()).unwrap();
+        assert!(load_plugin_from_manifest(&plugin_dir.join("plugin.json"), &plugin_dir).is_err());
+    }
+
+    #[test]
     fn duplicate_provides_claims_are_rejected_atomically() {
         let fixture = |owner: &str, route: &str| -> Plugin {
             serde_json::from_value(serde_json::json!({
@@ -1509,14 +1631,23 @@ mod plugin_tests {
             "tools": []
         }))
         .unwrap();
-        assert!(plugin.provides.validate().is_err());
+        assert!(plugin.provides.validate(&plugin.name).is_err());
         let plugin: Plugin = serde_json::from_value(serde_json::json!({
             "name": "dup", "description": "x", "version": "1",
             "provides": {"ui": ["a", "a"]},
             "tools": []
         }))
         .unwrap();
-        assert!(plugin.provides.validate().is_err());
+        assert!(plugin.provides.validate(&plugin.name).is_err());
+
+        // A web contribution without a declared namespace is rejected.
+        let plugin: Plugin = serde_json::from_value(serde_json::json!({
+            "name": "web", "description": "x", "version": "1",
+            "provides": {"web": {"service": "ext", "title": "Ext"}},
+            "tools": []
+        }))
+        .unwrap();
+        assert!(plugin.provides.validate(&plugin.name).is_err());
     }
 
     #[test]

@@ -198,7 +198,8 @@ A manifest may declare `provides` instead of (or beside) inline tools:
   "routes": ["file_tools"],
   "ui": ["file_tools.panel"],
   "assets": ["file_tools/readme.md"],
-  "migrations": ["file_tools_0001"]
+  "migrations": ["file_tools_0001"],
+  "web": {"service": "file_tools", "title": "File Tools"}
 }
 ```
 
@@ -216,8 +217,25 @@ A manifest may declare `provides` instead of (or beside) inline tools:
   unchanged owned file is replaced by a new package revision. Uninstall removes
   only owned files whose bytes still match; edits are preserved. Ownership is
   recorded in `DATA_DIR/plugin_assets.json`.
-* Route/UI *loading* and migration *execution* remain; tools and assets are
-  live.
+* **`web` binds a service to an authenticated contribution.** The named service
+  (declared by a `service` tool handler) must be an installed worker. The host
+  derives the descriptor (defaulting to `/plugins/<owner>/ui/*` and an optional
+  `websockets` list) and requires the worker's `web_info` control to match it
+  exactly. The contribution is then proxied through the dashboard's
+  `/api/plugins/<owner>`/`/plugins/<owner>` routes and the Host API feature
+  slots with the same authentication, bounded transport and drain semantics as
+  the VM. One owner per namespace; a mismatch or missing `web_info` fails
+  startup closed.
+* **`migrations` are namespaced and reversible.** Each id resolves to
+  `migrations/<id>.sql` and, optionally, `migrations/<id>.down.sql` inside the
+  package. Migration SQL runs on a dedicated connection to
+  `DATA_DIR/plugin_data/<owner>.db`, so it cannot reach core tables or another
+  package's data. The host records the id and a hash of the exact `up` script;
+  a changed script is rejected. `praxis plugin migrate <name>` applies pending
+  migrations (idempotent) and `--down` reverts applied ones in reverse order.
+  Install and enable never run migrations implicitly.
+
+Tools, assets, web contributions and migrations are live.
 
 See `examples/plugins/file_tools` for a working external-`tools.json` package
 that also ships a template asset.

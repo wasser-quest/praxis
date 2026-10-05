@@ -108,7 +108,7 @@ pub(crate) fn validate(plugins: &PluginRegistry) -> anyhow::Result<()> {
     // Manifest v2 contributions: one enabled owner per declared namespace.
     let mut claims: HashMap<(&'static str, &str), String> = HashMap::new();
     for plugin in plugins.list().into_iter().filter(|plugin| plugin.enabled) {
-        plugin.provides.validate()?;
+        plugin.provides.validate(&plugin.name)?;
         for (kind, name) in plugin.provides.claims() {
             if let Some(owner) = claims.insert((kind, name), plugin.name.clone()) {
                 anyhow::bail!(

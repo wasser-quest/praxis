@@ -127,6 +127,83 @@ async fn declared_service_bad_version_fails_before_effects() {
 
 #[cfg(unix)]
 #[tokio::test]
+async fn declared_service_binds_a_manifest_web_contribution() {
+    let (dir, _db, config, _registry) = fixture("web");
+    let manifest_path = dir.path().join("plugins/probe/plugin.json");
+    let mut manifest: Value =
+        serde_json::from_str(&std::fs::read_to_string(&manifest_path).unwrap()).unwrap();
+    manifest["provides"] = json!({
+        "routes": ["probe"],
+        "ui": ["probe"],
+        "web": {"service": "probe", "title": "Probe"}
+    });
+    std::fs::write(&manifest_path, manifest.to_string()).unwrap();
+    let mut registry = crate::plugins::load_all_plugins(&dir.path().join("plugins"));
+    super::process_service::configure(&config, &mut registry).unwrap();
+    assert!(super::process_service::initialize_service(&config, &registry)
+        .await
+        .is_ok());
+
+    let services = registry.web_services();
+    assert_eq!(services.len(), 1);
+    let endpoint = services[0].web_endpoint().expect("declared web endpoint");
+    assert_eq!(endpoint.info.descriptor.id, "probe");
+    assert_eq!(endpoint.info.descriptor.title, "Probe");
+    assert_eq!(
+        services[0].descriptor().web.clone().unwrap(),
+        praxis_plugin_api::web::WebDescriptor::for_package("probe", "Probe")
+    );
+
+    // The worker enforces the host-issued private key on its loopback listener.
+    let client = reqwest::Client::new();
+    let url = format!(
+        "http://127.0.0.1:{}/plugins/probe/ui/page.html",
+        endpoint.info.port
+    );
+    assert_eq!(
+        client.get(&url).send().await.unwrap().status(),
+        reqwest::StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        client
+            .get(&url)
+            .header(praxis_plugin_api::web::PRIVATE_HEADER, &endpoint.key)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        reqwest::StatusCode::OK
+    );
+    registry.shutdown_services(Duration::from_secs(2)).await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn declared_service_web_mismatch_fails_closed() {
+    let (dir, _db, config, _registry) = fixture("web");
+    let manifest_path = dir.path().join("plugins/probe/plugin.json");
+    let mut manifest: Value =
+        serde_json::from_str(&std::fs::read_to_string(&manifest_path).unwrap()).unwrap();
+    // The worker declares title "Probe"; a different manifest title must fail.
+    manifest["provides"] = json!({
+        "routes": ["probe"],
+        "web": {"service": "probe", "title": "Not Probe"}
+    });
+    std::fs::write(&manifest_path, manifest.to_string()).unwrap();
+    let mut registry = crate::plugins::load_all_plugins(&dir.path().join("plugins"));
+    super::process_service::configure(&config, &mut registry).unwrap();
+    assert!(super::process_service::initialize_service(&config, &registry)
+        .await
+        .is_err());
+    assert!(registry
+        .web_services()
+        .first()
+        .and_then(|service| service.web_endpoint())
+        .is_none());
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn declared_service_conflicting_workers_are_rejected() {
     let (dir, _db, config, mut registry) = fixture("echo");
     // A second tool for the same service that points at a different worker.

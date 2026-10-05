@@ -24,6 +24,7 @@ fn launch_spec(
     executable: &str,
     args: Vec<String>,
     operations: &[String],
+    controls: Vec<String>,
 ) -> anyhow::Result<LaunchSpec> {
     let cwd = Path::new(&config.root_dir).canonicalize()?;
     let program = Path::new(executable).to_path_buf();
@@ -46,20 +47,27 @@ fn launch_spec(
         owner: owner.into(),
         service: service.into(),
         operations: operations.to_vec(),
-        controls: Vec::new(),
+        controls,
         environment,
     };
     spec.validate()?;
     Ok(spec)
 }
 
+struct WorkerDeclaration {
+    executable: String,
+    args: Vec<String>,
+    operations: Vec<String>,
+    web: Option<crate::plugins::WebDeclaration>,
+}
+
 /// Gather the distinct `(owner, service)` executable declarations from enabled
-/// plugins and validate that every tool of one service agrees on the worker.
+/// plugins and validate that every tool of one service agrees on the worker. A
+/// package-level `provides.web` binds the named service to a web contribution.
 fn declarations(
     plugins: &PluginRegistry,
-) -> anyhow::Result<BTreeMap<(String, String), (String, Vec<String>, Vec<String>)>> {
-    let mut bindings: BTreeMap<(String, String), (String, Vec<String>, Vec<String>)> =
-        BTreeMap::new();
+) -> anyhow::Result<BTreeMap<(String, String), WorkerDeclaration>> {
+    let mut bindings: BTreeMap<(String, String), WorkerDeclaration> = BTreeMap::new();
     for plugin in plugins.list().into_iter().filter(|plugin| plugin.enabled) {
         for tool in &plugin.tools {
             let PluginHandler::Service(adapter) = &tool.handler else {
@@ -69,19 +77,24 @@ fn declarations(
                 continue;
             };
             let key = (plugin.name.clone(), adapter.service.clone());
-            let entry = bindings.entry(key).or_insert_with(|| {
-                (
-                    executable.clone(),
-                    adapter.args.clone(),
-                    Vec::new(),
-                )
+            let web = plugin
+                .provides
+                .web
+                .as_ref()
+                .filter(|declaration| declaration.service == adapter.service)
+                .cloned();
+            let entry = bindings.entry(key).or_insert_with(|| WorkerDeclaration {
+                executable: executable.clone(),
+                args: adapter.args.clone(),
+                operations: Vec::new(),
+                web,
             });
             anyhow::ensure!(
-                &entry.0 == executable && entry.1 == adapter.args,
+                entry.executable == *executable && entry.args == adapter.args,
                 "Conflicting worker declarations for native service '{}'",
                 adapter.service
             );
-            entry.2.push(adapter.operation.clone());
+            entry.operations.push(adapter.operation.clone());
         }
     }
     Ok(bindings)
@@ -90,25 +103,39 @@ fn declarations(
 pub struct DeclaredServiceAdapter {
     spec: LaunchSpec,
     initialization: Value,
+    web: Option<crate::plugins::WebDeclaration>,
+    web_token: Option<String>,
+    endpoint: OnceCell<crate::runtime::web::WebEndpoint>,
     client: OnceCell<Arc<Client>>,
 }
 
 impl DeclaredServiceAdapter {
-    pub fn new(config: &Config, spec: LaunchSpec) -> anyhow::Result<Self> {
+    pub fn new(
+        config: &Config,
+        spec: LaunchSpec,
+        web: Option<crate::plugins::WebDeclaration>,
+    ) -> anyhow::Result<Self> {
         let data = Path::new(&config.data_dir);
         let data = if data.is_absolute() {
             data.to_path_buf()
         } else {
             std::env::current_dir()?.join(data)
         };
-        let initialization = json!({
+        let web_token = web.as_ref().map(|_| uuid::Uuid::new_v4().simple().to_string());
+        let mut initialization = json!({
             "data_dir": data.to_string_lossy(),
             "root_dir": spec.cwd.to_string_lossy(),
             "workspace": spec.cwd.to_string_lossy(),
         });
+        if let Some(token) = &web_token {
+            initialization["web_token"] = json!(token);
+        }
         Ok(Self {
             spec,
             initialization,
+            web,
+            web_token,
+            endpoint: OnceCell::new(),
             client: OnceCell::new(),
         })
     }
@@ -127,8 +154,48 @@ impl NativeService for DeclaredServiceAdapter {
         self.client.get().is_some_and(|client| client.available())
     }
 
+    fn web_descriptor(&self) -> Option<praxis_plugin_api::web::WebDescriptor> {
+        self.web.as_ref().map(|web| web.descriptor(&self.spec.owner))
+    }
+
+    fn web_endpoint(&self) -> Option<crate::runtime::web::WebEndpoint> {
+        if !self.available() {
+            return None;
+        }
+        self.endpoint.get().cloned()
+    }
+
     async fn initialize(&self) -> anyhow::Result<()> {
         let client = Arc::new(Client::launch(&self.spec, self.initialization.clone()).await?);
+        if let Some(web) = &self.web {
+            let expected = web.descriptor(&self.spec.owner);
+            let info = async {
+                let info: praxis_plugin_api::web::WebInfo = serde_json::from_value(
+                    client.control("web_info", json!({})).await?,
+                )?;
+                info.validate(&self.spec.owner)?;
+                anyhow::ensure!(
+                    info.descriptor == expected,
+                    "Declared web contribution does not match its manifest declaration"
+                );
+                Ok::<_, anyhow::Error>(info)
+            }
+            .await;
+            let info = match info {
+                Ok(info) => info,
+                Err(error) => {
+                    client.force_stop();
+                    return Err(error);
+                }
+            };
+            let token = self
+                .web_token
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("Missing host web token"))?;
+            self.endpoint
+                .set(crate::runtime::web::WebEndpoint::new(info, token))
+                .map_err(|_| anyhow::anyhow!("Declared web binding is already initialized"))?;
+        }
         if let Err(error) = client.health().await {
             client.force_stop();
             return Err(error);
@@ -185,19 +252,33 @@ impl NativeService for DeclaredServiceAdapter {
 /// Register every executable service declaration. Existing bindings (VM, shell)
 /// are left untouched; an explicitly registered owner wins over a declaration.
 pub fn configure(config: &Config, plugins: &mut PluginRegistry) -> anyhow::Result<()> {
-    for ((owner, service), (executable, args, mut operations)) in declarations(plugins)? {
+    for ((owner, service), declaration) in declarations(plugins)? {
         if plugins.service_handle(&owner, &service).is_some() {
             continue;
         }
+        let mut operations = declaration.operations;
         operations.sort();
         operations.dedup();
-        let spec = launch_spec(config, &owner, &service, &executable, args, &operations)?;
+        let controls = if declaration.web.is_some() {
+            vec!["web_info".to_string()]
+        } else {
+            Vec::new()
+        };
+        let spec = launch_spec(
+            config,
+            &owner,
+            &service,
+            &declaration.executable,
+            declaration.args,
+            &operations,
+            controls,
+        )?;
         plugins.register_service(
             &owner,
             &service,
             crate::runtime::features::INVOCATION_API_VERSION,
             &operations.iter().map(String::as_str).collect::<Vec<_>>(),
-            Arc::new(DeclaredServiceAdapter::new(config, spec)?),
+            Arc::new(DeclaredServiceAdapter::new(config, spec, declaration.web)?),
         )?;
     }
     Ok(())

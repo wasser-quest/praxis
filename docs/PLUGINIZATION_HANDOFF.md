@@ -100,7 +100,8 @@ revision:
   "provides": {
     "tools": "tools.json",
     "routes": ["shell"], "ui": ["shell.panel"],
-    "assets": ["templates/foo.poml"], "migrations": ["shell_0001"]
+    "assets": ["templates/foo.poml"], "migrations": ["shell_0001"],
+    "web": {"service": "shell", "title": "Shell"}
   },
   "role": "runtime",
   "engine": {"executable": "bin/engine", "args": ["--stdio"]},
@@ -148,7 +149,10 @@ Handlers: `builtin`, `http`, `script`, `executable`, `verification`,
 * **`plugin enable/disable`**, `plugin trust/untrust`, `plugin install-default`.
 * **Manifest v2 `provides`**: external `tools.json`, `routes`/`ui`/`assets`/
   `migrations` namespaces with one-owner checks; declared **assets are placed
-  into `ROOT_DIR`** with operator-edit preservation (`DATA_DIR/plugin_assets.json`).
+  into `ROOT_DIR`** with operator-edit preservation (`DATA_DIR/plugin_assets.json`);
+  a declared **`web`** contribution binds a service to authenticated routes/UI;
+  declared **migrations** run against a per-package database
+  (`praxis plugin migrate`).
 * **Trust roles + operator trust store** (`DATA_DIR/plugin_trust.json`): a
   package requesting more than its grant is not activated.
 * **Receipt identity + signing**: `verified_by` (`kernel` or
@@ -184,9 +188,12 @@ bytes are hashed so a changed uninstall hook needs `--force`.
 
 Tools can live in an external `tools.json`. Assets mirror their package-relative
 path under `ROOT_DIR`; a destination that differs from the last owned revision is
-an operator edit and is kept. Routes/UI are declared and ownership-checked but
-not yet loaded. Migrations are declared but not executed (they need the
-scoped-storage decision).
+an operator edit and is kept. `routes`/`ui`/`migrations` are ownership-checked
+declared namespaces. A `web` block binds a package's service to a descriptor the
+worker must match via `web_info`; the host then proxies it through authenticated
+dashboard/Host API routes. Declared migrations run against a package-owned
+SQLite database under `DATA_DIR/plugin_data/<owner>.db` (namespaced and
+reversible), so a migration cannot read core or another package's data.
 
 ### 5.3 Trust roles
 
@@ -236,13 +243,15 @@ Async SM evaluation (A.1), observed evidence to the engine (A.2) and a stable
 receipt-key store (A.3) are implemented. See §5.4, §5.5 and §7. The remaining
 kernel-seam work is in §B (routes/UI loading and migrations).
 
-### B. Manifest v2 loading
+### B. Manifest v2 loading — done
 
-4. **`routes`/`ui` loading.** Let a package's service expose a web contribution
-   (the VM's `web_info`/`WebDescriptor` path) and proxy it through the
-   authenticated host, like dashboard feature slots. Enforce one owner and auth.
-5. **`migrations` execution.** Namespaced, reversible plugin migrations. Needs a
-   scoped-storage decision so a plugin cannot read other users' data.
+A declared `provides.web` binds a package's service to an authenticated web
+contribution: the host derives the descriptor, requires the worker's `web_info`
+to match it, and proxies it through the dashboard/Host API feature routes
+(one owner, authenticated). Declared `provides.migrations` resolve to
+`migrations/<id>.sql` scripts that run against a per-package database
+(`DATA_DIR/plugin_data/<owner>.db`) with recorded hashes and optional `.down.sql`
+reversal (`praxis plugin migrate [--down]`). See §5.2.
 
 ### C. Package extraction (one PR per owner)
 
@@ -276,8 +285,10 @@ for absent features; remove the builtin dashboard after a release.
 
 ## 7. Known limitations and caveats
 
-* Route/UI/migration loading is not implemented; `routes`/`ui`/`migrations` are
-  declarations + ownership only. Assets *are* loaded.
+* Route/UI/migration loading is implemented: `provides.web` binds a service
+  contribution proxied through authenticated routes, and `provides.migrations`
+  run against a package-owned database with recorded hashes and optional down
+  scripts. Assets are placed under `ROOT_DIR`.
 * Guard-condition policy is replaceable by a process engine: state-machine
   evaluation is async, `RuntimeEngine::evaluate_condition` is a worker call that
   receives the kernel's observed evidence snapshot, and worker failure fails
