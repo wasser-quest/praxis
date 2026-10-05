@@ -33,6 +33,14 @@ pub trait RuntimeEngine: Send + Sync {
         context: &Value,
         destination: Option<&Path>,
     ) -> anyhow::Result<String>;
+    /// Evaluate a state-machine guard/transition condition. The kernel owns the
+    /// parsed state machine and the evidence; the engine owns the meaning of a
+    /// condition.
+    fn evaluate_condition(
+        &self,
+        condition: &str,
+        context: &serde_json::Map<String, Value>,
+    ) -> bool;
 }
 
 /// The built-in engine: today's POML renderer, unchanged.
@@ -62,6 +70,14 @@ impl RuntimeEngine for KernelEngine {
         destination: Option<&Path>,
     ) -> anyhow::Result<String> {
         crate::gateway::poml::render_strict_candidate(template_path, context, destination).await
+    }
+
+    fn evaluate_condition(
+        &self,
+        condition: &str,
+        context: &serde_json::Map<String, Value>,
+    ) -> bool {
+        crate::sm::evaluate_condition(condition, context)
     }
 }
 
@@ -93,6 +109,13 @@ pub fn current() -> Arc<dyn RuntimeEngine> {
 
 pub fn info() -> EngineInfo {
     current().info()
+}
+
+pub fn evaluate_condition(
+    condition: &str,
+    context: &serde_json::Map<String, Value>,
+) -> bool {
+    current().evaluate_condition(condition, context)
 }
 
 pub async fn render(template_path: &str, context: &Value) -> anyhow::Result<String> {
@@ -155,6 +178,15 @@ mod tests {
                 .render_strict_candidate(template_path, context, destination)
                 .await
         }
+        fn evaluate_condition(
+            &self,
+            condition: &str,
+            context: &serde_json::Map<String, Value>,
+        ) -> bool {
+            // Override one marker condition and delegate everything else so
+            // concurrent tests see unchanged behavior while the fixture is set.
+            condition == "axiom" || KernelEngine.evaluate_condition(condition, context)
+        }
     }
 
     #[tokio::test]
@@ -168,7 +200,13 @@ mod tests {
         // counter proves the installed engine handled the request.
         let _ = render_strict("does-not-exist.poml", &json!({})).await;
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        // Guard-condition policy also comes from the engine.
+        let empty = serde_json::Map::new();
+        assert!(evaluate_condition("axiom", &empty));
+        // Other conditions still delegate to the kernel implementation.
+        assert!(!evaluate_condition("axiom == false", &empty));
         clear();
         assert_eq!(info().id, "kernel");
+        assert!(!evaluate_condition("axiom", &empty));
     }
 }
