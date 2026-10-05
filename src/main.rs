@@ -212,6 +212,24 @@ enum PluginAction {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Replace an installed plugin with a new revision from a local directory
+    Upgrade {
+        /// Path to the new plugin directory (must contain plugin.json)
+        #[arg(value_name = "PLUGIN_PATH")]
+        path: String,
+        /// Run the install hook without asking
+        #[arg(long)]
+        allow_scripts: bool,
+        /// Never run install/uninstall hooks
+        #[arg(long)]
+        no_scripts: bool,
+        /// Assume yes to the interactive hook prompt
+        #[arg(long)]
+        yes: bool,
+        /// Print what would happen without replacing files or running hooks
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// List installed plugins
     List,
     /// List builtin tool packages (runtime_control, shell, memory, …)
@@ -942,6 +960,35 @@ async fn handle_plugin_action(action: &PluginAction) -> anyhow::Result<()> {
             }
 
             println!("Plugin '{}' uninstalled.", name);
+        }
+        PluginAction::Upgrade {
+            path,
+            allow_scripts,
+            no_scripts,
+            yes,
+            dry_run,
+        } => {
+            let policy = praxis::plugins::lifecycle::HookPolicy::from_env()?;
+            let run_hooks = praxis::plugins::lifecycle::resolve_consent(
+                policy,
+                *allow_scripts || *yes,
+                *no_scripts,
+                "Run plugin upgrade hooks?",
+            );
+            let report = praxis::plugins::lifecycle::upgrade(
+                &praxis::plugins::lifecycle::UpgradeRequest {
+                    source: Path::new(path),
+                    plugins_dir: plugins_path,
+                    data_dir: &data_dir,
+                    run_hooks,
+                    dry_run: *dry_run,
+                },
+            )
+            .await?;
+            if *dry_run {
+                return Ok(());
+            }
+            println!("Plugin '{}' upgraded at {}", report.name, report.dest.display());
         }
         PluginAction::List => {
             if !plugins_path.exists() {

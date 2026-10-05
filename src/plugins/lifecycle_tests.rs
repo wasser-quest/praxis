@@ -2,11 +2,20 @@
 #![cfg(all(test, unix))]
 
 use super::lifecycle::{
-    self, HookPolicy, InstallRequest, UninstallRequest,
+    self, HookPolicy, InstallRequest, UninstallRequest, UpgradeRequest,
 };
 use std::path::Path;
 
 fn write_plugin(dir: &Path, install: Option<&str>, uninstall: Option<&str>) {
+    write_plugin_v(dir, "1.0.0", install, uninstall);
+}
+
+fn write_plugin_v(
+    dir: &Path,
+    version: &str,
+    install: Option<&str>,
+    uninstall: Option<&str>,
+) {
     std::fs::create_dir_all(dir.join("hooks")).unwrap();
     let mut hooks = serde_json::Map::new();
     if let Some(script) = install {
@@ -20,7 +29,7 @@ fn write_plugin(dir: &Path, install: Option<&str>, uninstall: Option<&str>) {
     let manifest = serde_json::json!({
         "name": "hooked",
         "description": "fixture",
-        "version": "1.0.0",
+        "version": version,
         "enabled": true,
         "hooks": serde_json::Value::Object(hooks),
         "tools": [{
@@ -223,4 +232,99 @@ async fn dry_run_and_hook_escape_leave_no_effect() {
 fn policy_defaults_to_ask() {
     // `from_env` is process-global; only assert the parse/plan contract here.
     assert_eq!(lifecycle::plan_hooks(HookPolicy::Ask, false, false), lifecycle::HookPlan::Ask);
+}
+
+#[tokio::test]
+async fn upgrade_replaces_revision_and_restores_on_hook_failure() {
+    let root = tempfile::tempdir().unwrap();
+    let plugins = root.path().join("plugins");
+    let data = root.path().join("data");
+    let v1 = root.path().join("src-v1");
+    write_plugin_v(&v1, "1.0.0", Some("echo v1 > \"$PRAXIS_DATA_DIR/version\"\n"), None);
+    lifecycle::install(&install_req(&v1, &plugins, &data, true))
+        .await
+        .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(data.join("version")).unwrap().trim(),
+        "v1"
+    );
+
+    let v2 = root.path().join("src-v2");
+    write_plugin_v(&v2, "2.0.0", Some("echo v2 > \"$PRAXIS_DATA_DIR/version\"\n"), None);
+    let report = lifecycle::upgrade(&UpgradeRequest {
+        source: &v2,
+        plugins_dir: &plugins,
+        data_dir: &data,
+        run_hooks: true,
+        dry_run: false,
+    })
+    .await
+    .unwrap();
+    assert_eq!(report.plugin.version, "2.0.0");
+    assert_eq!(
+        std::fs::read_to_string(data.join("version")).unwrap().trim(),
+        "v2"
+    );
+    let record: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(data.join("plugin_installs.json")).unwrap())
+            .unwrap();
+    assert_eq!(record["hooked"]["version"], "2.0.0");
+
+    // A failing upgrade restores the previous revision.
+    let v3 = root.path().join("src-v3");
+    write_plugin_v(&v3, "3.0.0", Some("exit 7\n"), None);
+    assert!(lifecycle::upgrade(&UpgradeRequest {
+        source: &v3,
+        plugins_dir: &plugins,
+        data_dir: &data,
+        run_hooks: true,
+        dry_run: false,
+    })
+    .await
+    .is_err());
+    let manifest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(plugins.join("hooked/plugin.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(manifest["version"], "2.0.0", "previous revision restored");
+    assert!(std::fs::read_dir(&plugins).unwrap().all(|e| !e
+        .unwrap()
+        .file_name()
+        .to_string_lossy()
+        .starts_with(".backup-")));
+}
+
+#[tokio::test]
+async fn upgrade_requires_an_installed_plugin_and_dry_run_changes_nothing() {
+    let root = tempfile::tempdir().unwrap();
+    let plugins = root.path().join("plugins");
+    let data = root.path().join("data");
+    let source = root.path().join("source");
+    write_plugin_v(&source, "2.0.0", None, None);
+    assert!(lifecycle::upgrade(&UpgradeRequest {
+        source: &source,
+        plugins_dir: &plugins,
+        data_dir: &data,
+        run_hooks: true,
+        dry_run: false,
+    })
+    .await
+    .is_err());
+    assert!(!plugins.exists());
+
+    lifecycle::install(&install_req(&source, &plugins, &data, false))
+        .await
+        .unwrap();
+    let before = std::fs::read_to_string(plugins.join("hooked/plugin.json")).unwrap();
+    let report = lifecycle::upgrade(&UpgradeRequest {
+        source: &source,
+        plugins_dir: &plugins,
+        data_dir: &data,
+        run_hooks: true,
+        dry_run: true,
+    })
+    .await
+    .unwrap();
+    assert!(!report.hook.ran);
+    assert_eq!(std::fs::read_to_string(plugins.join("hooked/plugin.json")).unwrap(), before);
 }

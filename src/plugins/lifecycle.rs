@@ -346,6 +346,30 @@ fn report_hook(outcome: &HookOutcome, verb: &str) {
 /// Install a plugin from a local directory using staged, atomic publication.
 /// If the install hook fails, the published directory is removed and no install
 /// record or registry entry remains.
+fn build_record(
+    source_root: &Path,
+    plugin: &Plugin,
+    hooks: &crate::plugins::PluginHooks,
+    manifest_bytes: &[u8],
+) -> anyhow::Result<InstallRecord> {
+    Ok(InstallRecord {
+        version: plugin.version.clone(),
+        manifest_sha256: sha256_bytes(manifest_bytes),
+        install: hooks
+            .install
+            .as_deref()
+            .map(|path| hook_record(source_root, path))
+            .transpose()?,
+        uninstall: hooks
+            .uninstall
+            .as_deref()
+            .map(|path| hook_record(source_root, path))
+            .transpose()?,
+        installed_at: chrono::Utc::now().to_rfc3339(),
+    })
+}
+
+/// Install a plugin from a local directory using staged, atomic publication.
 pub async fn install(request: &InstallRequest<'_>) -> anyhow::Result<InstallReport> {
     anyhow::ensure!(
         request.source.is_dir(),
@@ -372,21 +396,7 @@ pub async fn install(request: &InstallRequest<'_>) -> anyhow::Result<InstallRepo
         dest.display()
     );
 
-    let record = InstallRecord {
-        version: plugin.version.clone(),
-        manifest_sha256: sha256_bytes(&manifest_bytes),
-        install: hooks
-            .install
-            .as_deref()
-            .map(|path| hook_record(&source_root, path))
-            .transpose()?,
-        uninstall: hooks
-            .uninstall
-            .as_deref()
-            .map(|path| hook_record(&source_root, path))
-            .transpose()?,
-        installed_at: chrono::Utc::now().to_rfc3339(),
-    };
+    let record = build_record(&source_root, &plugin, &hooks, &manifest_bytes)?;
 
     if request.dry_run {
         println!("Dry run: would install '{}' to {}", plugin.name, dest.display());
@@ -468,6 +478,121 @@ pub async fn install(request: &InstallRequest<'_>) -> anyhow::Result<InstallRepo
             hook.skipped_reason = Some("hooks were not run (policy or --no-scripts)".into());
         }
     }
+    let mut records = load_records(request.data_dir)?;
+    records.insert(plugin.name.clone(), serde_json::to_value(&record)?);
+    save_records(request.data_dir, &records)?;
+    Ok(InstallReport {
+        name: plugin.name.clone(),
+        dest,
+        plugin,
+        hook,
+    })
+}
+
+#[derive(Debug, Clone)]
+pub struct UpgradeRequest<'a> {
+    pub source: &'a Path,
+    pub plugins_dir: &'a Path,
+    pub data_dir: &'a Path,
+    pub run_hooks: bool,
+    pub dry_run: bool,
+}
+
+/// Replace an installed plugin with a new revision. The previous directory is
+/// kept as a backup until the new install hook succeeds; a hook failure restores
+/// it. Operator data under DATA_DIR is untouched.
+pub async fn upgrade(request: &UpgradeRequest<'_>) -> anyhow::Result<InstallReport> {
+    let manifest_path = request.source.join("plugin.json");
+    anyhow::ensure!(
+        request.source.is_dir() && manifest_path.is_file(),
+        "No plugin.json found in '{}'",
+        request.source.display()
+    );
+    let manifest_bytes = std::fs::read(&manifest_path)?;
+    let plugin: Plugin = serde_json::from_slice(&manifest_bytes)?;
+    let source_root = request.source.canonicalize()?;
+    let hooks = validate_hooks(&source_root, plugin.hooks.clone())?;
+    let dest = request.plugins_dir.join(&plugin.name);
+    anyhow::ensure!(
+        dest.exists(),
+        "Plugin '{}' is not installed; use 'plugin install'",
+        plugin.name
+    );
+    if request.dry_run {
+        println!(
+            "Dry run: would replace '{}' at {} with version {}",
+            plugin.name,
+            dest.display(),
+            plugin.version
+        );
+        return Ok(InstallReport {
+            name: plugin.name.clone(),
+            dest,
+            plugin,
+            hook: HookOutcome {
+                ran: false,
+                skipped_reason: Some("dry run".into()),
+                ..Default::default()
+            },
+        });
+    }
+
+    let suffix = uuid::Uuid::new_v4().simple().to_string();
+    let stage = request.plugins_dir.join(format!(".upgrade-{}-{suffix}", plugin.name));
+    let backup = request.plugins_dir.join(format!(".backup-{}-{suffix}", plugin.name));
+    copy_dir_recursive(&source_root, &stage)?;
+    std::fs::rename(&dest, &backup)?;
+    if let Err(error) = std::fs::rename(&stage, &dest) {
+        let _ = std::fs::rename(&backup, &dest);
+        let _ = std::fs::remove_dir_all(&stage);
+        return Err(error.into());
+    }
+    let mut hook = HookOutcome {
+        ran: false,
+        skipped_reason: Some("plugin declares no install hook".into()),
+        ..Default::default()
+    };
+    if let Some(script) = &hooks.install {
+        std::fs::create_dir_all(request.data_dir)?;
+        let script_path = dest.join(script);
+        if request.run_hooks {
+            let outcome = run_hook(
+                HookKind::Install,
+                &dest,
+                &script_path,
+                request.data_dir,
+                request.plugins_dir,
+                &plugin,
+                false,
+            )
+            .await;
+            match outcome {
+                Ok(outcome) if outcome.exit_code == Some(0) => {
+                    report_hook(&outcome, "install");
+                    hook = outcome;
+                }
+                Ok(outcome) => {
+                    report_hook(&outcome, "install");
+                    let _ = std::fs::remove_dir_all(&dest);
+                    let _ = std::fs::rename(&backup, &dest);
+                    anyhow::bail!(
+                        "Upgrade hook for '{}' exited with {}. The previous version was restored.",
+                        plugin.name,
+                        outcome.exit_code.unwrap_or(-1)
+                    );
+                }
+                Err(error) => {
+                    let _ = std::fs::remove_dir_all(&dest);
+                    let _ = std::fs::rename(&backup, &dest);
+                    return Err(error);
+                }
+            }
+        } else {
+            hook.skipped_reason = Some("hooks were not run (policy or --no-scripts)".into());
+        }
+    }
+    let _ = std::fs::remove_dir_all(&backup);
+    let record = build_record(&source_root, &plugin, &hooks, &manifest_bytes)?;
     let mut records = load_records(request.data_dir)?;
     records.insert(plugin.name.clone(), serde_json::to_value(&record)?);
     save_records(request.data_dir, &records)?;
