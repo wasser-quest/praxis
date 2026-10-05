@@ -347,11 +347,17 @@ impl LLMRouter {
                         }
                     }
                     "write_file" => {
-                        let path = args["path"].as_str().unwrap_or("");
-                        let content = args["content"].as_str().unwrap_or("");
-                        match crate::tools::write_file::write_file(path, content).await {
-                            Ok(_) => format!("File written: {}", path),
-                            Err(e) => format!("Error: {}", e),
+                        if args.get("expected_absent").is_some() || args.get("expected_sha256").is_some() {
+                            crate::tools::apply_patch::write_checked(user_id, &tool_call.id, &args)
+                                .await
+                                .unwrap_or_else(|e| format!("Error: {e}"))
+                        } else {
+                            let path = args["path"].as_str().unwrap_or("");
+                            let content = args["content"].as_str().unwrap_or("");
+                            match crate::tools::write_file::write_file(path, content).await {
+                                Ok(_) => format!("File written: {}", path),
+                                Err(e) => format!("Error: {}", e),
+                            }
                         }
                     }
                     #[cfg(feature = "legacy_file_ops")]

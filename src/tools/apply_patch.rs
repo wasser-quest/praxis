@@ -580,6 +580,115 @@ pub async fn run(user: &str, call: &str, args: &serde_json::Value) -> anyhow::Re
 }
 
 /// Offline recovery: no checks, task ownership, providers or secrets are loaded.
+/// Versioned `write_file` contract: a single-file transactional write with an
+/// expected-absence or expected-hash precondition. Legacy `write_file` calls
+/// without a precondition keep the raw behavior; this path never creates a
+/// missing parent, never writes through a symlink and fails without touching
+/// the file when the precondition or a concurrent change does not hold.
+pub(crate) async fn write_checked(
+    user: &str,
+    call: &str,
+    args: &serde_json::Value,
+) -> anyhow::Result<String> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct WriteChecked {
+        path: String,
+        content: String,
+        #[serde(default)]
+        expected_absent: bool,
+        #[serde(default)]
+        expected_sha256: Option<String>,
+    }
+    let request: WriteChecked = serde_json::from_value(args.clone())?;
+    let expected = match (&request.expected_sha256, request.expected_absent) {
+        (Some(_), true) => {
+            anyhow::bail!("Provide either expected_absent or expected_sha256, not both")
+        }
+        (Some(hash), false) => serde_json::Value::String(hash.clone()),
+        (None, true) => serde_json::Value::Null,
+        (None, false) => {
+            anyhow::bail!("Checked write requires expected_absent or expected_sha256")
+        }
+    };
+    let cancel = task_control::cancellation(user)
+        .ok_or_else(|| anyhow::anyhow!("Checked write requires an active task"))?;
+    let _lock = tokio::select! { biased; _ = cancel.cancelled() => anyhow::bail!("Task cancelled"), lock = FILE_OPERATIONS.lock() => lock };
+    let policy = action_contracts::patch_policy(user, &[], false)
+        .map_err(|error| anyhow::anyhow!("Checked write requires a pinned workspace: {error}"))?;
+    let root = policy
+        .root
+        .canonicalize()
+        .map_err(|error| anyhow::anyhow!("Cannot resolve checked write root: {error}"))?;
+    let workspace = journal::ready(&root)
+        .map_err(|error| anyhow::anyhow!("Cannot prepare durable write: {error}"))?
+        .ok_or_else(|| anyhow::anyhow!("Durable writes currently require Unix"))?;
+    let files = prepare(
+        &root,
+        vec![Edit {
+            path: request.path.clone(),
+            expected_sha256: expected,
+            content: serde_json::Value::String(request.content),
+        }],
+    )
+    .map_err(|error| anyhow::anyhow!("Checked write precondition failed: {error}"))?;
+    let journal = journal::Active::begin(workspace, &files)
+        .map_err(|error| anyhow::anyhow!("Cannot start write journal: {error}"))?;
+    let mut transaction = Transaction {
+        user: user.into(),
+        policy,
+        root,
+        files,
+        armed: true,
+        journal,
+    };
+    if transaction.apply(&cancel).is_err() {
+        let conflicts = transaction.rollback();
+        anyhow::bail!(
+            "Checked write failed: {} ({})",
+            if cancel.is_cancelled() {
+                "cancelled"
+            } else {
+                "apply_failed"
+            },
+            conflicts.join(",")
+        );
+    }
+    let after_sha256 = transaction.files[0]
+        .after
+        .as_ref()
+        .map(|bytes| hash(bytes))
+        .unwrap_or_default();
+    let mut journal_failed = false;
+    let published = action_contracts::publish_patch(user, &transaction.policy, call, &[], || {
+        let result = transaction.journal.commit();
+        journal_failed = result.is_err();
+        result
+    });
+    if published.is_err() {
+        let _ = transaction.rollback();
+        anyhow::bail!(
+            "Checked write did not commit{}",
+            if journal_failed {
+                " (journal commit failed)"
+            } else {
+                ""
+            }
+        );
+    }
+    // The write is durably committed: disarm the rollback guard, then best-effort
+    // cleanup. A retained journal blocks guards until recovery/cleanup succeeds.
+    transaction.armed = false;
+    let _ = transaction.journal.cleanup();
+    Ok(serde_json::json!({
+        "path": request.path,
+        "sha256": after_sha256,
+        "outcome": "committed",
+        "recovery_pending": journal::pending_exists(&transaction.root),
+    })
+    .to_string())
+}
+
 pub async fn recover(directory: &Path) -> anyhow::Result<String> {
     let _operation = FILE_OPERATIONS.lock().await;
     let mut workspace = journal::Workspace::open(directory)?;
@@ -641,5 +750,97 @@ mod tests {
         assert_eq!(fs::read(root.path().join("b")).unwrap(), b"external");
         drop(transaction);
         assert_eq!(fs::read_dir(root.path()).unwrap().count(), 2);
+    }
+}
+
+#[cfg(all(test, unix))]
+mod write_checked_tests {
+    use super::*;
+    use crate::gateway::{action_contracts, task_control};
+
+    fn bind(user: &str, root: &Path) -> task_control::TaskGuard {
+        let task = task_control::begin(user).unwrap();
+        let sm = crate::sm::parse(
+            "[state working]\n[checks]\ntests = {\"program\":\"/bin/true\"}\n[guards]\n_complete = [tests]",
+        )
+        .unwrap();
+        action_contracts::bind(user, "write-checked", &sm, root).unwrap();
+        task
+    }
+
+    #[tokio::test]
+    async fn checked_write_enforces_absence_and_hash_preconditions() {
+        let root = tempfile::tempdir().unwrap();
+        let user = "write-checked-preconditions";
+        let _task = bind(user, root.path());
+        let read = |name: &str| std::fs::read(root.path().join(name)).unwrap();
+
+        let result: serde_json::Value = serde_json::from_str(
+            &write_checked(
+                user,
+                "one",
+                &serde_json::json!({"path":"new","content":"hello","expected_absent":true}),
+            )
+            .await
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(result["outcome"], "committed");
+        assert_eq!(result["sha256"].as_str(), Some(hash(b"hello").as_str()));
+        assert_eq!(read("new"), b"hello");
+
+        // expected_absent fails when the file exists and leaves it untouched.
+        assert!(write_checked(
+            user,
+            "two",
+            &serde_json::json!({"path":"new","content":"other","expected_absent":true}),
+        )
+        .await
+        .is_err());
+        assert_eq!(read("new"), b"hello");
+
+        // The correct expected hash replaces the file.
+        write_checked(
+            user,
+            "three",
+            &serde_json::json!({"path":"new","content":"world","expected_sha256":hash(b"hello")}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(read("new"), b"world");
+
+        // A wrong hash fails and leaves the file untouched.
+        assert!(write_checked(
+            user,
+            "four",
+            &serde_json::json!({"path":"new","content":"nope","expected_sha256":hash(b"hello")}),
+        )
+        .await
+        .is_err());
+        assert_eq!(read("new"), b"world");
+
+        // Both or neither precondition is an error, and missing parents are not created.
+        assert!(write_checked(
+            user,
+            "five",
+            &serde_json::json!({"path":"new","content":"x","expected_absent":true,"expected_sha256":hash(b"world")}),
+        )
+        .await
+        .is_err());
+        assert!(write_checked(
+            user,
+            "six",
+            &serde_json::json!({"path":"new","content":"x"}),
+        )
+        .await
+        .is_err());
+        assert!(write_checked(
+            user,
+            "seven",
+            &serde_json::json!({"path":"sub/new","content":"x","expected_absent":true}),
+        )
+        .await
+        .is_err());
+        assert!(!root.path().join("sub").exists());
     }
 }

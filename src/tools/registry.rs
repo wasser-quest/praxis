@@ -798,6 +798,8 @@ fn write_file_schema() -> serde_json::Value {
         "properties": {
             "path": {"type": "string", "description": "File path to write"},
             "content": {"type": "string", "description": "Content to write"},
+            "expected_absent": {"type": "boolean", "description": "Require that the file does not exist (checked write)"},
+            "expected_sha256": {"type": "string", "description": "Require this lowercase SHA-256 before replacing"},
             "_output": {"$ref": "#/components/schemas/OutputSelection"}
         },
         "required": ["path", "content"]
