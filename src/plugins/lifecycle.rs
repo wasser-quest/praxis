@@ -10,6 +10,7 @@ use crate::plugins::{validate_hooks, Plugin};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
+    collections::BTreeMap,
     path::{Path, PathBuf},
     process::Stdio,
     time::Duration,
@@ -955,7 +956,14 @@ pub async fn install_default(request: &PresetRequest<'_>) -> anyhow::Result<Pres
         })
         .await
         {
-            Ok(installed) => report.installed.push(installed.name),
+            Ok(installed) => {
+                let assets =
+                    apply_assets(&installed.dest, &installed.plugin, request.data_dir, request.root)?;
+                for asset in &assets.kept {
+                    tracing::warn!(plugin = %installed.name, asset = %asset, "Asset kept; an existing file differs");
+                }
+                report.installed.push(installed.name);
+            }
             Err(error) => report.failed.push((name, error.to_string())),
         }
     }
@@ -1044,6 +1052,118 @@ pub fn verify(plugins_dir: &Path) -> anyhow::Result<VerifyReport> {
     report.ok.sort();
     report.missing.sort();
     report.unlocked.sort();
+    Ok(report)
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct AssetsReport {
+    pub written: Vec<String>,
+    /// Existing files that differ from the last owned revision (operator edits
+    /// or untracked files) and were therefore left alone.
+    pub kept: Vec<String>,
+    pub removed: Vec<String>,
+}
+
+fn asset_record_path(data_dir: &Path) -> PathBuf {
+    data_dir.join("plugin_assets.json")
+}
+
+type AssetRecords = serde_json::Map<String, serde_json::Value>;
+
+fn load_asset_records(data_dir: &Path) -> anyhow::Result<AssetRecords> {
+    match std::fs::read_to_string(asset_record_path(data_dir)) {
+        Ok(data) => Ok(serde_json::from_str(&data)?),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(serde_json::Map::new()),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn save_asset_records(data_dir: &Path, records: &AssetRecords) -> anyhow::Result<()> {
+    std::fs::create_dir_all(data_dir)?;
+    let path = asset_record_path(data_dir);
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, serde_json::to_string_pretty(records)?)?;
+    std::fs::rename(tmp, path)?;
+    Ok(())
+}
+
+fn owned_assets(records: &AssetRecords, name: &str) -> BTreeMap<String, String> {
+    records
+        .get(name)
+        .and_then(|value| serde_json::from_value::<BTreeMap<String, String>>(value.clone()).ok())
+        .unwrap_or_default()
+}
+
+/// Copy a package's declared assets into `assets_root`, mirroring their
+/// package-relative paths. A destination that differs from the last owned
+/// revision is an operator edit and is kept. Returns what changed.
+pub fn apply_assets(
+    plugin_dir: &Path,
+    plugin: &Plugin,
+    data_dir: &Path,
+    assets_root: &Path,
+) -> anyhow::Result<AssetsReport> {
+    let mut report = AssetsReport::default();
+    if plugin.provides.assets.is_empty() {
+        return Ok(report);
+    }
+    let mut records = load_asset_records(data_dir)?;
+    let mut owned = owned_assets(&records, &plugin.name);
+    for asset in &plugin.provides.assets {
+        let relative = Path::new(asset);
+        anyhow::ensure!(
+            relative.is_relative()
+                && relative
+                    .components()
+                    .all(|c| matches!(c, std::path::Component::Normal(_))),
+            "Asset must be a path inside its package"
+        );
+        let bytes = std::fs::read(plugin_dir.join(relative))
+            .map_err(|error| anyhow::anyhow!("Asset '{asset}' is missing from the package: {error}"))?;
+        let hash = sha256_bytes(&bytes);
+        let dest = assets_root.join(relative);
+        if dest.exists() {
+            let current = sha256_bytes(&std::fs::read(&dest)?);
+            let ours = owned.get(asset).is_some_and(|known| known == &current);
+            if !ours {
+                report.kept.push(asset.clone());
+                continue;
+            }
+        }
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&dest, &bytes)?;
+        owned.insert(asset.clone(), hash);
+        report.written.push(asset.clone());
+    }
+    records.insert(plugin.name.clone(), serde_json::to_value(&owned)?);
+    save_asset_records(data_dir, &records)?;
+    Ok(report)
+}
+
+/// Remove assets this package owns whose bytes still match the recorded
+/// revision. Operator-edited files are kept.
+pub fn remove_assets(
+    data_dir: &Path,
+    assets_root: &Path,
+    name: &str,
+) -> anyhow::Result<AssetsReport> {
+    let mut report = AssetsReport::default();
+    let mut records = load_asset_records(data_dir)?;
+    for (asset, hash) in owned_assets(&records, name) {
+        let dest = assets_root.join(&asset);
+        if dest.is_file() {
+            if sha256_bytes(&std::fs::read(&dest)?) == hash {
+                std::fs::remove_file(&dest)?;
+                report.removed.push(asset);
+            } else {
+                report.kept.push(asset);
+            }
+        }
+    }
+    records.remove(name);
+    save_asset_records(data_dir, &records)?;
     Ok(report)
 }
 

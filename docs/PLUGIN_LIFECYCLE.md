@@ -180,10 +180,17 @@ A manifest may declare `provides` instead of (or beside) inline tools:
   with `owner_conflict`. Names must be package-relative and cannot escape.
 * The whole `provides` declaration is part of the registry revision, so a
   change invalidates task receipts.
-* Route/UI/asset/migration *loading* is the next phase; today the declarations
-  establish ownership and are reported by `praxis plugin list`.
+* **`assets` are placed** on install and upgrade: each declared file is copied
+  to `ROOT_DIR/<asset>` (mirroring its package-relative path). A destination
+  that differs from the last owned revision is an operator edit and is kept; an
+  unchanged owned file is replaced by a new package revision. Uninstall removes
+  only owned files whose bytes still match; edits are preserved. Ownership is
+  recorded in `DATA_DIR/plugin_assets.json`.
+* Route/UI *loading* and migration *execution* remain; tools and assets are
+  live.
 
-See `examples/plugins/file_tools` for a working external-`tools.json` package.
+See `examples/plugins/file_tools` for a working external-`tools.json` package
+that also ships a template asset.
 
 ## Frontends
 

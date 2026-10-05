@@ -1,0 +1,4 @@
+<poml>
+  <role>Example template shipped as a package asset</role>
+  <task>This file was installed by the file_tools example package into templates/. Edit or delete it freely; the host keeps operator edits.</task>
+</poml>

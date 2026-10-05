@@ -645,3 +645,65 @@ async fn set_enabled_toggles_manifest_and_lock_and_keeps_verify_green() {
 
     assert!(lifecycle::set_enabled(&plugins, "missing", true).is_err());
 }
+
+#[tokio::test]
+async fn assets_apply_keep_and_remove() {
+    let root = tempfile::tempdir().unwrap();
+    let plugins = root.path().join("plugins");
+    let data = root.path().join("data");
+    let assets = root.path().join("assets");
+    let source = root.path().join("source");
+    std::fs::create_dir_all(source.join("templates")).unwrap();
+    std::fs::write(source.join("templates/hello.poml"), "one").unwrap();
+    std::fs::write(
+        source.join("plugin.json"),
+        serde_json::to_string(&serde_json::json!({
+            "name": "asset_pkg", "description": "x", "version": "1",
+            "provides": {"assets": ["templates/hello.poml"]},
+            "tools": []
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let plugin = crate::plugins::load_installed_plugin(&source).unwrap();
+
+    let report = lifecycle::apply_assets(&source, &plugin, &data, &assets).unwrap();
+    assert_eq!(report.written, vec!["templates/hello.poml"]);
+    assert_eq!(
+        std::fs::read_to_string(assets.join("templates/hello.poml")).unwrap(),
+        "one"
+    );
+
+    // An operator edit is kept on the next apply.
+    std::fs::write(assets.join("templates/hello.poml"), "operator").unwrap();
+    let report = lifecycle::apply_assets(&source, &plugin, &data, &assets).unwrap();
+    assert_eq!(report.kept, vec!["templates/hello.poml"]);
+    assert_eq!(
+        std::fs::read_to_string(assets.join("templates/hello.poml")).unwrap(),
+        "operator"
+    );
+
+    // Owned-and-unchanged content is replaced by a new package revision.
+    std::fs::write(assets.join("templates/hello.poml"), "one").unwrap();
+    std::fs::write(source.join("templates/hello.poml"), "two").unwrap();
+    let plugin = crate::plugins::load_installed_plugin(&source).unwrap();
+    let report = lifecycle::apply_assets(&source, &plugin, &data, &assets).unwrap();
+    assert_eq!(report.written, vec!["templates/hello.poml"]);
+    assert_eq!(
+        std::fs::read_to_string(assets.join("templates/hello.poml")).unwrap(),
+        "two"
+    );
+
+    // Uninstall removes an unchanged owned file.
+    let report = lifecycle::remove_assets(&data, &assets, "asset_pkg").unwrap();
+    assert_eq!(report.removed, vec!["templates/hello.poml"]);
+    assert!(!assets.join("templates/hello.poml").exists());
+
+    // An operator-edited file survives uninstall.
+    lifecycle::apply_assets(&source, &plugin, &data, &assets).unwrap();
+    std::fs::write(assets.join("templates/hello.poml"), "edited").unwrap();
+    let report = lifecycle::remove_assets(&data, &assets, "asset_pkg").unwrap();
+    assert_eq!(report.kept, vec!["templates/hello.poml"]);
+    assert!(assets.join("templates/hello.poml").exists());
+    let _ = plugins;
+}
