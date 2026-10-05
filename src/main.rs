@@ -248,6 +248,8 @@ enum PluginAction {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Verify installed plugins against praxis.lock.json
+    Verify,
     /// List installed plugins
     List,
     /// List builtin tool packages (runtime_control, shell, memory, …)
@@ -1045,6 +1047,28 @@ async fn handle_plugin_action(action: &PluginAction) -> anyhow::Result<()> {
             }
             if !report.failed.is_empty() {
                 anyhow::bail!("{} default plugin(s) failed to install", report.failed.len());
+            }
+        }
+        PluginAction::Verify => {
+            let report = praxis::plugins::lifecycle::verify(plugins_path)?;
+            for name in &report.ok {
+                println!("  ok {name}");
+            }
+            for name in &report.unlocked {
+                println!("  unlocked {name} (not recorded; reinstall to lock)");
+            }
+            for (name, reason) in &report.changed {
+                println!("  changed {name}: {reason}");
+            }
+            for name in &report.missing {
+                println!("  missing {name}");
+            }
+            if !report.changed.is_empty() || !report.missing.is_empty() {
+                anyhow::bail!(
+                    "{} plugin(s) changed and {} missing",
+                    report.changed.len(),
+                    report.missing.len()
+                );
             }
         }
         PluginAction::List => {

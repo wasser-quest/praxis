@@ -159,11 +159,15 @@ praxis plugin install-default --preset ./my-preset.json
 # Replace an installed plugin with a new revision (previous kept until the new
 # install hook succeeds; a failed hook restores it)
 praxis plugin upgrade ./plugins/hooks_demo --allow-scripts
+# Check installed plugins against the lockfile hashes
+praxis plugin verify
 ```
 
 `examples/plugins/hooks_demo` installs a private `DATA_DIR/hooks_demo` marker and
-uses a script tool. The run is recorded in `DATA_DIR/plugin_installs.json` with
-the manifest and hook hashes.
+uses a script tool. The run is recorded in `PLUGINS_DIR/praxis.lock.json` with
+the manifest and hook hashes. `praxis plugin verify` re-checks those hashes and
+exits non-zero if a plugin's manifest or a hook changed, or its directory is
+gone.
 
 ## Phased delivery
 
