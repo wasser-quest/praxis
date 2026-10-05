@@ -11,6 +11,7 @@ pub mod discord_send_message;
 pub mod discord_upload;
 #[cfg(feature = "legacy_file_ops")]
 pub use praxis_legacy_file_ops::edit_file;
+#[cfg(feature = "shell")]
 pub mod execute_terminal;
 pub mod get_context;
 pub mod rag_ingest;

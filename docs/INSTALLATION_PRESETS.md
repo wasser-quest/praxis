@@ -10,8 +10,9 @@ through the plugin migration. There are two separate operations:
 | Update the dashboard | Add `--update-dashboard` | Replaces changed dashboard files with backups |
 | Grant VM tool access once | Add `--enable-vm-tools --data-dir DATA_DIRECTORY` | Enables the 25 VM plugin tool flags in the selected data directory |
 | Build without a linked VM engine | `cargo build --release --locked --no-default-features --features dashboard` | Excludes `praxis-vm` and the VM CLI; can use an installed VM worker |
-| Headless runtime | `cargo build --release --locked --no-default-features` | Excludes dashboard, VM engine and legacy read/edit code; gateway, CLI, POML/SM workflows and receipts remain |
+| Headless runtime | `cargo build --release --locked --no-default-features` | Excludes dashboard, VM engine, legacy read/edit and shell code; gateway, CLI, POML/SM workflows and receipts remain |
 | Headless with native legacy file tools | `cargo build --release --locked --no-default-features --features legacy_file_ops` | Keeps `read_file`/`edit_file`, without VM or dashboard |
+| Headless with native shell tools | `cargo build --release --locked --no-default-features --features shell` | Keeps `execute_terminal`/`run_background`/`background_status`, without VM or dashboard |
 | VM without dashboard | `cargo build --release --locked --no-default-features --features vm` | Native VM tools/CLI, no dashboard listener |
 
 The installer does not start services, run QEMU, call providers, read `.env` or
@@ -155,6 +156,21 @@ until explicitly overridden in plugin flags. The compatibility build already
 links this crate and needs no separate file-tool install. Other tool packages
 still ship in core while their extraction proceeds. See
 [tool package installation and transport](TOOL_PACKAGES.md#independently-installed-legacy-file-operations).
+
+The core-only build also omits native shell execution. Install the shell package
+to keep `execute_terminal`, `run_background` and `background_status` outside the
+host:
+
+```bash
+./scripts/install-shell-package.sh /actual/PLUGINS_DIR
+```
+
+Foreground `execute_terminal` then works through the package immediately after
+restart. Durable `run_background`/`background_status` additionally need
+`SHELL_SERVICE_EXECUTABLE=plugins/shell/bin/praxis-shell` (relative to `ROOT_DIR`
+or absolute) so the host can bind the long-lived job worker. Existing per-tool
+flags are inherited until explicitly overridden in plugin flags. See
+[tool package installation and transport](TOOL_PACKAGES.md#independently-installed-shell-and-background-jobs).
 
 Verified Rust is intentionally opt-in:
 

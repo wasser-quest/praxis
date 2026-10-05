@@ -61,6 +61,8 @@ pub struct Config {
     pub vm_enabled: bool,
     /// Optional installed worker; unset preserves the native compatibility backend.
     pub vm_service_executable: Option<String>,
+    /// Optional installed shell worker (background jobs); unset uses linked native code.
+    pub shell_service_executable: Option<String>,
     pub vm_cpu_cores: u32,
     pub vm_ram_mb: u32,
     pub vm_disk_size: String,
@@ -156,6 +158,8 @@ impl Config {
                 .map(|v| v == "true" || v == "1")
                 .unwrap_or(false),
             vm_service_executable: env::var("VM_SERVICE_EXECUTABLE").ok()
+                .map(|value| value.trim().to_owned()).filter(|value| !value.is_empty()),
+            shell_service_executable: env::var("SHELL_SERVICE_EXECUTABLE").ok()
                 .map(|value| value.trim().to_owned()).filter(|value| !value.is_empty()),
             vm_cpu_cores: env::var("VM_CPU_CORES")
                 .unwrap_or_else(|_| "2".to_string())

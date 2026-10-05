@@ -125,9 +125,10 @@ fn coding_profile_normal_roles_offer_semantic_actions_and_keep_legacy_opt_in() {
     legacy.settings.use_decision_router = false;
     legacy.sm_data = json!({"role":"code"});
     prompt::route_context(root, &mut legacy, "Code", &plugins, None).unwrap();
-    assert!(
+    assert_eq!(
         crate::tools::registry::build_tool_definitions(&legacy.settings, None, Some(&db))
             .iter()
-            .any(|t| t.function.name == "execute_terminal")
+            .any(|t| t.function.name == "execute_terminal"),
+        cfg!(feature = "shell")
     );
 }

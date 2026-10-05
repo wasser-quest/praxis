@@ -4,6 +4,7 @@ pub mod events;
 pub mod features;
 pub mod retention;
 pub mod services;
+pub mod shell;
 pub mod templates;
 pub mod vm;
 pub mod web;
@@ -14,6 +15,9 @@ mod vm_tests;
 
 #[cfg(test)]
 mod vm_process_tests;
+
+#[cfg(test)]
+mod shell_process_tests;
 
 #[cfg(test)]
 mod tests;

@@ -869,7 +869,7 @@ pub(crate) async fn execute(
 ) -> Result<
     (
         Outcome,
-        crate::tools::execute_terminal::TerminalResult,
+        praxis_plugin_api::process::TerminalResult,
         CheckEvidence,
     ),
     Outcome,
@@ -920,8 +920,8 @@ pub(crate) async fn execute(
     let stderr = child.stderr.take().ok_or(Outcome::Error)?;
     let collect = async {
         let (out, err, status) = tokio::join!(
-            crate::tools::execute_terminal::capture(stdout),
-            crate::tools::execute_terminal::capture(stderr),
+            praxis_plugin_api::process::capture(stdout),
+            praxis_plugin_api::process::capture(stderr),
             child.wait()
         );
         let (stdout, stdout_truncated) = out.map_err(|_| Outcome::Error)?;
@@ -933,7 +933,7 @@ pub(crate) async fn execute(
             } else {
                 Outcome::Failed
             },
-            crate::tools::execute_terminal::TerminalResult {
+            praxis_plugin_api::process::TerminalResult {
                 stdout,
                 stderr,
                 exit_code: status.code().unwrap_or(-1),

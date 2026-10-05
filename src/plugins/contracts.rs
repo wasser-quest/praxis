@@ -6,7 +6,7 @@ use crate::gateway::{
     resource_snapshots::ResourceSnapshot,
     task_control,
 };
-use crate::tools::execute_terminal::TerminalResult;
+use praxis_plugin_api::process::TerminalResult;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -696,8 +696,8 @@ async fn handler(
             let stdout = child.stdout.take().ok_or("handler_failed")?;
             let stderr = child.stderr.take().ok_or("handler_failed")?;
             let (out, err, status) = tokio::join!(
-                crate::tools::execute_terminal::capture(stdout),
-                crate::tools::execute_terminal::capture(stderr),
+                praxis_plugin_api::process::capture(stdout),
+                praxis_plugin_api::process::capture(stderr),
                 child.wait()
             );
             drop(group);

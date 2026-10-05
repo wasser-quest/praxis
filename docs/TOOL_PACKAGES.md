@@ -118,6 +118,63 @@ replacement plugins do. The native compatibility adapter retains agent-mode VM
 aliases; use `vm_file_read`/`vm_shell` explicitly for guest operations in a host
 without that adapter. Verified host-workspace contracts are unaffected.
 
+## Independently installed shell and background jobs
+
+`execute_terminal`, `run_background` and `background_status` now live in
+`crates/praxis-shell`, not `src/tools`. The `shell` Cargo feature links the
+compatibility adapter and is included in the default `compatibility` build.
+Without that feature, neither the implementation nor the crate dependency ships
+in the host; stale tool rows and static schemas cannot advertise or execute it.
+
+The package has two entry points in one binary:
+
+* `execute_terminal` uses the bounded one-shot executable transport
+  (`bin/praxis-shell`) and returns the same exact JSON text as the native
+  adapter: `stdout`, `stderr`, `exit_code`, `stdout_truncated` and
+  `stderr_truncated`. No worker is needed for foreground commands.
+* `run_background` and `background_status` use the long-lived process-protocol
+  worker. Its job registry is process memory, so it cannot be reproduced by a
+  one-shot helper. The host binds it when `SHELL_SERVICE_EXECUTABLE` names the
+  installed `bin/praxis-shell` (relative to `ROOT_DIR` or absolute).
+
+```bash
+cargo build --release --locked -p praxis --no-default-features
+./scripts/install-shell-package.sh /actual/PLUGINS_DIR
+# In the installation's .env (optional; foreground needs no worker):
+SHELL_SERVICE_EXECUTABLE=plugins/shell/bin/praxis-shell
+# Restart Praxis with PLUGINS_DIR set to that directory.
+```
+
+The installer builds only the package and installs its `plugin.json` and
+`bin/praxis-shell`. It honors `CARGO_TARGET_DIR`, `PLUGINS_DIR` and
+`PROFILE=debug`; it refuses to overwrite an existing package. The compatibility
+build already links the crate and needs no separate install.
+
+Background ownership and lifecycle:
+
+* The host issues the authenticated user/session/task/call envelope. The worker
+  never reads an owner from model arguments; `background_status` filters by the
+  envelope user and lists only that user's jobs.
+* The installed `run_background`/`background_status` results are delivered
+  inside the host's native-service envelope (`{"service":...,"result":...}`),
+  unlike the native adapter's plain text. The job id, status, exit code and
+  output tails are unchanged; scripts that consume the native text should read
+  the `result` field when the package is installed.
+* Output is bounded per stream (`200_000` bytes retained, with the oldest bytes
+  dropped) and finished jobs are pruned after one hour, capped at 500 entries.
+  Cleanup never removes a running job.
+* Completions are queued by the worker and drained by the host, which announces
+  `background_job` on the owner's stream. The native adapter keeps its existing
+  in-process registry and direct announcement.
+* A crash, timeout or shutdown ends the binding without replaying a command.
+  The host reports the failure; the operator restarts Praxis to create a fresh
+  worker. Running children are stopped on worker exit, not restarted.
+* Disabling the package or clearing its tool flags blocks new calls before any
+  effect. The native adapter retains the agent-mode VM aliases; a core-only host
+  must use `vm_shell`/`vm_file_read` explicitly.
+
+These remain raw operations, not verified language capabilities.
+
 ## Executable tool transport v1
 
 A raw tool can declare a handler such as:
@@ -141,5 +198,5 @@ tool flags apply before spawning. This raw protocol supplies no verification
 authority: contracted actions continue using service, verification, source-edit
 or existing script/HTTP adapters. Installed executables remain operator-trusted.
 
-Next: extract `shell` and its background-job service, then the remaining owners
-listed in the plan. Their code still ships in the host until each extraction.
+Next: extract the remaining owners listed in the plan. Their code still ships
+in the host until each extraction.

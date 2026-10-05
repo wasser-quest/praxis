@@ -206,9 +206,15 @@ clipboard) remains an operator smoke check.
 - [x] Generic executable transport v1: bounded stdin/stdout, exact text results,
   declared secrets, timeouts and cancellation. Missing native implementations
   cannot reappear via stale rows/static schemas; management reports availability.
-- [ ] Extract `shell` (including its background-job service) next, then each
-  remaining tool owner. Runtime-control wrappers remain scoped to host APIs;
-  POML/context/SM/IR verification stays in core.
+- [x] Second implementation extraction: `shell` owns `execute_terminal`,
+  `run_background` and `background_status` in `crates/praxis-shell` plus an
+  independently installed package and worker. Compatibility links the native
+  adapter; `--no-default-features` omits its code and dependency. Foreground
+  keeps the exact one-shot result; background jobs use a long-lived worker
+  because the registry is process memory. The host issues caller identity and
+  drains completion notices.
+- [ ] Extract the remaining tool owners. Runtime-control wrappers remain scoped
+  to host APIs; POML/context/SM/IR verification stays in core.
 - [ ] Complete the versioned core `write_file` contract and finish dependency
   cleanup after the corresponding feature packages are independently installed.
 
@@ -223,6 +229,19 @@ real Cargo build/tests and source rollback. The core-only dependency tree and
 compiled binary exclude the legacy-file implementation. A compiled CLI and
 fresh package install passed; reinstall refusal preserved the existing binary
 and manifest. No live model inference was used.
+
+Verification for the shell extraction: `crates/praxis-shell` adds foreground
+capture plus a durable background-job registry behind the versioned process
+protocol. Foreground `execute_terminal` keeps the one-shot exact-text result;
+`run_background`/`background_status` require the installed worker bound through
+`SHELL_SERVICE_EXECUTABLE`. Host adapter tests use a local protocol fixture and
+cover authenticated caller identity, registration without spawning, missing or
+disabled workers, bad versions and crash fail-closed without host fallback. The
+crate's own tests cover stream/exit/truncation results, completion hooks, owner
+scoping, cleanup bounds and the actual installed binary through protocol v1.
+The `shell` feature is part of `compatibility`; a `--no-default-features` build
+omits the crate and its dependency, and stale rows cannot advertise it. No live
+model inference was used.
 
 Existing setup guides remain applicable during migration:
 

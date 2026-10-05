@@ -1333,11 +1333,13 @@ mod registry_tests {
         let got = names(&tools);
         assert!(!got.contains(&"brave_web_search"), "unlisted plugin tool must not leak");
         assert_eq!(got.contains(&"read_file"), cfg!(feature = "legacy_file_ops"));
-        assert!(got.contains(&"execute_terminal"));
+        assert_eq!(got.contains(&"execute_terminal"), cfg!(feature = "shell"));
         assert!(!got.contains(&"agent_complete") && !got.contains(&"memory_get"));
         // Activated tools carry full schemas even in DescriptionOnly mode.
-        let term = tools.iter().find(|t| t.function.name == "execute_terminal").unwrap();
-        assert!(term.function.parameters["properties"].get("command").is_some());
+        if cfg!(feature = "shell") {
+            let term = tools.iter().find(|t| t.function.name == "execute_terminal").unwrap();
+            assert!(term.function.parameters["properties"].get("command").is_some());
+        }
 
         // Activating the plugin tool directly admits it with a full schema.
         settings.activated_tools.push("brave_web_search".into());
@@ -1386,11 +1388,14 @@ mod registry_tests {
             settings.tool_discovery_mode = mode.into();
             let baseline = build_tool_definitions(&settings, Some(&plugins), Some(&db));
             let task = crate::gateway::task_control::begin(&user).unwrap();
-            crate::gateway::task_control::select_tools(&user,
-                ["memory_get", "run_background", "brave_web_search"].map(str::to_string).to_vec(), false).unwrap();
+            let mut selected = ["memory_get", "brave_web_search"].map(str::to_string).to_vec();
+            if cfg!(feature = "shell") {
+                selected.push("run_background".into());
+            }
+            crate::gateway::task_control::select_tools(&user, selected.clone(), false).unwrap();
             let got = build_tool_definitions_for_user(&settings, Some(&plugins), Some(&db), &user);
-            for name in ["memory_get", "run_background", "brave_web_search"] {
-                let tool = got.iter().find(|t| t.function.name == name)
+            for name in &selected {
+                let tool = got.iter().find(|t| &t.function.name == name)
                     .unwrap_or_else(|| panic!("{mode}: discovered {name} must be offered"));
                 let params = &tool.function.parameters;
                 assert_eq!(params["properties"]["_output"]["type"], "object", "{mode}:{name}");
@@ -1399,7 +1404,7 @@ mod registry_tests {
             }
             if mode == "None" {
                 assert!(baseline.is_empty());
-                assert_eq!(got.len(), 3);
+                assert_eq!(got.len(), selected.len());
             } else {
                 assert_eq!(names(&got), names(&baseline), "discovery must not create an allow-list");
             }
@@ -1425,9 +1430,13 @@ mod registry_tests {
         let db = crate::db::Database::new(dir.path()).unwrap();
         crate::db::tools::init_default_tools(&db).unwrap();
         let mut settings = ContextSettings::default();
-        settings.activated_tools = ["memory_get", "memory_set", "understand_image", "run_background"].map(str::to_string).to_vec();
+        let mut activated = ["memory_get", "memory_set", "understand_image"].map(str::to_string).to_vec();
+        if cfg!(feature = "shell") {
+            activated.push("run_background".into());
+        }
+        settings.activated_tools = activated;
         let tools = build_tool_definitions(&settings, None, Some(&db));
-        assert_eq!(tools.len(), 4, "built-ins without category metadata must be callable too");
+        assert_eq!(tools.len(), if cfg!(feature = "shell") { 4 } else { 3 }, "built-ins without category metadata must be callable too");
         for tool in &tools {
             let mut expected = crate::tools::discovery::catalog(&db, &crate::plugins::PluginRegistry::new()).unwrap()
                 .into_iter().find(|t| t.function.name == tool.function.name).unwrap();

@@ -3703,6 +3703,7 @@ dependencies = [
  "png",
  "praxis-legacy-file-ops",
  "praxis-plugin-api",
+ "praxis-shell",
  "praxis-vm",
  "praxis-vm-web",
  "rand 0.8.6",
@@ -3785,6 +3786,23 @@ dependencies = [
  "tokio",
  "tokio-util",
  "uuid",
+]
+
+[[package]]
+name = "praxis-shell"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "dashmap 6.1.0",
+ "libc",
+ "praxis-plugin-api",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

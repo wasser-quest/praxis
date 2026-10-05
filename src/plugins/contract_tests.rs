@@ -167,7 +167,7 @@ async fn capability_cancel_still_runs_compensation_with_fresh_token() {
     let _task = bind(user, dir.path());
     let execution = invoke(&registry, user, "first");
     let cancellation = async {
-        for _ in 0..100 {
+        for _ in 0..500 {
             if dir.path().join("started").exists() {
                 task_control::cancel(user);
                 return;
@@ -539,7 +539,7 @@ async fn capability_native_timeout_and_cancel_never_produce_proof() {
         let run = invoke(&registry, user, "first");
         let cancel = async {
             if cancelled {
-                for _ in 0..100 {
+                for _ in 0..500 {
                     if dir.path().join("started").exists() {
                         token.cancel();
                         return;

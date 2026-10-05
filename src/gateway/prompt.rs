@@ -621,7 +621,7 @@ mod tests {
         assert_eq!(ctx.active_state.as_deref(), Some("code"));
         assert_eq!(ctx.settings.system_template.as_deref(), Some("states/code/code"));
         let after = crate::tools::registry::build_tool_definitions(&ctx.settings, None, None);
-        assert!(after.iter().any(|t| t.function.name == "execute_terminal"));
+        assert_eq!(after.iter().any(|t| t.function.name == "execute_terminal"), cfg!(feature = "shell"));
         assert!(!ctx.settings.tool_group_definitions.is_empty(), "workflow [tool_groups] land in the context");
 
         ctx.sm_data["role"] = serde_json::json!("standard");
