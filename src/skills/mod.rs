@@ -179,7 +179,7 @@ pub async fn execute_skill(skill: &Skill, context: &serde_json::Value) -> anyhow
     // Never present unrendered fallback markup as a successfully loaded skill.
     let mut parameters = context.clone();
     parameters["skill_dir"] = serde_json::json!(skill.folder);
-    crate::gateway::poml::render_strict(&poml_path, &parameters).await
+    crate::runtime::engine::render_strict(&poml_path, &parameters).await
 }
 
 pub async fn execute_skill_by_name(

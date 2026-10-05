@@ -37,7 +37,7 @@ pub(crate) async fn route_in(root:&Path,state:&GatewayState,ctx:Context,input:&s
         anyhow::ensure!(input.chars().count()+evidence.chars().count()<=profile.max_context_chars,"Decision input too large");
         let context=if let Some(template)=&profile.input_template {
             let path=super::templates::resolve_template(&root.join("templates"),template)?;
-            super::poml::render_strict(&path.to_string_lossy(),&json!({"decision_input":{
+            crate::runtime::engine::render_strict(&path.to_string_lossy(),&json!({"decision_input":{
                 "user_request":input,"evidence":evidence,"active_state":ctx.active_state,
                 "workflow":prompt::workflow_name(&ctx),"sm_data":ctx.sm_data,
             }})).await?

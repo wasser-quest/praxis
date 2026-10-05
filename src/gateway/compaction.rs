@@ -62,7 +62,7 @@ pub async fn summarize(state:&GatewayState,user:&str,messages:&[Message],previou
     let mut summary=previous.to_string();
     for chunk in chars.chunks(6000) {
         let text:String=chunk.iter().collect();
-        let prompt=super::poml::render_strict(&path.to_string_lossy(),&serde_json::json!({
+        let prompt=crate::runtime::engine::render_strict(&path.to_string_lossy(),&serde_json::json!({
             "conversation_text":text,"previous_summary":summary
         })).await?;
         let request=ChatRequest {

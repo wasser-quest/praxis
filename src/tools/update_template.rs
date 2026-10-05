@@ -59,7 +59,7 @@ pub async fn save_validated(
         .to_str()
         .ok_or_else(|| anyhow::anyhow!("Template path is not UTF-8"))?;
     let rendered =
-        crate::gateway::poml::render_strict_candidate(temp_path, context, Some(&path)).await?;
+        crate::runtime::engine::render_strict_candidate(temp_path, context, Some(&path)).await?;
     temporary.persist(&path).map_err(|e| e.error)?;
     Ok(rendered)
 }
