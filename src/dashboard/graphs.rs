@@ -20,6 +20,7 @@ pub async fn graph(
     Query(query): Query<GraphQuery>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     crate::services::graphs::graph(&state.db, &user, query.workflow.as_deref())
+        .await
         .map(Json)
         .map_err(|error| (StatusCode::BAD_REQUEST, Json(json!({"error":error.to_string()}))))
 }

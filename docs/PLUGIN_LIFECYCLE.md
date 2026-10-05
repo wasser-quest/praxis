@@ -92,12 +92,17 @@ A `runtime`-role package may **declare an engine worker**:
 
 `engine` is only valid with `role: "runtime"` and an operator grant
 (`praxis plugin trust`). At startup the host launches the worker over process
-protocol v1 and installs a `RuntimeEngine` that renders through it; rendering is
-a pure transform, so the worker gets a host-issued but non-authoritative
-envelope. Guard-condition evaluation still delegates to `KernelEngine` because
-state-machine code needs a synchronous answer (making it replaceable needs
-async SM evaluation). Stopping Praxis or dropping the binding force-stops the
-worker and restores the built-in engine.
+protocol v1 and installs a `RuntimeEngine` that renders and evaluates
+guard/transition conditions through it; rendering is a pure transform, so the
+worker gets a host-issued but non-authoritative envelope. The worker must
+declare and implement `render`, `render_strict`, `render_strict_candidate` and
+`evaluate_condition` (the handshake requires an exact match). State-machine
+evaluation is async, so `evaluate_condition` is a worker call too: an installed
+engine owns guard policy while the kernel still owns every observed fact (exit
+codes, resource/workspace hashes and receipts). A crashed or unavailable worker
+fails closed (the condition is false), never silently falling back to the
+built-in policy. Stopping Praxis or dropping the binding force-stops the worker
+and restores the built-in engine.
 
 ## Lifecycle
 

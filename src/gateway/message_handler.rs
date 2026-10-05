@@ -19,11 +19,11 @@ pub(crate) async fn handle_message_inner(
     content: &str,
     channel_id: Option<&str>,
 ) -> anyhow::Result<String> {
-    super::inference::check_task(state, user_id, content, channel_id, None)?;
+    super::inference::check_task(state, user_id, content, channel_id, None).await?;
     // A prior agent_complete must not stop this independent task after one tool.
     crate::gateway::prompt::reset_task_completion_in(&state.db, std::path::Path::new(&state.config.root_dir), user_id)?;
     // Route before deciding the path and before either prompt is rendered.
-    let ctx = crate::gateway::prompt::prepare_runtime(state, user_id, content, None, channel_id)?;
+    let ctx = crate::gateway::prompt::prepare_runtime(state, user_id, content, None, channel_id).await?;
 
     // GPU-Router-Prewarm (pgpu §12.4): LLM-Slot VOR dem Turn wecken (await —
     //Wake + State-Check sind <1 s). Nachts (20:00-Sleep = auto_rent aus)

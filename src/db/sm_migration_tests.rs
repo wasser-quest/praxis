@@ -85,15 +85,15 @@ fn canonical_sm_data_wins_alias_conflicts_without_dropping_unrelated_legacy_data
     );
 }
 
-#[test]
-fn legacy_workflow_conditions_and_assignments_use_canonical_sm_data() {
+#[tokio::test]
+async fn legacy_workflow_conditions_and_assignments_use_canonical_sm_data() {
     let workflow = crate::sm::parse("@name compatibility\n@steps [first, second]\n[state first]\ncl_data.stage = ready\n[state second]\nsm_data.stage = done\n[transitions]\nfirst -> second : when cl_data.stage == ready\n").unwrap();
     let mut value = json!({"active_state":"first", "sm_data":{}});
-    crate::sm::apply_to_context(&workflow, &mut value);
+    crate::sm::apply_to_context(&workflow, &mut value).await;
     assert_eq!(value["sm_data"]["stage"], "ready");
     assert!(value.get("cl_data").is_none());
     assert_eq!(
-        crate::sm::advance_workflow(&workflow, &value).as_deref(),
+        crate::sm::advance_workflow(&workflow, &value).await.as_deref(),
         Some("second")
     );
 }

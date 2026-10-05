@@ -210,7 +210,8 @@ pub async fn update_template(
         let workspace = config.workspace_root()?;
         crate::gateway::prompt::route_context_with_workspace(
             Path::new("."), &workspace, &mut ctx, &input, &plugins, None,
-        )?;
+        )
+        .await?;
         let context = crate::gateway::prompt::build_context(
             db, &ctx, &input, &plugins, 0, Path::new("."),
         )

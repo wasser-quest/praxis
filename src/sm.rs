@@ -34,16 +34,16 @@ mod state_graph_tests {
         }
     }
 
-    #[test]
-    fn state_graph_entry_uses_start_and_does_not_run_auto_routes() {
+    #[tokio::test]
+    async fn state_graph_entry_uses_start_and_does_not_run_auto_routes() {
         let sm = parse(
             "@routing graph\n@start route\n[state route]\n[state edit]\n[auto]\ntrue -> use edit",
         )
         .unwrap();
         let mut ctx = serde_json::json!({"active_state":"routing", "settings":{}});
-        apply_to_context(&sm, &mut ctx);
+        apply_to_context(&sm, &mut ctx).await;
         assert_eq!(ctx["active_state"], "route");
-        assert!(advance_workflow(&sm, &ctx).is_none());
+        assert!(advance_workflow(&sm, &ctx).await.is_none());
     }
 }
 
@@ -732,7 +732,7 @@ fn apply_tool_groups(sm: &StateMachine, context: &mut serde_json::Value) {
 }
 
 /// Apply SM workflow to context. Returns secret overrides.
-pub fn apply_to_context(
+pub async fn apply_to_context(
     sm: &StateMachine,
     context: &mut serde_json::Value,
 ) -> Vec<(String, String)> {
@@ -779,9 +779,9 @@ pub fn apply_to_context(
                 && s.get("decision_profile").and_then(|v| v.as_str()).is_some_and(|p| !p.is_empty() && p != "off")
         });
     let resolved_state = if sm.is_graph() { active_state.clone() } else if decision_owns_state {
-        resolve_auto_state(&StateMachine { auto_rules: Vec::new(), ..sm.clone() }, obj, &active_state)
+        resolve_auto_state(&StateMachine { auto_rules: Vec::new(), ..sm.clone() }, obj, &active_state).await
     } else {
-        resolve_auto_state(sm, obj, &active_state)
+        resolve_auto_state(sm, obj, &active_state).await
     };
 
     // Apply resolved state variables (may override current state if auto-rule triggered)
@@ -806,7 +806,7 @@ pub fn apply_to_context(
 
     // Apply overrides
     for overr in &sm.overrides {
-        if crate::runtime::engine::evaluate_condition(&overr.condition, context.as_object().unwrap_or(&serde_json::Map::new())) {
+        if crate::runtime::engine::evaluate_condition(&overr.condition, context.as_object().unwrap_or(&serde_json::Map::new())).await {
             set_nested_value(context, &overr.key, serde_json::Value::String(overr.value.clone()));
         }
     }
@@ -814,7 +814,7 @@ pub fn apply_to_context(
     // Collect secret overrides
     let mut secret_changes = Vec::new();
     for secret_overr in &sm.secret_overrides {
-        if crate::runtime::engine::evaluate_condition(&secret_overr.condition, context.as_object().unwrap_or(&serde_json::Map::new())) {
+        if crate::runtime::engine::evaluate_condition(&secret_overr.condition, context.as_object().unwrap_or(&serde_json::Map::new())).await {
             secret_changes.push((secret_overr.key.clone(), secret_overr.value.clone()));
         }
     }
@@ -853,13 +853,13 @@ fn reset_foreign_state_variables(sm: &StateMachine, context: &mut serde_json::Va
     }
 }
 
-fn resolve_auto_state(
+async fn resolve_auto_state(
     sm: &StateMachine,
     context: &serde_json::Map<String, serde_json::Value>,
     current_state: &str,
 ) -> String {
     for rule in &sm.auto_rules {
-        if crate::runtime::engine::evaluate_condition(&rule.condition, context) {
+        if crate::runtime::engine::evaluate_condition(&rule.condition, context).await {
             return rule.target_state.clone();
         }
     }
@@ -1075,7 +1075,7 @@ pub fn save_file_in(root: &std::path::Path, name: &str, content: &str) -> anyhow
 }
 
 /// Evaluate transitions and advance to next state if condition is met.
-pub fn advance_state(sm: &StateMachine, context: &serde_json::Value) -> Option<String> {
+pub async fn advance_state(sm: &StateMachine, context: &serde_json::Value) -> Option<String> {
     let obj = match context.as_object() {
         Some(o) => o,
         None => return None,
@@ -1087,7 +1087,7 @@ pub fn advance_state(sm: &StateMachine, context: &serde_json::Value) -> Option<S
         .unwrap_or("");
 
     for transition in &sm.transitions {
-        if transition.from == current_state && (transition.condition.trim().is_empty() || crate::runtime::engine::evaluate_condition(&transition.condition, obj)) {
+        if transition.from == current_state && (transition.condition.trim().is_empty() || crate::runtime::engine::evaluate_condition(&transition.condition, obj).await) {
             return Some(transition.to.clone());
         }
     }
@@ -1097,9 +1097,9 @@ pub fn advance_state(sm: &StateMachine, context: &serde_json::Value) -> Option<S
 
 /// Explicit transitions take precedence; @steps provides a queue only where
 /// the current state has no outgoing conditional transition to respect.
-pub fn advance_workflow(sm: &StateMachine, context: &serde_json::Value) -> Option<String> {
+pub async fn advance_workflow(sm: &StateMachine, context: &serde_json::Value) -> Option<String> {
     if sm.is_graph() { return None; }
-    if let Some(next) = advance_state(sm, context) { return Some(next); }
+    if let Some(next) = advance_state(sm, context).await { return Some(next); }
     let current = context.get("active_state").and_then(|v| v.as_str()).unwrap_or("");
     if sm.transitions.iter().any(|t| t.from == current) { return None; }
     next_step_state(sm, context)
@@ -1237,15 +1237,15 @@ pub fn next_step_state(sm: &StateMachine, context: &serde_json::Value) -> Option
 mod sm_tests {
     use super::*;
 
-    #[test]
-    fn backend_step_queue_and_transition_guards() {
+    #[tokio::test]
+    async fn backend_step_queue_and_transition_guards() {
         let sm = parse("@steps [one, two]\n[state one]\n[state two]\n").unwrap();
         let context = serde_json::json!({"active_state":"one", "ready":false});
-        assert_eq!(advance_workflow(&sm, &context).as_deref(), Some("two"));
+        assert_eq!(advance_workflow(&sm, &context).await.as_deref(), Some("two"));
         let guarded = parse("@steps [one, two]\n[state one]\n[state two]\n[transitions]\none -> two : when ready == true\n").unwrap();
-        assert!(advance_workflow(&guarded, &context).is_none());
+        assert!(advance_workflow(&guarded, &context).await.is_none());
         let unguarded = parse("[state one]\n[state two]\n[transitions]\none -> two\n").unwrap();
-        assert_eq!(advance_workflow(&unguarded, &context).as_deref(), Some("two"));
+        assert_eq!(advance_workflow(&unguarded, &context).await.as_deref(), Some("two"));
     }
 
     #[test]
@@ -1445,8 +1445,8 @@ if mode == "code" -> invalid_field = "value"
         assert!(!evaluate_condition("nonexistent", &ctx));
     }
 
-    #[test]
-    fn test_apply_to_context() {
+    #[tokio::test]
+    async fn test_apply_to_context() {
         let input = r#"
 [state calm]
 mode = "chat"
@@ -1462,15 +1462,15 @@ step == 2 -> use focused
 "#;
         let sm = parse(input).unwrap();
         let mut ctx = serde_json::json!({"step": 1});
-        apply_to_context(&sm, &mut ctx);
+        apply_to_context(&sm, &mut ctx).await;
 
         assert_eq!(ctx["mode"], "chat");
         assert_eq!(ctx["voice"], "calm.wav");
         assert_eq!(ctx["active_state"], "calm");
     }
 
-    #[test]
-    fn test_apply_overrides() {
+    #[tokio::test]
+    async fn test_apply_overrides() {
         let input = r#"
 [state calm]
 mode = "chat"
@@ -1480,13 +1480,13 @@ if hour < 6 -> mode = "whisper"
 "#;
         let sm = parse(input).unwrap();
         let mut ctx = serde_json::json!({"step": 1, "hour": 3});
-        apply_to_context(&sm, &mut ctx);
+        apply_to_context(&sm, &mut ctx).await;
 
         assert_eq!(ctx["mode"], "whisper");
     }
 
-    #[test]
-    fn test_advance_state() {
+    #[tokio::test]
+    async fn test_advance_state() {
         let input = r#"
 @steps [calm, focused]
 
@@ -1502,12 +1502,12 @@ calm -> focused : when step > 1
         let sm = parse(input).unwrap();
         let ctx = serde_json::json!({"active_state": "calm", "step": 2});
 
-        let new_state = advance_state(&sm, &ctx);
+        let new_state = advance_state(&sm, &ctx).await;
         assert_eq!(new_state, Some("focused".to_string()));
     }
 
-    #[test]
-    fn test_advance_state_no_transition() {
+    #[tokio::test]
+    async fn test_advance_state_no_transition() {
         let input = r#"
 [state calm]
 mode = "chat"
@@ -1518,7 +1518,7 @@ calm -> focused : when step > 1
         let sm = parse(input).unwrap();
         let ctx = serde_json::json!({"active_state": "calm", "step": 1});
 
-        let new_state = advance_state(&sm, &ctx);
+        let new_state = advance_state(&sm, &ctx).await;
         assert!(new_state.is_none());
     }
 
@@ -1667,8 +1667,8 @@ turn > 10 -> use plan
         assert!(evaluate_condition("used_tools.last_call =~ \"^read_file$\"", &ctx) == false);
     }
 
-    #[test]
-    fn test_evaluate_condition_regex_with_context() {
+    #[tokio::test]
+    async fn test_evaluate_condition_regex_with_context() {
         let input = r#"
 [state installing]
 settings.system_template = "installing"
@@ -1685,7 +1685,7 @@ used_tools.last_result =~ "partition.*created" -> use installing
                 "count": 1
             }
         });
-        let secrets = apply_to_context(&sm, &mut ctx);
+        let secrets = apply_to_context(&sm, &mut ctx).await;
         assert!(secrets.is_empty());
         assert_eq!(ctx["active_state"], "installing");
     }
@@ -1751,8 +1751,8 @@ used_tools.last_result =~ "partition.*created" -> use installing
         assert!(!evaluate_condition("val == \"my_regex\"", &ctx));
     }
 
-    #[test]
-    fn test_state_variables_available_in_auto_rules() {
+    #[tokio::test]
+    async fn test_state_variables_available_in_auto_rules() {
         let input = r#"
 [state working]
 tool_regex = "vm_input"
@@ -1771,7 +1771,7 @@ used_tools.last_call =~ tool_regex && used_tools.last_args.action == "left" -> u
                 "last_args": {"action": "left", "count": 3}
             }
         });
-        apply_to_context(&sm, &mut ctx);
+        apply_to_context(&sm, &mut ctx).await;
 
         assert_eq!(ctx["active_state"], "done");
         assert_eq!(ctx["mode"], "idle");
@@ -1782,8 +1782,8 @@ used_tools.last_call =~ tool_regex && used_tools.last_args.action == "left" -> u
 mod sm_tool_group_tests {
     use super::*;
 
-    #[test]
-    fn tool_groups_section_defines_groups_without_activating_them() {
+    #[tokio::test]
+    async fn tool_groups_section_defines_groups_without_activating_them() {
         let input = r#"
 @steps [research, chat]
 
@@ -1806,7 +1806,7 @@ settings.activated_tools = ["agent_basic"]
             "active_state": "chat",
             "settings": {"tool_group_definitions": {"web": ["stale"], "mine": ["memory_get"]}}
         });
-        apply_to_context(&sm, &mut ctx);
+        apply_to_context(&sm, &mut ctx).await;
         let defs = &ctx["settings"]["tool_group_definitions"];
         assert_eq!(defs["web"], serde_json::json!(["brave_web_search", "read_file"]), "workflow wins for same name");
         assert_eq!(defs["mine"], serde_json::json!(["memory_get"]), "user groups are preserved");
@@ -1827,8 +1827,8 @@ settings.activated_tools = ["agent_basic"]
         let _: crate::db::contexts::ContextSettings = serde_json::from_value(ctx["settings"].clone()).unwrap();
     }
 
-    #[test]
-    fn state_variables_do_not_leak_into_other_states() {
+    #[tokio::test]
+    async fn state_variables_do_not_leak_into_other_states() {
         let sm = parse(r#"
 settings.tool_discovery_mode = "DescriptionOnly"
 [state a]
@@ -1839,10 +1839,10 @@ settings.tool_discovery_mode = "Full"
 settings.system_template = "b"
 "#).unwrap();
         let mut ctx = serde_json::json!({"active_state": "a", "settings": {"tags_enabled": true}});
-        apply_to_context(&sm, &mut ctx);
+        apply_to_context(&sm, &mut ctx).await;
         assert_eq!(ctx["settings"]["tool_discovery_mode"], "Full");
         ctx["active_state"] = serde_json::json!("b");
-        apply_to_context(&sm, &mut ctx);
+        apply_to_context(&sm, &mut ctx).await;
         assert_eq!(ctx["settings"]["system_template"], "b");
         assert!(ctx["settings"].get("activated_tools").is_none(), "foreign state variable removed");
         assert_eq!(ctx["settings"]["tool_discovery_mode"], "DescriptionOnly", "falls back to _default");
@@ -1851,18 +1851,18 @@ settings.system_template = "b"
         assert_eq!(ctx["settings"]["activated_tools"], serde_json::json!(["read_file"]));
         // _default is not a selectable state.
         ctx["active_state"] = serde_json::json!("_default");
-        apply_to_context(&sm, &mut ctx);
+        apply_to_context(&sm, &mut ctx).await;
         assert_eq!(ctx["active_state"], "a");
     }
 
-    #[test]
-    fn auto_rules_yield_to_an_active_decision_profile() {
+    #[tokio::test]
+    async fn auto_rules_yield_to_an_active_decision_profile() {
         let sm = parse("[state a]\n[state b]\n[auto]\nsm_data.role == \"b\" -> use b\n").unwrap();
         let mut ctx = serde_json::json!({"active_state": "a", "sm_data": {"role": "b"}, "settings": {"decision_profile": "tasks"}});
-        apply_to_context(&sm, &mut ctx);
+        apply_to_context(&sm, &mut ctx).await;
         assert_eq!(ctx["active_state"], "a");
         ctx["settings"]["decision_profile"] = serde_json::json!("off");
-        apply_to_context(&sm, &mut ctx);
+        apply_to_context(&sm, &mut ctx).await;
         assert_eq!(ctx["active_state"], "b");
     }
 

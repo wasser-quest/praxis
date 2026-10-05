@@ -70,6 +70,7 @@ async fn ir_workspace_preflight_rejects_install_directory_before_binding_or_cont
     let before = serde_json::to_value(state.db.load_context(&user).unwrap()).unwrap();
     let _task = task_control::begin(&user).unwrap();
     let error = prompt::prepare_runtime(&state, &user, "Build Snake", None, None)
+        .await
         .unwrap_err().to_string();
     for expected in ["WORKSPACE_DIR", "Cargo.toml", "Cargo.lock", "src", install.path().to_str().unwrap()] {
         assert!(error.contains(expected), "{error}");
@@ -100,7 +101,7 @@ async fn ir_workspace_preflight_stops_real_message_entry_before_provider_or_tool
 async fn ir_workspace_preflight_accepts_the_explicit_prepared_project() {
     let (_install, state, user, workspace) = fixture();
     let _task = task_control::begin(&user).unwrap();
-    prompt::prepare_runtime(&state, &user, "Build Snake", None, None).unwrap();
+    prompt::prepare_runtime(&state, &user, "Build Snake", None, None).await.unwrap();
     assert_eq!(action_contracts::action_root(&user).unwrap(), workspace.canonicalize().unwrap());
 }
 
@@ -108,7 +109,7 @@ async fn ir_workspace_preflight_accepts_the_explicit_prepared_project() {
 async fn ir_workspace_preflight_requirements_cannot_be_removed_during_a_task() {
     let (install, state, user, workspace) = fixture();
     let _task = task_control::begin(&user).unwrap();
-    prompt::prepare_runtime(&state, &user, "Build Snake", None, None).unwrap();
+    prompt::prepare_runtime(&state, &user, "Build Snake", None, None).await.unwrap();
     let mut changed = crate::sm::load_file_in(&install.path().join("contexts"), "verified-implementation").unwrap();
     changed.workspace = Default::default();
     let error = action_contracts::bind(&user, "verified-implementation", &changed, &workspace).unwrap_err().to_string();
@@ -137,6 +138,7 @@ async fn ir_workspace_runtime_uses_project_root_and_keeps_install_assets_separat
     let _task = task_control::begin(&user).unwrap();
     let context =
         prompt::prepare_runtime(&state, &user, "Implement the prepared project.", None, None)
+            .await
             .unwrap();
     assert_eq!(
         action_contracts::action_root(&user).unwrap(),
@@ -167,10 +169,10 @@ async fn ir_workspace_root_stays_pinned_until_a_new_task() {
         std::fs::copy(workspace.join(file), next.join(file)).unwrap();
     }
     let task = task_control::begin(&user).unwrap();
-    prompt::prepare_runtime(&state, &user, "First task", None, None).unwrap();
+    prompt::prepare_runtime(&state, &user, "First task", None, None).await.unwrap();
     state.config.workspace_dir = Some("other-project".into());
     let before = state.db.load_context(&user).unwrap();
-    assert!(prompt::prepare_runtime(&state, &user, "Try changing roots", None, None).is_err());
+    assert!(prompt::prepare_runtime(&state, &user, "Try changing roots", None, None).await.is_err());
     assert_eq!(
         action_contracts::action_root(&user).unwrap(),
         workspace.canonicalize().unwrap()
@@ -181,7 +183,7 @@ async fn ir_workspace_root_stays_pinned_until_a_new_task() {
     );
     drop(task);
     let _task = task_control::begin(&user).unwrap();
-    prompt::prepare_runtime(&state, &user, "New task", None, None).unwrap();
+    prompt::prepare_runtime(&state, &user, "New task", None, None).await.unwrap();
     assert_eq!(
         action_contracts::action_root(&user).unwrap(),
         next.canonicalize().unwrap()

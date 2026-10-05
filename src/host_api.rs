@@ -285,6 +285,7 @@ async fn graph(
     Query(q): Query<GraphQuery>,
 ) -> ApiResult {
     crate::services::graphs::graph(&s.db, &user, q.workflow.as_deref())
+        .await
         .map(Json)
         .map_err(|e| fail(StatusCode::BAD_REQUEST, e))
 }

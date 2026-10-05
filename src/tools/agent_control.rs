@@ -70,7 +70,7 @@ pub async fn run_in(db: &Database, root: &std::path::Path, user_id: &str, signal
             ctx.settings.llm_turn += 1;
 
             let mut value = serde_json::to_value(&ctx).map_err(|e| e.to_string())?;
-            if let Some(next) = crate::sm::advance_workflow(&sm, &value) {
+            if let Some(next) = crate::sm::advance_workflow(&sm, &value).await {
                 if !crate::sm::transition_to(&sm, &mut value, &next) {
                     return Err(format!("SM target state does not exist: {next}"));
                 }

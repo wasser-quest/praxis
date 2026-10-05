@@ -30,7 +30,7 @@ write({
     "owner": hello["owner"],
     "service": hello["service"],
     "nonce": hello["nonce"],
-    "operations": ["render", "render_strict", "render_strict_candidate"],
+    "operations": ["render", "render_strict", "render_strict_candidate", "evaluate_condition"],
     "controls": [],
 })
 (root / "worker.ready").touch()
@@ -45,6 +45,23 @@ while True:
             log.write("invoke\n")
         if mode == "crash":
             sys.exit(1)
+        if request["operation"] == "evaluate_condition":
+            condition = request["input"].get("condition", "")
+            context = request["input"].get("context", {})
+            result = "" == condition  # empty conditions are truthy
+            if "==" in condition:
+                var, _, val = condition.partition("==")
+                val = val.strip().strip('"')
+                current = context.get(var.strip())
+                if isinstance(current, str):
+                    result = current == val
+                else:
+                    try:
+                        result = float(current) == float(val)
+                    except (TypeError, ValueError):
+                        result = False
+            write({"type": "completed", "result": result, **identity})
+            continue
         path = request["input"].get("path", "")
         result = "bridged:%s:%s" % (request["operation"], path)
     else:

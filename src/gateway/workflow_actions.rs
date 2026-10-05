@@ -24,7 +24,7 @@ fn workflow_directive(path:&Path,prefix:&str)->anyhow::Result<Option<String>> {
 
 /// Plan a bounded fixed point: SM → template → optional workflow selection.
 /// No DB/network/write operations; errors leave the caller's context untouched.
-pub fn plan(root:&Path,original:&Context,input:&str,plugins:&PluginRegistry,channel:Option<&str>)->anyhow::Result<Context> {
+pub async fn plan(root:&Path,original:&Context,input:&str,plugins:&PluginRegistry,channel:Option<&str>)->anyhow::Result<Context> {
     // A MANUAL system_template choice sticks and disables workflow routing.
     // A template that some state of the active workflow selects is the
     // workflow's own output, so routing must keep running; otherwise the first
@@ -43,7 +43,7 @@ pub fn plan(root:&Path,original:&Context,input:&str,plugins:&PluginRegistry,chan
             return Ok(candidate);
         }
         let old_workflow=super::prompt::workflow_name(&candidate).to_string();
-        super::prompt::route_context_once(root,&mut candidate,input,plugins,channel)?;
+        super::prompt::route_context_once(root,&mut candidate,input,plugins,channel).await?;
         let workflow=super::prompt::workflow_name(&candidate).to_string();
         let template=candidate.settings.system_template.as_deref().unwrap_or("standard").to_string();
         ensure!(seen.insert((workflow.clone(),candidate.active_state.clone(),template.clone())),"Workflow/template entry cycle detected; no changes committed");

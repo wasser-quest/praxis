@@ -154,7 +154,7 @@ mod capability_dispatch_tests {
     async fn ir_workspace_dispatch_reads_edits_verifies_and_completes_the_selected_project() {
         let (install, state, user, workspace) = crate::gateway::workspace_tests::fixture();
         let _task = task_control::begin(&user).unwrap();
-        crate::gateway::prompt::prepare_runtime(&state, &user, "Implement the prepared project.", None, None).unwrap();
+        crate::gateway::prompt::prepare_runtime(&state, &user, "Implement the prepared project.", None, None).await.unwrap();
         let read = ir_call("read", r#"1 R {"path":"src/main.rs"}"#);
         let result = execute_tool_call(&state.db, &user, &read, &state.plugins).await;
         let read: serde_json::Value = serde_json::from_str(&result).unwrap();

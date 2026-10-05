@@ -35,8 +35,9 @@ pub trait RuntimeEngine: Send + Sync {
     ) -> anyhow::Result<String>;
     /// Evaluate a state-machine guard/transition condition. The kernel owns the
     /// parsed state machine and the evidence; the engine owns the meaning of a
-    /// condition.
-    fn evaluate_condition(
+    /// condition. Evaluation is async so an installed process engine can own
+    /// guard policy as well as rendering.
+    async fn evaluate_condition(
         &self,
         condition: &str,
         context: &serde_json::Map<String, Value>,
@@ -72,7 +73,7 @@ impl RuntimeEngine for KernelEngine {
         crate::gateway::poml::render_strict_candidate(template_path, context, destination).await
     }
 
-    fn evaluate_condition(
+    async fn evaluate_condition(
         &self,
         condition: &str,
         context: &serde_json::Map<String, Value>,
@@ -111,11 +112,11 @@ pub fn info() -> EngineInfo {
     current().info()
 }
 
-pub fn evaluate_condition(
+pub async fn evaluate_condition(
     condition: &str,
     context: &serde_json::Map<String, Value>,
 ) -> bool {
-    current().evaluate_condition(condition, context)
+    current().evaluate_condition(condition, context).await
 }
 
 pub async fn render(template_path: &str, context: &Value) -> anyhow::Result<String> {
@@ -178,14 +179,14 @@ mod tests {
                 .render_strict_candidate(template_path, context, destination)
                 .await
         }
-        fn evaluate_condition(
+        async fn evaluate_condition(
             &self,
             condition: &str,
             context: &serde_json::Map<String, Value>,
         ) -> bool {
             // Override one marker condition and delegate everything else so
             // concurrent tests see unchanged behavior while the fixture is set.
-            condition == "axiom" || KernelEngine.evaluate_condition(condition, context)
+            condition == "axiom" || KernelEngine.evaluate_condition(condition, context).await
         }
     }
 
@@ -202,11 +203,11 @@ mod tests {
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
         // Guard-condition policy also comes from the engine.
         let empty = serde_json::Map::new();
-        assert!(evaluate_condition("axiom", &empty));
+        assert!(evaluate_condition("axiom", &empty).await);
         // Other conditions still delegate to the kernel implementation.
-        assert!(!evaluate_condition("axiom == false", &empty));
+        assert!(!evaluate_condition("axiom == false", &empty).await);
         clear();
         assert_eq!(info().id, "kernel");
-        assert!(!evaluate_condition("axiom", &empty));
+        assert!(!evaluate_condition("axiom", &empty).await);
     }
 }

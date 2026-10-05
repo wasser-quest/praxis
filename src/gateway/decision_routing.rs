@@ -6,7 +6,7 @@ use serde_json::json;
 use std::{path::Path,time::Instant};
 
 pub async fn prepare(state:&GatewayState,user:&str,input:&str,turn:Option<i32>,channel:Option<&str>)->anyhow::Result<Context> {
-    let ctx=prompt::prepare_runtime(state,user,input,turn,channel)?;
+    let ctx=prompt::prepare_runtime(state,user,input,turn,channel).await?;
     route_in(std::path::Path::new(&state.config.root_dir),state,ctx,input,channel).await
 }
 
@@ -55,7 +55,7 @@ pub(crate) async fn route_in(root:&Path,state:&GatewayState,ctx:Context,input:&s
         anyhow::ensure!(decision_profiles::load(&root.join("decisions"),name)?==profile,"Decision profile changed during classification");
         let mut next=ctx.clone();next.active_state=Some(target.clone());next.settings.active_state=Some(target.clone());
         let workspace = state.config.workspace_root()?;
-        prompt::route_context_with_workspace(root,&workspace,&mut next,input,&state.plugins,channel)?;
+        prompt::route_context_with_workspace(root,&workspace,&mut next,input,&state.plugins,channel).await?;
         super::workflow_preflight::validate(&state.db, &state.plugins, prompt::workflow_name(&next), &workflow, &next)?;
         anyhow::ensure!(!cancel.is_cancelled(),"Task cancelled");
         if state.db.compare_and_save_context(&ctx,&next)? {Ok((next,"applied",probability))}

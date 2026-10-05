@@ -21,7 +21,7 @@ pub struct Edge {
     pub blocked_reason: Option<String>,
 }
 
-pub fn edges(sm: &StateMachine, context: &Value, user: &str) -> Vec<Edge> {
+pub async fn edges(sm: &StateMachine, context: &Value, user: &str) -> Vec<Edge> {
     let mut indices = HashMap::<String, usize>::new();
     let mut result = Vec::new();
     for transition in &sm.transitions {
@@ -29,9 +29,10 @@ pub fn edges(sm: &StateMachine, context: &Value, user: &str) -> Vec<Edge> {
         let id = format!("{}:{}", transition.from, index);
         let metadata = sm.edges.get(&id);
         let condition_met = transition.condition.trim().is_empty()
-            || context
-                .as_object()
-                .is_some_and(|obj| crate::runtime::engine::evaluate_condition(&transition.condition, obj));
+            || match context.as_object() {
+                Some(obj) => crate::runtime::engine::evaluate_condition(&transition.condition, obj).await,
+                None => false,
+            };
         let blocked_reason = if !sm.states.contains_key(&transition.to) {
             Some("Destination state is undefined".into())
         } else if !condition_met {
@@ -118,7 +119,7 @@ pub fn history(user: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-pub fn view(sm: &StateMachine, ctx: &Context) -> Value {
+pub async fn view(sm: &StateMachine, ctx: &Context) -> Value {
     let context = serde_json::to_value(ctx).unwrap_or_default();
     let mut nodes: Vec<_> = sm.states.iter().filter(|(name, _)| name.as_str() != "_default").map(|(name, state)| {
         let metadata = sm.nodes.get(name);
@@ -130,7 +131,7 @@ pub fn view(sm: &StateMachine, ctx: &Context) -> Value {
     nodes.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
     json!({"name": sm.name, "description": sm.description, "routing": if sm.is_graph() {"graph"} else {"linear"},
         "start": sm.entry_state(), "active_state": ctx.active_state, "history": history(&ctx.user_id),
-        "nodes": nodes, "edges": edges(sm, &context, &ctx.user_id), "workflow": super::prompt::workflow_name(ctx),
+        "nodes": nodes, "edges": edges(sm, &context, &ctx.user_id).await, "workflow": super::prompt::workflow_name(ctx),
         "reply_facts": super::action_contracts::reply_facts(&ctx.user_id), "completion_guards": sm.action_guards.get("_complete"),
         "completion_triggers": sm.action_guard_triggers.get("_complete")})
 }
@@ -235,7 +236,7 @@ pub(crate) async fn navigate_checked(
         )
     } else {
         let context = serde_json::to_value(&before)?;
-        let choices = edges(&sm, &context, user);
+        let choices = edges(&sm, &context, user).await;
         let selected = choose(&choices, source, index)?;
         (selected.to.clone(), Some(selected.id.clone()))
     };
@@ -262,7 +263,7 @@ pub(crate) async fn navigate_checked(
     } else {
         next_history.push(source.to_string());
     }
-    let mut graph = view(&sm, &after);
+    let mut graph = view(&sm, &after).await;
     graph["history"] = json!(next_history);
     // The receipt describes the resulting graph. Every successful navigation
     // consumes the current input event, so reply-guard edges cannot remain
@@ -284,11 +285,11 @@ pub(crate) async fn navigate_checked(
     Ok(receipt.to_string())
 }
 
-pub fn instructions(sm: &StateMachine, ctx: &Context) -> String {
+pub async fn instructions(sm: &StateMachine, ctx: &Context) -> String {
     if !sm.is_graph() {
         return String::new();
     }
-    let graph = view(sm, ctx);
+    let graph = view(sm, ctx).await;
     let current = ctx.active_state.as_deref().unwrap_or("");
     let outgoing: Vec<_> = graph["edges"]
         .as_array()
@@ -308,10 +309,10 @@ pub fn instructions(sm: &StateMachine, ctx: &Context) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn state_graph_branch_indices_do_not_shift_when_blocked() {
+    #[tokio::test]
+    async fn state_graph_branch_indices_do_not_shift_when_blocked() {
         let sm = crate::sm::parse("@routing graph\n[state a]\n[state b]\n[state c]\n[transitions]\na -> b : when flag == true\na -> c").unwrap();
-        let edges = edges(&sm, &json!({"flag":false}), "graph-index-test");
+        let edges = edges(&sm, &json!({"flag":false}), "graph-index-test").await;
         assert!(!edges[0].eligible);
         assert_eq!(choose(&edges, "a", None).unwrap().to, "c");
         assert!(choose(&edges, "a", Some(0)).is_err());

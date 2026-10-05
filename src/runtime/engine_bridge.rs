@@ -1,14 +1,15 @@
 //! Runtime-engine host bridge.
 //!
 //! A `runtime`-role package may declare an `engine` worker. The host launches it
-//! over process protocol v1 and installs a `RuntimeEngine` that renders through
-//! the worker. Rendering is a pure transform, so the worker receives a
-//! host-issued but non-authoritative envelope; guard-condition policy delegates
-//! to the kernel engine until state-machine evaluation is async.
+//! over process protocol v1 and installs a `RuntimeEngine` that renders and
+//! evaluates guard/transition conditions through the worker. Rendering is a pure
+//! transform, so the worker receives a host-issued but non-authoritative
+//! envelope; condition evaluation returns a boolean and the kernel still owns
+//! every observed fact (exit codes, hashes, receipts).
 use crate::{
     config::Config,
     plugins::{EngineDeclaration, PluginRegistry, TrustRole},
-    runtime::engine::{self, EngineInfo, KernelEngine, RuntimeEngine},
+    runtime::engine::{self, EngineInfo, RuntimeEngine},
 };
 use praxis_plugin_api::{CallContext, Client, LaunchSpec};
 use serde_json::{json, Value};
@@ -18,7 +19,12 @@ use std::{
     sync::Arc,
 };
 
-pub const OPERATIONS: &[&str] = &["render", "render_strict", "render_strict_candidate"];
+pub const OPERATIONS: &[&str] = &[
+    "render",
+    "render_strict",
+    "render_strict_candidate",
+    "evaluate_condition",
+];
 
 pub struct ProcessEngine {
     client: Arc<Client>,
@@ -47,7 +53,7 @@ impl ProcessEngine {
         })
     }
 
-    async fn call(&self, operation: &str, input: Value) -> anyhow::Result<String> {
+    async fn call_value(&self, operation: &str, input: Value) -> anyhow::Result<Value> {
         let context = CallContext {
             user: "engine".into(),
             session: "engine".into(),
@@ -61,8 +67,12 @@ impl ProcessEngine {
             attributes: json!({}),
             secrets: BTreeMap::new(),
         };
-        let value = self.client.invoke(context, operation, input).await?;
-        value
+        self.client.invoke(context, operation, input).await
+    }
+
+    async fn call(&self, operation: &str, input: Value) -> anyhow::Result<String> {
+        self.call_value(operation, input)
+            .await?
             .as_str()
             .map(str::to_owned)
             .ok_or_else(|| anyhow::anyhow!("Engine worker returned a non-text result"))
@@ -108,15 +118,27 @@ impl RuntimeEngine for ProcessEngine {
         .await
     }
 
-    fn evaluate_condition(
+    async fn evaluate_condition(
         &self,
         condition: &str,
         context: &serde_json::Map<String, Value>,
     ) -> bool {
-        // Guard-condition evaluation needs a synchronous answer inside state
-        // machine code, so it stays with the kernel until SM evaluation is
-        // async. The installed engine still owns rendering.
-        KernelEngine.evaluate_condition(condition, context)
+        // A failed or crashed engine cannot authorize a transition. Guard
+        // evaluation fails closed (condition is false) and the receipt still
+        // names the installed engine as the policy owner.
+        match self
+            .call_value(
+                "evaluate_condition",
+                json!({"condition": condition, "context": context}),
+            )
+            .await
+        {
+            Ok(value) => value.as_bool().unwrap_or(false),
+            Err(error) => {
+                tracing::warn!(%error, "Engine worker condition evaluation failed; treating condition as false");
+                false
+            }
+        }
     }
 }
 
@@ -245,7 +267,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn process_engine_renders_and_delegates_guard_conditions() {
+    async fn process_engine_renders_and_owns_guard_conditions() {
         let (dir, spec, init) = fixture("echo");
         let engine = ProcessEngine::launch(
             &spec,
@@ -270,11 +292,31 @@ mod tests {
                 .unwrap(),
             "bridged:render_strict_candidate:t.poml"
         );
-        // Guard policy delegates to the kernel engine.
+        // Guard policy is owned by the installed engine and runs through the
+        // worker, not the kernel.
         let mut context = serde_json::Map::new();
         context.insert("step".into(), json!(1));
-        assert!(engine.evaluate_condition("step == 1", &context));
-        assert!(!engine.evaluate_condition("step == 2", &context));
+        assert!(engine.evaluate_condition("step == 1", &context).await);
+        assert!(!engine.evaluate_condition("step == 2", &context).await);
+    }
+
+    #[tokio::test]
+    async fn process_engine_condition_failure_fails_closed() {
+        let (dir, spec, init) = fixture("crash");
+        let engine = ProcessEngine::launch(
+            &spec,
+            init,
+            EngineInfo {
+                id: "engine_pkg".into(),
+                version: "1".into(),
+            },
+            dir.path().to_string_lossy().into_owned(),
+        )
+        .await
+        .unwrap();
+        // A crashed or unavailable engine must not authorize a transition.
+        let context = serde_json::Map::new();
+        assert!(!engine.evaluate_condition("step == 1", &context).await);
     }
 
     #[tokio::test]

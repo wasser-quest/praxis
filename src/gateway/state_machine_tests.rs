@@ -3,8 +3,8 @@ use crate::{db::{contexts::Context, Database}, gateway::prompt, plugins::PluginR
 use serde_json::json;
 use std::path::Path;
 
-#[test]
-fn twenty_tasks_declares_real_states_without_deterministic_task_routing() {
+#[tokio::test]
+async fn twenty_tasks_declares_real_states_without_deterministic_task_routing() {
     let sm=crate::sm::load_file("20-tasks").expect("dedicated workflow");
     assert!(sm.auto_rules.is_empty());
     assert!(sm.overrides.is_empty());
@@ -14,12 +14,12 @@ fn twenty_tasks_declares_real_states_without_deterministic_task_routing() {
         let mut ctx=Context {user_id:"synthetic-state-test".into(),active_state:Some(name.into()),..Default::default()};
         ctx.settings.sm_file=Some("20-tasks".into());
         ctx.sm_data=json!({"role":"stale-persona"});
-        prompt::route_context(Path::new("."),&mut ctx,"An ordinary task with no transition request",&plugins,None).unwrap();
+        prompt::route_context(Path::new("."),&mut ctx,"An ordinary task with no transition request",&plugins,None).await.unwrap();
         assert_eq!(ctx.active_state.as_deref(),Some(name));
         assert_eq!(ctx.settings.active_state,ctx.active_state);
         assert_eq!(ctx.sm_data["role"],name,"role must be a projection of the REAL state");
         assert_eq!(ctx.settings.system_template.as_deref(),Some("20-tasks"));
-        assert!(crate::sm::advance_workflow(&sm,&serde_json::to_value(&ctx).unwrap()).is_none());
+        assert!(crate::sm::advance_workflow(&sm,&serde_json::to_value(&ctx).unwrap()).await.is_none());
     }
 }
 

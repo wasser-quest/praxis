@@ -267,8 +267,8 @@ async fn foundation_missing_provider_preserves_a_completed_graph_at_its_final_no
     assert!(state.db.get_messages(&user, 100).unwrap().is_empty());
 }
 
-#[test]
-fn foundation_missing_fallback_blocks_inference_before_history_or_receipt_binding() {
+#[tokio::test]
+async fn foundation_missing_fallback_blocks_inference_before_history_or_receipt_binding() {
     let (_root, state, user) = fixture();
     // Exercise a configured local primary with an unconfigured explicit fallback.
     let mut config = state.config.clone();
@@ -278,7 +278,7 @@ fn foundation_missing_fallback_blocks_inference_before_history_or_receipt_bindin
         .llm
         .swap(llm::LLMRouter::new(&config, &Default::default()));
     let _task = task_control::begin(&user).unwrap();
-    let error = inference::check_task(&state, &user, "hello", None, None).unwrap_err();
+    let error = inference::check_task(&state, &user, "hello", None, None).await.unwrap_err();
     assert!(error.to_string().contains("missing_fallback"), "{error}");
     assert!(error.downcast_ref::<inference::SetupError>().is_some());
     assert!(state.db.get_messages(&user, 100).unwrap().is_empty());
@@ -419,11 +419,11 @@ async fn foundation_direct_agent_restarts_a_completed_default_graph_before_provi
     );
 }
 
-#[test]
-fn foundation_inference_preflight_honors_workflow_provider_override_and_router_swap() {
+#[tokio::test]
+async fn foundation_inference_preflight_honors_workflow_provider_override_and_router_swap() {
     let (root, state, user) = fixture();
     let _task = task_control::begin(&user).unwrap();
-    assert!(inference::check_task(&state, &user, "hello", None, None).is_err());
+    assert!(inference::check_task(&state, &user, "hello", None, None).await.is_err());
     let calls = Arc::new(AtomicUsize::new(0));
     state.llm.swap(llm::LLMRouter::with_providers(
         vec![Box::new(ReadyProvider(calls.clone()))],
@@ -437,7 +437,7 @@ fn foundation_inference_preflight_honors_workflow_provider_override_and_router_s
     )
     .unwrap();
     // The default is still unconfigured; trusted state routing chooses a usable provider.
-    inference::check_task(&state, &user, "hello", None, None).unwrap();
+    inference::check_task(&state, &user, "hello", None, None).await.unwrap();
     assert!(state.llm.get().validate_configuration().is_err());
     assert!(state.db.get_messages(&user, 100).unwrap().is_empty());
     assert_eq!(

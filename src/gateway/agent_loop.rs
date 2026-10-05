@@ -130,7 +130,7 @@ pub(crate) async fn run_agent_loop_in_task(
     config: AgentLoopConfig,
     feedback_tx: Option<tokio::sync::mpsc::UnboundedSender<String>>,
 ) -> anyhow::Result<AgentLoopResult> {
-    super::inference::check_task(state, user_id, user_message_input, None, config.sm_file.as_deref())?;
+    super::inference::check_task(state, user_id, user_message_input, None, config.sm_file.as_deref()).await?;
     let result = run_agent_loop_inner(state, user_id, user_message_input, config, feedback_tx).await;
     // Strict rendering/DB errors must not leave a ghost active loop behind.
     unregister_active_loop(user_id).await;
@@ -197,7 +197,7 @@ async fn run_agent_loop_inner(
     // Match read-only preflight: apply the supplied workflow default before
     // restarting a completed graph, then save only after setup succeeds.
     super::prompt::reset_completion(&mut ctx, root)?;
-    let candidate = super::workflow_actions::plan(root, &ctx, &user_message, &state.plugins, None)?;
+    let candidate = super::workflow_actions::plan(root, &ctx, &user_message, &state.plugins, None).await?;
     let workflow = crate::sm::load_file_in(&root.join("contexts"), super::prompt::workflow_name(&candidate)).map_err(|e| anyhow::anyhow!("{e}"))?;
     super::workflow_preflight::validate(&state.db, &state.plugins, super::prompt::workflow_name(&candidate), &workflow, &candidate)?;
     super::action_contracts::bind(user_id, super::prompt::workflow_name(&candidate), &workflow, &workspace)?;
@@ -950,7 +950,7 @@ role: "system".to_string(),
         if advanced {
             let sm = sm::load_file(crate::gateway::prompt::workflow_name(&ctx)).map_err(|e| anyhow::anyhow!("{e}"))?;
             let mut value = serde_json::to_value(&ctx)?;
-            if let Some(next) = sm::advance_workflow(&sm, &value) {
+            if let Some(next) = sm::advance_workflow(&sm, &value).await {
                 match super::action_contracts::require_for_workflow(user_id, &sm, &next) {
                     Ok(()) => {
                         anyhow::ensure!(sm::transition_to(&sm, &mut value, &next), "SM target state does not exist: {next}");

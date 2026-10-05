@@ -95,17 +95,17 @@ pub fn workflow_name(ctx: &Context) -> &str {
 
 /// Prepare a context without persistence (also used by preview). All persona
 /// decisions belong in the selected SM file, never in the message handler.
-pub fn route_context(
+pub async fn route_context(
     root: &Path,
     ctx: &mut Context,
     input: &str,
     plugins: &PluginRegistry,
     channel_id: Option<&str>,
 ) -> anyhow::Result<()> {
-    route_context_with_workspace(root, root, ctx, input, plugins, channel_id)
+    route_context_with_workspace(root, root, ctx, input, plugins, channel_id).await
 }
 
-pub fn route_context_with_workspace(
+pub async fn route_context_with_workspace(
     root: &Path,
     workspace: &Path,
     ctx: &mut Context,
@@ -113,7 +113,7 @@ pub fn route_context_with_workspace(
     plugins: &PluginRegistry,
     channel_id: Option<&str>,
 ) -> anyhow::Result<()> {
-    let candidate = super::workflow_actions::plan(root,ctx,input,plugins,channel_id)?;
+    let candidate = super::workflow_actions::plan(root,ctx,input,plugins,channel_id).await?;
     let workflow = crate::sm::load_file_in(&root.join("contexts"), workflow_name(&candidate))
         .map_err(|e| anyhow::anyhow!("Workflow routing failed: {e}"))?;
     super::action_contracts::bind(&ctx.user_id, workflow_name(&candidate), &workflow, workspace)?;
@@ -122,7 +122,7 @@ pub fn route_context_with_workspace(
     Ok(())
 }
 
-pub(crate) fn route_context_once(
+pub(crate) async fn route_context_once(
     root: &Path,
     ctx: &mut Context,
     input: &str,
@@ -156,7 +156,7 @@ pub(crate) fn route_context_once(
         .map_err(|e| anyhow::anyhow!("Workflow routing failed: {e}"))?;
     let mut value = serde_json::to_value(&*ctx)?;
     // Secret overrides are deliberately not applied to global credentials.
-    let _ = crate::sm::apply_to_context(&workflow, &mut value);
+    let _ = crate::sm::apply_to_context(&workflow, &mut value).await;
     crate::db::contexts::normalize_legacy_keys(&mut value);
     let mut routed: Context = serde_json::from_value(value)?;
     anyhow::ensure!(
@@ -195,7 +195,7 @@ pub(crate) fn route_context_once(
     Ok(())
 }
 
-pub fn prepare_runtime(
+pub async fn prepare_runtime(
     state: &super::GatewayState,
     user_id: &str,
     input: &str,
@@ -212,7 +212,7 @@ pub fn prepare_runtime(
         super::task_control::pin_workspace(user_id, &workspace)?;
     }
     let root = Path::new(&state.config.root_dir);
-    let candidate = super::workflow_actions::plan(root, &ctx, input, &state.plugins, channel_id)?;
+    let candidate = super::workflow_actions::plan(root, &ctx, input, &state.plugins, channel_id).await?;
     let workflow = crate::sm::load_file_in(&root.join("contexts"), workflow_name(&candidate))
         .map_err(|e| anyhow::anyhow!("Workflow routing failed: {e}"))?;
     super::workflow_preflight::validate(&state.db, &state.plugins, workflow_name(&candidate), &workflow, &candidate)?;
@@ -412,7 +412,7 @@ pub async fn render_system(
     }
     rendered.push_str(&super::action_contracts::instructions_for(&ctx.user_id, ctx.active_state.as_deref().unwrap_or("")));
     let workflow = crate::sm::load_file_in(&Path::new(&state.config.root_dir).join("contexts"), workflow_name(ctx)).map_err(|e| anyhow::anyhow!("{e}"))?;
-    rendered.push_str(&super::workflow_graph::instructions(&workflow, ctx));
+    rendered.push_str(&super::workflow_graph::instructions(&workflow, ctx).await);
     Ok(rendered)
 }
 
@@ -423,7 +423,7 @@ pub async fn append_injected_message(
 ) -> anyhow::Result<()> {
     // History stores the RAW input; the template renders at request time so old
     // turns never carry rendered POML payloads (raw-storing policy).
-    let ctx = prepare_runtime(state, user_id, input, None, None)?;
+    let ctx = prepare_runtime(state, user_id, input, None, None).await?;
     let _ = ctx;
     let input_message_id = state
         .db
@@ -459,8 +459,8 @@ pub async fn render_user(
 mod tests {
     use super::*;
 
-    #[test]
-    fn state_graph_bundled_example_selects_its_prompt_over_a_previous_workflow() {
+    #[tokio::test]
+    async fn state_graph_bundled_example_selects_its_prompt_over_a_previous_workflow() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
         let mut ctx = Context {
             user_id: "graph-example-prompt".into(),
@@ -478,6 +478,7 @@ mod tests {
             &PluginRegistry::new(),
             None,
         )
+        .await
         .unwrap();
         assert_eq!(
             ctx.settings.system_template.as_deref(),
@@ -488,7 +489,7 @@ mod tests {
         assert!(!ctx.settings.use_decision_router);
         let sm = crate::sm::load_file_in(&root.join("contexts"), "branching-coding").unwrap();
         assert_eq!(
-            super::super::workflow_graph::view(&sm, &ctx)["edges"]
+            super::super::workflow_graph::view(&sm, &ctx).await["edges"]
                 .as_array()
                 .unwrap()
                 .iter()
@@ -578,7 +579,7 @@ mod tests {
 
     // Exercise the shipped workflows/templates without changing the working
     // directory, editing fixtures in the repository, or invoking POML/LLMs.
-    fn route_shipped(ctx: &mut Context, input: &str) {
+    async fn route_shipped(ctx: &mut Context, input: &str) {
         route_context(
             Path::new(env!("CARGO_MANIFEST_DIR")),
             ctx,
@@ -586,18 +587,19 @@ mod tests {
             &PluginRegistry::new(),
             None,
         )
+        .await
         .unwrap();
     }
 
-    #[test]
-    fn backend_repo_explicit_role_requests_route_through_the_model() {
+    #[tokio::test]
+    async fn backend_repo_explicit_role_requests_route_through_the_model() {
         for input in [
             "Be my language instructor.",
             "Teach me Japanese.",
             "Sei bitte mein Sprachtrainer.",
         ] {
             let mut ctx = Context { user_id: "alice".into(), ..Default::default() };
-            route_shipped(&mut ctx, input);
+            route_shipped(&mut ctx, input).await;
             // Routing is model-driven: the shipped regex rules no longer switch templates.
         // None is the default-standard state; the model routes via set_context.
         assert!(matches!(ctx.settings.system_template.as_deref(), None | Some("states/standard/standard")), "{input}");
@@ -606,10 +608,10 @@ mod tests {
         }
     }
 
-    #[test]
-    fn backend_repo_model_role_switch_changes_state_template_and_tools() {
+    #[tokio::test]
+    async fn backend_repo_model_role_switch_changes_state_template_and_tools() {
         let mut ctx = Context { user_id: "alice".into(), ..Default::default() };
-        route_shipped(&mut ctx, "hi");
+        route_shipped(&mut ctx, "hi").await;
         assert_eq!(ctx.active_state.as_deref(), Some("routing"));
         let before = crate::tools::registry::build_tool_definitions(&ctx.settings, None, None);
         assert!(!before.iter().any(|t| t.function.name == "execute_terminal"));
@@ -617,7 +619,7 @@ mod tests {
 
         // What set_context("sm_data.role", "code") persists; the next routing pass must react.
         ctx.sm_data["role"] = serde_json::json!("code");
-        route_shipped(&mut ctx, "please fix the build");
+        route_shipped(&mut ctx, "please fix the build").await;
         assert_eq!(ctx.active_state.as_deref(), Some("code"));
         assert_eq!(ctx.settings.system_template.as_deref(), Some("states/code/code"));
         let after = crate::tools::registry::build_tool_definitions(&ctx.settings, None, None);
@@ -625,35 +627,35 @@ mod tests {
         assert!(!ctx.settings.tool_group_definitions.is_empty(), "workflow [tool_groups] land in the context");
 
         ctx.sm_data["role"] = serde_json::json!("standard");
-        route_shipped(&mut ctx, "thanks");
+        route_shipped(&mut ctx, "thanks").await;
         assert_eq!(ctx.active_state.as_deref(), Some("standard"));
         assert!(!crate::tools::registry::build_tool_definitions(&ctx.settings, None, None).iter().any(|t| t.function.name == "execute_terminal"));
     }
 
-    #[test]
-    fn backend_repo_language_instructor_sticks_on_next_ordinary_task() {
+    #[tokio::test]
+    async fn backend_repo_language_instructor_sticks_on_next_ordinary_task() {
         let dir = tempfile::tempdir().unwrap();
         let db = Database::new(dir.path()).unwrap();
         let mut ctx = Context { user_id: "alice".into(), ..Default::default() };
-        route_shipped(&mut ctx, "Be my language instructor.");
+        route_shipped(&mut ctx, "Be my language instructor.").await;
         db.save_context(&ctx).unwrap();
         let mut next = db.load_context("alice").unwrap();
         let input = "Explain why this sentence uses the past tense.";
-        route_shipped(&mut next, input);
+        route_shipped(&mut next, input).await;
         assert!(matches!(next.settings.system_template.as_deref(), None | Some("states/standard/standard")));
         assert_eq!(next.custom_data["user_prompt"], input);
     }
 
-    #[test]
-    fn backend_repo_manual_template_is_preserved() {
+    #[tokio::test]
+    async fn backend_repo_manual_template_is_preserved() {
         let mut ctx = Context { user_id: "alice".into(), ..Default::default() };
         ctx.settings.system_template = Some("researcher".into());
-        route_shipped(&mut ctx, "Compare the evidence for these two claims.");
+        route_shipped(&mut ctx, "Compare the evidence for these two claims.").await;
         assert_eq!(ctx.settings.system_template.as_deref(), Some("researcher"));
     }
 
-    #[test]
-    fn backend_repo_quoted_role_request_does_not_switch_template() {
+    #[tokio::test]
+    async fn backend_repo_quoted_role_request_does_not_switch_template() {
         for input in [
             r#""Be my language instructor" is a quoted example; explain its wording."#,
             r#"Translate "Be my language instructor" into French."#,
@@ -661,26 +663,26 @@ mod tests {
         ] {
             let mut ctx = Context { user_id: "alice".into(), ..Default::default() };
             ctx.settings.system_template = Some("researcher".into());
-            route_shipped(&mut ctx, input);
+            route_shipped(&mut ctx, input).await;
             assert_eq!(ctx.settings.system_template.as_deref(), Some("researcher"), "{input}");
         }
     }
 
-    #[test]
-    fn backend_repo_explicit_role_reset_keeps_standard() {
+    #[tokio::test]
+    async fn backend_repo_explicit_role_reset_keeps_standard() {
         for reset in ["reset role.", "return to standard"] {
             let mut ctx = Context { user_id: "alice".into(), ..Default::default() };
-            route_shipped(&mut ctx, "Be my language instructor.");
+            route_shipped(&mut ctx, "Be my language instructor.").await;
             assert!(matches!(ctx.settings.system_template.as_deref(), None | Some("states/standard/standard")));
-            route_shipped(&mut ctx, reset);
+            route_shipped(&mut ctx, reset).await;
             assert!(matches!(ctx.settings.system_template.as_deref(), None | Some("states/standard/standard")), "{reset}");
             let stored = base_context(&ctx, reset).unwrap()["system_template"].clone();
             assert!(stored.is_null() || stored == "states/standard/standard", "{stored}");
         }
     }
 
-    #[test]
-    fn backend_repo_all_shipped_sm_states_resolve_templates() {
+    #[tokio::test]
+    async fn backend_repo_all_shipped_sm_states_resolve_templates() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
         let contexts = root.join("contexts");
         let mut names: Vec<_> = std::fs::read_dir(&contexts)
@@ -699,7 +701,7 @@ mod tests {
                 assert!(sm.overrides.iter().any(|rule| rule.key == "sm_data.persona_roles"), "{name}");
                 let mut stale = Context { user_id: "stale-catalog".into(),
                     sm_data: serde_json::json!({"persona_roles":"obsolete", "role":"code"}), ..Default::default() };
-                route_shipped(&mut stale, "Continue coding.");
+                route_shipped(&mut stale, "Continue coding.").await;
                 assert!(stale.sm_data["persona_roles"].as_str().unwrap().contains("research"));
                 assert!(!stale.sm_data["persona_roles"].as_str().unwrap().contains("obsolete"));
             } else if name == "20-tasks" {
@@ -713,7 +715,7 @@ mod tests {
                     active_state: Some(state_name.clone()),
                     ..Default::default()
                 };
-                route_shipped(&mut ctx, "Ordinary task with no role change.");
+                route_shipped(&mut ctx, "Ordinary task with no role change.").await;
                 if let Some(selected) = state.variables.get("settings.system_template") {
                     explicit_selections += 1;
                     assert_eq!(ctx.settings.system_template.as_deref(), Some(selected.as_str()), "{name}:{state_name}");
@@ -741,8 +743,8 @@ mod tests {
         root
     }
 
-    #[test]
-    fn backend_routing_sees_current_input_before_template_selection() {
+    #[tokio::test]
+    async fn backend_routing_sees_current_input_before_template_selection() {
         let root = fixture();
         let mut ctx = Context {
             user_id: "alice".into(),
@@ -756,6 +758,7 @@ mod tests {
             &PluginRegistry::new(),
             None,
         )
+        .await
         .unwrap();
         assert_eq!(ctx.settings.system_template.as_deref(), Some("selected"));
         assert_eq!(ctx.custom_data["user_prompt"], "route-me now");
@@ -768,12 +771,13 @@ mod tests {
             &PluginRegistry::new(),
             None,
         )
+        .await
         .unwrap();
         assert!(ctx.settings.system_template.is_none());
     }
 
-    #[test]
-    fn backend_changed_workflow_does_not_keep_an_unknown_old_state() {
+    #[tokio::test]
+    async fn backend_changed_workflow_does_not_keep_an_unknown_old_state() {
         let root = fixture();
         std::fs::write(
             root.path().join("contexts/alternate.sm"),
@@ -786,12 +790,12 @@ mod tests {
             ..Default::default()
         };
         let plugins = PluginRegistry::new();
-        route_context(root.path(), &mut ctx, "input", &plugins, None).unwrap();
+        route_context(root.path(), &mut ctx, "input", &plugins, None).await.unwrap();
         db.save_context(&ctx).unwrap();
         db.merge_context("alice", json!({"settings.sm_file":"alternate"}))
             .unwrap();
         let mut fresh = db.load_context("alice").unwrap();
-        route_context(root.path(), &mut fresh, "current input", &plugins, None).unwrap();
+        route_context(root.path(), &mut fresh, "current input", &plugins, None).await.unwrap();
         assert_eq!(fresh.active_state.as_deref(), Some("new"));
         assert_eq!(fresh.settings.system_template.as_deref(), Some("selected"));
         assert_eq!(fresh.custom_data["user_prompt"], "current input");
@@ -879,7 +883,7 @@ mod tests {
             ..Default::default()
         };
         let plugins = PluginRegistry::new();
-        route_context(root.path(), &mut ctx, "raw input", &plugins, None).unwrap();
+        route_context(root.path(), &mut ctx, "raw input", &plugins, None).await.unwrap();
         let value = build_context(&db, &ctx, "raw input", &plugins, 0, root.path())
             .await
             .unwrap();

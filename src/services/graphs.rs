@@ -10,7 +10,7 @@ pub fn root() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
-pub fn graph_in(
+pub async fn graph_in(
     db: &crate::db::Database,
     root: &FsPath,
     user: &str,
@@ -29,7 +29,7 @@ pub fn graph_in(
         ctx.active_state = sm.entry_state().map(String::from);
         ctx.user_id.clear(); // Preview cannot borrow receipts from another workflow.
     }
-    let mut graph = crate::gateway::workflow_graph::view(&sm, &ctx);
+    let mut graph = crate::gateway::workflow_graph::view(&sm, &ctx).await;
     graph["preview"] = json!(preview);
     if !preview && crate::gateway::task_control::cancellation(user).is_none() {
         if let Some(event) = db
@@ -50,8 +50,8 @@ pub fn graph_in(
 }
 
 
-pub fn graph(db: &crate::db::Database, user: &str, workflow: Option<&str>) -> anyhow::Result<Value> {
-    graph_in(db, &root(), user, workflow)
+pub async fn graph(db: &crate::db::Database, user: &str, workflow: Option<&str>) -> anyhow::Result<Value> {
+    graph_in(db, &root(), user, workflow).await
 }
 
 /// Execution events (state transitions, receipts, compaction) plus limits.
@@ -71,15 +71,15 @@ pub fn usage(db: &crate::db::Database, user: &str) -> anyhow::Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn state_graph_dashboard_uses_parsed_workflow_and_cannot_write_context() {
+    #[tokio::test]
+    async fn state_graph_dashboard_uses_parsed_workflow_and_cannot_write_context() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir(dir.path().join("contexts")).unwrap();
         std::fs::write(dir.path().join("contexts/branch.sm"), "@routing graph\n@start a\n[state a]\n[state b]\n[transitions]\na -> b\n[decision_ir b]\nK = agent_back").unwrap();
         let db = crate::db::Database::new(&dir.path().join("data")).unwrap();
         let ctx = db.load_context("graph-dashboard").unwrap();
         db.save_context(&ctx).unwrap();
-        let view = graph_in(&db, dir.path(), "graph-dashboard", Some("branch")).unwrap();
+        let view = graph_in(&db, dir.path(), "graph-dashboard", Some("branch")).await.unwrap();
         assert_eq!(view["nodes"].as_array().unwrap().len(), 2);
         assert_eq!(view["edges"][0]["index"], 0);
         assert_eq!(view["nodes"][1]["decision_ir"]["K"], "agent_back");
@@ -87,6 +87,6 @@ mod tests {
             serde_json::to_value(db.load_context("graph-dashboard").unwrap()).unwrap(),
             serde_json::to_value(ctx).unwrap()
         );
-        assert!(graph_in(&db, dir.path(), "graph-dashboard", Some("../outside")).is_err());
+        assert!(graph_in(&db, dir.path(), "graph-dashboard", Some("../outside")).await.is_err());
     }
 }

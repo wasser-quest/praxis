@@ -314,7 +314,7 @@ async fn runtime_retention_runs_without_plugins_even_when_another_service_is_blo
     assert!(!host.contains("blocked-feature"));
 }
 
-fn plugin_free_workflow(
+async fn plugin_free_workflow(
     user: &str,
 ) -> (
     tempfile::TempDir,
@@ -345,6 +345,7 @@ fn plugin_free_workflow(
         &PluginRegistry::new(),
         None,
     )
+    .await
     .unwrap();
     db.save_context(&ctx).unwrap();
     (dir, db, ctx, task)
@@ -353,7 +354,7 @@ fn plugin_free_workflow(
 #[tokio::test]
 async fn runtime_context_and_state_graph_work_without_feature_plugins_or_provider() {
     let user = "runtime-plugin-free-graph";
-    let (dir, db, ctx, _task) = plugin_free_workflow(user);
+    let (dir, db, ctx, _task) = plugin_free_workflow(user).await;
     let plugins = PluginRegistry::new();
     let value =
         gateway::prompt::build_context(&db, &ctx, "Hello from context", &plugins, 0, dir.path())
@@ -439,7 +440,7 @@ async fn runtime_poml_renders_context_changes_without_feature_plugins() {
         return;
     }
     let user = "runtime-plugin-free-poml";
-    let (dir, db, before, _task) = plugin_free_workflow(user);
+    let (dir, db, before, _task) = plugin_free_workflow(user).await;
     let plugins = PluginRegistry::new();
     async fn render(
         root: &Path,

@@ -304,7 +304,7 @@ async fn onboarding_assets_first_message_and_active_skill_render_from_fresh_inst
     ] {
         ctx.settings.system_template = None;
         ctx.sm_data["role"] = serde_json::json!(selected_role);
-        crate::gateway::prompt::route_context(dir.path(), &mut ctx, input, &plugins, None).unwrap();
+        crate::gateway::prompt::route_context(dir.path(), &mut ctx, input, &plugins, None).await.unwrap();
         db.save_context(&ctx).unwrap();
         let value =
             crate::gateway::prompt::build_context(&db, &ctx, input, &plugins, 0, dir.path())

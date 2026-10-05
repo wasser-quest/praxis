@@ -81,8 +81,8 @@ fn learning_flow_reply_guard_parser_rejects_unknown_states_and_non_graph_workflo
     ] { assert!(crate::sm::parse(text).is_err(), "{text}"); }
 }
 
-#[test]
-fn learning_flow_uses_the_tutor_memory_namespace_across_stages() {
+#[tokio::test]
+async fn learning_flow_uses_the_tutor_memory_namespace_across_stages() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let dir = tempfile::tempdir().unwrap();
     let db = Database::new(dir.path()).unwrap();
@@ -94,7 +94,7 @@ fn learning_flow_uses_the_tutor_memory_namespace_across_stages() {
         ctx.settings.sm_file = Some("language-learning".into());
         ctx.active_state = Some(stage.into());
         ctx.settings.active_state = ctx.active_state.clone();
-        super::prompt::route_context(root, &mut ctx, "Practice French", &plugins, None).unwrap();
+        super::prompt::route_context(root, &mut ctx, "Practice French", &plugins, None).await.unwrap();
         assert_eq!(ctx.settings.max_llm_turns, Some(1));
         assert!(!ctx.settings.use_decision_router);
         assert_eq!(

@@ -74,8 +74,8 @@ fn coding_profile_trigger_parser_rejects_unbound_empty_duplicate_and_unknown_tri
     }
 }
 
-#[test]
-fn coding_profile_normal_roles_offer_semantic_actions_and_keep_legacy_opt_in() {
+#[tokio::test]
+async fn coding_profile_normal_roles_offer_semantic_actions_and_keep_legacy_opt_in() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let dir = tempfile::tempdir().unwrap();
     let db = crate::db::Database::new(dir.path()).unwrap();
@@ -94,7 +94,7 @@ fn coding_profile_normal_roles_offer_semantic_actions_and_keep_legacy_opt_in() {
         ctx.settings.system_template = None;
         ctx.settings.use_decision_router = false;
         ctx.sm_data = json!({"role":role});
-        prompt::route_context(root, &mut ctx, "Inspect the project", &plugins, None).unwrap();
+        prompt::route_context(root, &mut ctx, "Inspect the project", &plugins, None).await.unwrap();
         assert_eq!(ctx.active_state.as_deref(), Some(role));
         let workflow = sm::load_file_in(&root.join("contexts"), "standard-verified").unwrap();
         super::workflow_preflight::validate(&db, &plugins, "standard-verified", &workflow, &ctx)
@@ -124,7 +124,7 @@ fn coding_profile_normal_roles_offer_semantic_actions_and_keep_legacy_opt_in() {
     let mut legacy = db.load_context("coding-legacy").unwrap();
     legacy.settings.use_decision_router = false;
     legacy.sm_data = json!({"role":"code"});
-    prompt::route_context(root, &mut legacy, "Code", &plugins, None).unwrap();
+    prompt::route_context(root, &mut legacy, "Code", &plugins, None).await.unwrap();
     assert_eq!(
         crate::tools::registry::build_tool_definitions(&legacy.settings, None, Some(&db))
             .iter()

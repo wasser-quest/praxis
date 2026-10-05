@@ -46,7 +46,7 @@ fn check_provider(state: &GatewayState, provider: Option<&str>) -> Result<(), Se
     })
 }
 
-pub(crate) fn check_task(
+pub(crate) async fn check_task(
     state: &GatewayState,
     user: &str,
     input: &str,
@@ -60,7 +60,7 @@ pub(crate) fn check_task(
         original.sm_file = workflow_default.map(str::to_owned);
     }
     super::prompt::reset_completion(&mut original, root)?;
-    let candidate = super::workflow_actions::plan(root, &original, input, &state.plugins, channel)?;
+    let candidate = super::workflow_actions::plan(root, &original, input, &state.plugins, channel).await?;
     let workflow = crate::sm::load_file_in(
         &root.join("contexts"),
         super::prompt::workflow_name(&candidate),

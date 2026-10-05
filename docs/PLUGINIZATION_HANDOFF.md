@@ -155,9 +155,11 @@ Handlers: `builtin`, `http`, `script`, `executable`, `verification`,
   `<package>@<version>`), HMAC-SHA256 signature, verified by
   `action_contracts::require` (`PRAXIS_RECEIPT_KEY` for a stable key).
 * **Engine seam**: `runtime::engine::RuntimeEngine` with `KernelEngine` default;
-  rendering and SM guard-condition evaluation route through it.
+  rendering and SM guard-condition evaluation route through it. State-machine
+  evaluation is async, so a process engine can own guard policy too.
 * **Engine host bridge**: a `runtime` package with an `engine` block is launched
-  at startup and installs a `RuntimeEngine` that renders through the worker.
+  at startup and installs a `RuntimeEngine` that renders and evaluates
+  guard/transition conditions through the worker (failing closed on errors).
 * **Checked `write_file`**: `expected_absent` / `expected_sha256` transactional
   single-file write with the durable journal; legacy raw form unchanged.
 
@@ -202,9 +204,11 @@ cannot forge or edit a receipt.
 
 `RuntimeEngine` owns rendering and guard-condition policy. The default
 `KernelEngine` wraps today's POML/SM code. A `runtime`-role package can supply an
-engine worker (rendering through process protocol v1). Guard-condition
-evaluation still delegates to the kernel because state-machine code is
-synchronous — making it process-replaceable needs async SM evaluation.
+engine worker (rendering through process protocol v1). State-machine guard,
+auto-rule, override and transition conditions are evaluated asynchronously
+through the engine, so the worker owns guard policy as well as rendering; a
+crashed or unavailable worker fails closed (condition is false). The kernel
+still parses the state machine and owns every observed fact.
 
 ### 5.6 Checked file writes
 
@@ -224,16 +228,10 @@ Praxis CLI, and writes a MOTD of required changes. The kernel does not link it.
 
 ### A. Finish the kernel seam
 
-1. **Async SM evaluation.** Make `sm::advance_workflow`, `resolve_auto_state`,
-   `apply_state_variables`/`apply_to_context` and the internal condition calls
-   async, then make `RuntimeEngine::evaluate_condition` async so a process engine
-   owns guard policy too. Callers: `gateway/prompt.rs`,
-   `tools/agent_control.rs`, `gateway/agent_loop.rs`, plus async-ify the
-   `advance_workflow` tests.
-2. **Observed evidence to the engine.** When the engine decides a guard, pass it
+1. **Observed evidence to the engine.** When the engine decides a guard, pass it
    the kernel's observed evidence (exit code, resource/workspace hashes) rather
    than only the context map.
-3. **Receipt persistence** (optional): use `PRAXIS_RECEIPT_KEY` and a stable store
+2. **Receipt persistence** (optional): use `PRAXIS_RECEIPT_KEY` and a stable store
    so archived receipts verify across restarts.
 
 ### B. Manifest v2 loading
@@ -278,7 +276,9 @@ for absent features; remove the builtin dashboard after a release.
 
 * Route/UI/migration loading is not implemented; `routes`/`ui`/`migrations` are
   declarations + ownership only. Assets *are* loaded.
-* Guard-condition policy cannot yet be replaced by a process engine (async SM).
+* Guard-condition policy is now replaceable by a process engine: state-machine
+  evaluation is async, `RuntimeEngine::evaluate_condition` is a worker call, and
+  worker failure fails closed. Passing observed evidence to the engine remains.
 * `file_ops`, `runtime_control`, memory, RAG, cron, Discord, interaction,
   skills, workflow authoring, providers, channels and media still compile into
   the kernel; only the crates/packages in §3 are independently installable.
