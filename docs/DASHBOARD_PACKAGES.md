@@ -95,6 +95,7 @@ route requires a scope; undeclared scopes return 403.
 | `POST /contexts/:user/exec` `{line}` (the `/context` command language) | `admin:write` |
 | `POST /chat/send` (chat box semantics: question replies, options, start or inject) | `agent` |
 | `GET /admin/tool-records`, `GET /admin/tool-activity?…` | `admin:read` |
+| `GET /admin/tool-packages`, `POST /admin/tool-packages/:id` `{enabled}` | `admin:read` / `admin:write` |
 
 | `GET /media?q=`, `GET /media/files/:name`, `POST /media/files?name=` (raw body, 50 MB) | `media` |
 | `GET`/`POST /media/avatars/:name` (PNG/JPG/GIF/WebP, 2 MB) | `media` |
@@ -107,6 +108,7 @@ route requires a scope; undeclared scopes return 403.
 | `POST /contexts/:user/exec` `{line}` (the `/context` command language) | `admin:write` |
 | `POST /chat/send` (chat box semantics: question replies, options, start or inject) | `agent` |
 | `GET /admin/tool-records`, `GET /admin/tool-activity?…` | `admin:read` |
+| `GET /admin/tool-packages`, `POST /admin/tool-packages/:id` `{enabled}` | `admin:read` / `admin:write` |
 
 ### Feature page slots
 

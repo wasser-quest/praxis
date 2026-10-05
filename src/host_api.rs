@@ -119,6 +119,8 @@ fn router(_state: Arc<ApiState>) -> Router<Arc<ApiState>> {
         .route(&route("/auth/verify"), post(verify))
         .route(&route("/admin/tools"), get(admin_tools))
         .route(&route("/admin/tools/:name"), post(admin_set_tool))
+        .route(&route("/admin/tool-packages"), get(admin_tool_packages))
+        .route(&route("/admin/tool-packages/:id"), post(admin_set_tool_package))
         .route(&route("/admin/templates"), get(admin_templates).post(admin_create_template))
         .route(
             &route("/admin/templates/*name"),
@@ -393,6 +395,21 @@ async fn admin_set_tool(
     Json(req): Json<ToolToggle>,
 ) -> ApiResult {
     done(admin::set_tool_enabled(&s.db, &s.plugins, &name, req.is_enabled))
+}
+async fn admin_tool_packages(State(s): State<Arc<ApiState>>) -> ApiResult {
+    admin_ok(admin::tool_packages(&s.db))
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PackageToggle {
+    enabled: bool,
+}
+async fn admin_set_tool_package(
+    State(s): State<Arc<ApiState>>,
+    Path(id): Path<String>,
+    Json(req): Json<PackageToggle>,
+) -> ApiResult {
+    admin_ok(admin::set_tool_package(&s.db, &id, req.enabled))
 }
 async fn admin_templates(State(s): State<Arc<ApiState>>) -> ApiResult {
     admin_ok(admin::templates(&s.db))
@@ -759,6 +776,8 @@ mod tests {
         assert_eq!(scope(Method::POST, "/contexts/u/exec"), Some("admin:write"));
         assert_eq!(scope(Method::GET, "/admin/tool-records"), Some("admin:read"));
         assert_eq!(scope(Method::GET, "/admin/tool-activity"), Some("admin:read"));
+        assert_eq!(scope(Method::GET, "/admin/tool-packages"), Some("admin:read"));
+        assert_eq!(scope(Method::POST, "/admin/tool-packages/shell"), Some("admin:write"));
     }
 
     #[tokio::test]

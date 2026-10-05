@@ -186,7 +186,10 @@ impl LLMRouter {
         crate::gateway::action_contracts::bind(user_id, crate::gateway::prompt::workflow_name(&context), &workflow, std::path::Path::new("."))?;
         let mut tools = tools;
         for tool in &mut tools { crate::tools::tool_output::augment_definition(tool); }
-        if !tools.is_empty() && crate::db::tools::get(db, "read_tool_result").is_ok_and(|t| t.is_enabled) {
+        if !tools.is_empty()
+            && crate::db::tools::get(db, "read_tool_result").is_ok_and(|t| t.is_enabled)
+            && crate::tools::packages::tool_package_enabled(&db.data_dir(), "read_tool_result").unwrap_or(false)
+        {
             if !tools.iter().any(|t| t.function.name == "read_tool_result") {
                 if let Some(reader) = crate::db::tools::to_tool_definitions(db)?.into_iter().find(|t| t.function.name == "read_tool_result") {
                     tools.push(reader);

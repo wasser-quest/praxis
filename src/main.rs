@@ -184,6 +184,18 @@ enum PluginAction {
     },
     /// List installed plugins
     List,
+    /// List builtin tool packages (runtime_control, shell, memory, …)
+    Builtins,
+    /// Enable a builtin tool package
+    EnableBuiltin {
+        #[arg(value_name = "PACKAGE")]
+        id: String,
+    },
+    /// Disable a builtin tool package (its tools leave the catalog; per-tool flags are kept)
+    DisableBuiltin {
+        #[arg(value_name = "PACKAGE")]
+        id: String,
+    },
 }
 
 
@@ -756,7 +768,23 @@ async fn handle_plugin_action(action: &PluginAction) -> anyhow::Result<()> {
     let plugins_dir = std::env::var("PLUGINS_DIR").unwrap_or_else(|_| "./plugins".to_string());
     let plugins_path = Path::new(&plugins_dir);
 
+    let data_dir = std::path::PathBuf::from(std::env::var("DATA_DIR").unwrap_or_else(|_| "./data".to_string()));
     match action {
+        PluginAction::Builtins => {
+            let state = praxis::tools::packages::load(&data_dir)?;
+            for package in praxis::tools::packages::PACKAGES {
+                let on = package.required || state.get(package.id).copied().unwrap_or(true);
+                let status = if package.required { "core" } else if on { "enabled" } else { "disabled" };
+                println!("  {} [{}] — {} ({})", package.id, status, package.description, package.tools.join(", "));
+            }
+            return Ok(());
+        }
+        PluginAction::EnableBuiltin { id } | PluginAction::DisableBuiltin { id } => {
+            let on = matches!(action, PluginAction::EnableBuiltin { .. });
+            praxis::tools::packages::set(&data_dir, id, on)?;
+            println!("Tool package '{id}' {}. Running instances apply it on the next model turn.", if on { "enabled" } else { "disabled" });
+            return Ok(());
+        }
         PluginAction::Install { path } => {
             let src = Path::new(path);
             if !src.is_dir() {

@@ -32,6 +32,8 @@ pub fn all_tools(db: &crate::db::Database, plugins: &crate::plugins::PluginRegis
             "category": format!("{:?}", m.category),
             "parameters": m.params_schema,
             "source": "builtin",
+            "package": crate::tools::packages::owner_of(m.name).map(|p| p.id),
+            "package_enabled": crate::tools::packages::tool_package_enabled(&db.data_dir(), m.name).unwrap_or(true),
             "default_enabled": m.default_enabled,
             "is_enabled": crate::db::tools::get(db, m.name).map(|t| t.is_enabled).unwrap_or(m.default_enabled),
         }))
@@ -51,6 +53,22 @@ pub fn all_tools(db: &crate::db::Database, plugins: &crate::plugins::PluginRegis
         .collect();
     let all = [builtin, plugin_tools].concat();
     json!({ "tools": all, "total": all.len() })
+}
+
+/// Builtin tool packages with their tools and state.
+pub fn tool_packages(db: &crate::db::Database) -> Outcome<Value> {
+    Ok(crate::tools::packages::list(&db.data_dir())?)
+}
+
+/// Enable or disable a builtin tool package. Per-tool flags are preserved, so
+/// re-enabling restores the operator's earlier per-tool choices.
+pub fn set_tool_package(db: &crate::db::Database, id: &str, enabled: bool) -> Outcome<Value> {
+    let package = crate::tools::packages::get(id).ok_or(Failure::NotFound)?;
+    if !enabled && package.required {
+        return Err(Failure::BadRequest(format!("Tool package '{id}' is part of the core runtime and cannot be disabled")));
+    }
+    crate::tools::packages::set(&db.data_dir(), id, enabled)?;
+    Ok(json!({ "success": true, "id": id, "enabled": enabled }))
 }
 
 /// Stored builtin tool records (dashboard `/tools`).

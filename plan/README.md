@@ -186,7 +186,17 @@ clipboard) remains an operator smoke check.
   frontend assets and serves the whole UI on Host API v1; verified end to end
   against a `--no-default-features` core.
 - [ ] Navigation slots for absent features; remove the built-in dashboard
-  feature after one release. Runtime-control and the remaining
+  feature after one release.
+
+## PR 5 progress — tool packages
+
+- [x] Every native tool has exactly one owning package (`tools::packages`,
+  tested against the default catalog). Packages enable/disable independently
+  via CLI, dashboard and Host API; catalog, discovery and execution respect
+  them; per-tool flags are preserved; startup never changes package state;
+  `file_ops` is core. See [tool packages](../docs/TOOL_PACKAGES.md).
+- [ ] Move implementations out of the core binary per package, with plugin
+  takeover of names whose native package is disabled. Runtime-control and the remaining
 feature/tool packages follow; POML/context/SM/IR verification stays in core.
 
 Existing setup guides remain applicable during migration:

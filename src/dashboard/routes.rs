@@ -152,6 +152,8 @@ pub(crate) fn router_with_state(state: Arc<DashboardState>) -> Router {
         .route("/templates/:name", axum::routing::delete(delete_template))
         .route("/tools", axum::routing::get(list_tools))
         .route("/tools/all", axum::routing::get(list_all_tools))
+        .route("/tool-packages", axum::routing::get(list_tool_packages))
+        .route("/tool-packages/:id", axum::routing::put(set_tool_package))
         .route("/tools/:name", axum::routing::put(update_tool))
         .route("/memory/:user_id", axum::routing::get(get_memory))
         .route("/memory/:user_id", axum::routing::put(update_memory))
@@ -572,6 +574,21 @@ async fn delete_template(
 }
 
 // ── Tools ────────────────────────────────────────────────────────────────────
+
+async fn list_tool_packages(
+    State(state): State<Arc<DashboardState>>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    admin_json(crate::services::admin::tool_packages(&state.db))
+}
+
+async fn set_tool_package(
+    State(state): State<Arc<DashboardState>>,
+    Path(id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let enabled = body.get("enabled").and_then(|v| v.as_bool()).ok_or(StatusCode::BAD_REQUEST)?;
+    admin_json(crate::services::admin::set_tool_package(&state.db, &id, enabled))
+}
 
 async fn list_tools(
     State(state): State<Arc<DashboardState>>,

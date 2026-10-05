@@ -279,6 +279,8 @@ fn legacy(method: &Method, segments: &[&str], query: &str, body: &Value) -> Opti
         ),
         ("DELETE", ["templates", n]) => call(delete, format!("/admin/templates/{n}"), None, Pass),
         ("GET", ["tools"]) => call(get, "/admin/tool-records".into(), None, Pass),
+        ("GET", ["tool-packages"]) => call(get, "/admin/tool-packages".into(), None, Pass),
+        ("PUT", ["tool-packages", id]) => call(post, format!("/admin/tool-packages/{id}"), Some(pick(body, &["enabled"])), Pass),
         ("GET", ["tools", "all"]) => call(get, "/admin/tools".into(), None, Pass),
         ("PUT", ["tools", n]) => call(
             post,
@@ -871,6 +873,8 @@ mod tests {
                 .path,
             "/sm/u"
         );
+        let c = legacy(&Method::PUT, &["tool-packages", "shell"], "", &json!({"enabled": false, "x": 1})).unwrap();
+        assert_eq!((c.method, c.path.as_str(), c.body.unwrap()), (Method::POST, "/admin/tool-packages/shell", json!({"enabled": false})));
         assert!(legacy(&Method::GET, &["nope"], "", &Value::Null).is_none());
         assert!(legacy(&Method::POST, &["secrets"], "", &Value::Null).is_none());
     }

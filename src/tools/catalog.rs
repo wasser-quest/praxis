@@ -80,10 +80,13 @@ pub(crate) fn require_enabled(
     name: &str,
 ) -> anyhow::Result<()> {
     let enabled = match owner {
-        ToolOwner::Builtin => crate::db::tools::list(db)?
-            .into_iter()
-            .find(|tool| tool.name == name)
-            .map_or(true, |tool| tool.is_enabled),
+        ToolOwner::Builtin => {
+            super::packages::tool_package_enabled(&db.data_dir(), name)?
+                && crate::db::tools::list(db)?
+                    .into_iter()
+                    .find(|tool| tool.name == name)
+                    .map_or(true, |tool| tool.is_enabled)
+        }
         ToolOwner::Plugin { .. } => crate::db::tools::plugin_tool_enabled(db, name)?,
     };
     anyhow::ensure!(enabled, "Tool '{name}' is disabled or unavailable");
@@ -93,9 +96,13 @@ pub(crate) fn require_enabled(
 pub fn definitions(db: &Database, plugins: &PluginRegistry) -> anyhow::Result<Vec<ToolDefinition>> {
     validate(plugins)?;
     // Persisted rows describe flags/schemas, not arbitrary new native handlers.
+    let packages = super::packages::load(&db.data_dir())?;
+    let package_on = |name: &str| {
+        super::packages::owner_of(name).map_or(true, |p| p.required || packages.get(p.id).copied().unwrap_or(true))
+    };
     let mut tools: Vec<_> = crate::db::tools::to_tool_definitions(db)?
         .into_iter()
-        .filter(|tool| is_builtin(&tool.function.name))
+        .filter(|tool| is_builtin(&tool.function.name) && package_on(&tool.function.name))
         .collect();
     let flags = crate::db::tools::list_plugin_tools(db)?;
     let legacy = crate::db::tools::list(db)?;
