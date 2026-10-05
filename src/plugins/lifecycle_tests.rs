@@ -541,3 +541,72 @@ async fn uninstall_purge_removes_scoped_data_without_a_hook() {
     .unwrap();
     assert!(!data.join("hooked").exists());
 }
+
+#[tokio::test]
+async fn install_default_installs_dependencies_first() {
+    let root = tempfile::tempdir().unwrap();
+    let plugins = root.path().join("plugins");
+    let data = root.path().join("data");
+    write_named(&root.path().join("src-alpha"), "alpha", serde_json::json!({}));
+    write_named(
+        &root.path().join("src-beta"),
+        "beta",
+        serde_json::json!({"plugins": ["alpha"]}),
+    );
+    let preset = root.path().join("preset.json");
+    // Beta listed first, but its dependency must install first.
+    std::fs::write(
+        &preset,
+        serde_json::to_string(&serde_json::json!({"plugins": ["src-beta", "src-alpha"]})).unwrap(),
+    )
+    .unwrap();
+    let report = lifecycle::install_default(&lifecycle::PresetRequest {
+        preset_path: Some(&preset),
+        root: root.path(),
+        plugins_dir: &plugins,
+        data_dir: &data,
+        run_hooks: false,
+        dry_run: false,
+    })
+    .await
+    .unwrap();
+    assert_eq!(report.installed, vec!["alpha", "beta"]);
+    assert!(report.failed.is_empty(), "{:?}", report.failed);
+}
+
+#[tokio::test]
+async fn install_default_reports_dependency_cycle() {
+    let root = tempfile::tempdir().unwrap();
+    let plugins = root.path().join("plugins");
+    let data = root.path().join("data");
+    write_named(
+        &root.path().join("src-alpha"),
+        "alpha",
+        serde_json::json!({"plugins": ["beta"]}),
+    );
+    write_named(
+        &root.path().join("src-beta"),
+        "beta",
+        serde_json::json!({"plugins": ["alpha"]}),
+    );
+    let preset = root.path().join("preset.json");
+    std::fs::write(
+        &preset,
+        serde_json::to_string(&serde_json::json!({"plugins": ["src-alpha", "src-beta"]})).unwrap(),
+    )
+    .unwrap();
+    let report = lifecycle::install_default(&lifecycle::PresetRequest {
+        preset_path: Some(&preset),
+        root: root.path(),
+        plugins_dir: &plugins,
+        data_dir: &data,
+        run_hooks: false,
+        dry_run: false,
+    })
+    .await
+    .unwrap();
+    assert!(report.installed.is_empty());
+    assert_eq!(report.failed.len(), 2);
+    assert!(report.failed.iter().all(|(_, error)| error.contains("cycle")));
+    assert!(!plugins.join("alpha").exists() && !plugins.join("beta").exists());
+}

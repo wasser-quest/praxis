@@ -864,9 +864,10 @@ pub struct PresetReport {
     pub failed: Vec<(String, String)>,
 }
 
-/// Install every plugin named by a preset. Existing plugins are skipped. A
-/// custom preset is `{"plugins": ["<dir>", ...]}`; otherwise the bundled
-/// default list is used. Each plugin is installed atomically through `install`.
+/// Install every plugin named by a preset in dependency order. Existing plugins
+/// are skipped. A custom preset is `{"plugins": ["<dir>", ...]}`; otherwise the
+/// bundled default list is used. `requires.plugins` that name another preset
+/// entry are installed first; a cycle is reported instead of guessed.
 pub async fn install_default(request: &PresetRequest<'_>) -> anyhow::Result<PresetReport> {
     let sources: Vec<String> = match request.preset_path {
         Some(path) => {
@@ -879,6 +880,12 @@ pub async fn install_default(request: &PresetRequest<'_>) -> anyhow::Result<Pres
         }
         None => DEFAULT_PRESET_PLUGINS.iter().map(|s| (*s).to_string()).collect(),
     };
+
+    struct Entry {
+        source: PathBuf,
+        requires: crate::plugins::PluginRequires,
+    }
+    let mut entries: std::collections::BTreeMap<String, Entry> = std::collections::BTreeMap::new();
     let mut report = PresetReport::default();
     for relative in &sources {
         let path = Path::new(relative);
@@ -895,12 +902,59 @@ pub async fn install_default(request: &PresetRequest<'_>) -> anyhow::Result<Pres
             continue;
         }
         let plugin: Plugin = serde_json::from_slice(&std::fs::read(&manifest)?)?;
-        if request.plugins_dir.join(&plugin.name).exists() {
-            report.skipped.push(plugin.name);
+        let requires = crate::plugins::requires_declaration(&manifest)?;
+        entries.insert(plugin.name, Entry { source, requires });
+    }
+
+    // Kahn topological order: dependencies (in this preset) install first.
+    let mut pending: std::collections::BTreeMap<String, usize> = entries
+        .iter()
+        .map(|(name, entry)| {
+            let count = entry
+                .requires
+                .plugins
+                .iter()
+                .filter(|dep| entries.contains_key(*dep))
+                .count();
+            (name.clone(), count)
+        })
+        .collect();
+    let mut order: Vec<String> = Vec::new();
+    loop {
+        let ready: Vec<String> = pending
+            .iter()
+            .filter(|(_, count)| **count == 0)
+            .map(|(name, _)| name.clone())
+            .collect();
+        if ready.is_empty() {
+            break;
+        }
+        for name in ready {
+            pending.remove(&name);
+            for candidate in pending.keys().cloned().collect::<Vec<_>>() {
+                if entries[&candidate].requires.plugins.iter().any(|dep| dep == &name) {
+                    if let Some(count) = pending.get_mut(&candidate) {
+                        *count = count.saturating_sub(1);
+                    }
+                }
+            }
+            order.push(name);
+        }
+    }
+    for name in pending.keys() {
+        report
+            .failed
+            .push((name.clone(), "dependency cycle".into()));
+    }
+
+    for name in order {
+        let entry = &entries[&name];
+        if request.plugins_dir.join(&name).exists() {
+            report.skipped.push(name);
             continue;
         }
         match install(&InstallRequest {
-            source: &source,
+            source: &entry.source,
             plugins_dir: request.plugins_dir,
             data_dir: request.data_dir,
             run_hooks: request.run_hooks,
@@ -909,7 +963,7 @@ pub async fn install_default(request: &PresetRequest<'_>) -> anyhow::Result<Pres
         .await
         {
             Ok(installed) => report.installed.push(installed.name),
-            Err(error) => report.failed.push((plugin.name, error.to_string())),
+            Err(error) => report.failed.push((name, error.to_string())),
         }
     }
     Ok(report)
