@@ -12,6 +12,12 @@ Start with [the full app roadmap](PLUGINIZATION.md). The order is:
 4. Move the remaining tools, providers, channels and workflow assets into packages.
 5. Ship a minimal runtime and a compatibility preset with independent packages.
 
+An agreed follow-on architecture makes the loader itself the kernel and every
+capability an installable, replaceable plugin, including the default POML/SM/
+guard engine and the TUI. Install/uninstall may run operator-approved lifecycle
+hooks under a configured `hooks = allow|ask|deny` policy. See
+[plugin lifecycle, trust and the kernel](../docs/PLUGIN_LIFECYCLE.md).
+
 The intended builtin tool set is `inspect_file`, `write_file` and `apply_patch`
 under `file_ops`. POML rendering, context handling, state-machine execution,
 workspace authority, permissions and receipt verification remain trusted runtime
@@ -28,6 +34,14 @@ optional workflow packs add assets rather than replacing the core interpreter.
 - [ ] PR 5: runtime-control tools and other tool packages.
 - [ ] PR 6: providers, channels, media and workflow/prompt packages.
 - [ ] PR 7: minimal distribution, compatibility preset and dependency cleanup.
+- [ ] PR 8a: lifecycle hooks (`allow|ask|deny`), staged install/uninstall,
+  script hashing, install record and example plugins.
+- [ ] PR 8b: manifest v2 and `praxis.lock.json` (declared `requires`/`provides`,
+  ownership across tools/routes/UI/assets, immutable revision, rollback).
+- [ ] PR 8c: kernel interfaces (trust levels, evidence observer and signed
+  receipts, replaceable runtime engine interface).
+- [ ] PR 8d: extract the remaining packages and ship the `--install-default` and
+  minimal presets; make the TUI a separate `praxis-tui` frontend plugin.
 
 These are ordered reviewable milestones, not time estimates. Each milestone
 includes migration and acceptance checks in the full roadmap. VM is the first
