@@ -49,6 +49,7 @@ async fn media_plugin_registry_delivers_only_the_selected_plugins_declared_secre
             description: "test".into(),
             version: "1".into(),
             enabled: true,
+            replaces: Vec::new(),
             context: HashMap::new(),
             secrets: vec![key.into()],
             tools: vec![PluginTool {

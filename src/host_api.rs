@@ -397,7 +397,7 @@ async fn admin_set_tool(
     done(admin::set_tool_enabled(&s.db, &s.plugins, &name, req.is_enabled))
 }
 async fn admin_tool_packages(State(s): State<Arc<ApiState>>) -> ApiResult {
-    admin_ok(admin::tool_packages(&s.db))
+    admin_ok(admin::tool_packages(&s.db, &s.plugins))
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]

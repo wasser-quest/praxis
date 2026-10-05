@@ -2459,7 +2459,7 @@ async function loadToolPackages() {
                 ? '<span class="badge badge-builtin">Core</span>'
                 : `<button type="button" class="toggle ${p.enabled ? 'active' : ''}" aria-label="${p.enabled ? 'Disable' : 'Enable'} ${safeId}" aria-pressed="${p.enabled ? 'true' : 'false'}" onclick='toggleToolPackage(${idArg}, ${!p.enabled})'></button>`;
             return `<div class="data-item tool-item">
-                <div class="tool-copy"><span class="name">${safeId}</span><span class="meta">${escapeHtml(p.description || '')} — ${escapeHtml((p.tools || []).join(', '))}</span></div>
+                <div class="tool-copy"><span class="name">${safeId}</span><span class="meta">${escapeHtml(p.description || '')} — ${escapeHtml((p.tools || []).join(', '))}${p.replaced_by ? ` — implemented by plugin ${escapeHtml(p.replaced_by)}` : ''}</span></div>
                 ${control}
             </div>`;
         }).join('');

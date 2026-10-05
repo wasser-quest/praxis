@@ -1,0 +1,19 @@
+{
+  "name": "allowlist_shell",
+  "description": "Replaces the builtin shell package's execute_terminal with an allowlisted, no-shell runner",
+  "version": "0.1.0",
+  "enabled": true,
+  "replaces": ["shell"],
+  "tools": [
+    {
+      "name": "execute_terminal",
+      "description": "Run one allowlisted command (ls, cat, head, tail, wc, grep, find, git status/log/diff, cargo check/test) without a shell. Pipes, redirects and other programs are rejected.",
+      "parameters": {
+        "type": "object",
+        "properties": {"command": {"type": "string"}},
+        "required": ["command"]
+      },
+      "handler": {"type": "script", "path": "run.py", "interpreter": "python3"}
+    }
+  ]
+}

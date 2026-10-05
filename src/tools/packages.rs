@@ -105,6 +105,13 @@ pub const PACKAGES: &[Package] = &[
     },
 ];
 
+/// Packages whose names an installed plugin may implement instead. `file_ops`
+/// is the core file contract and `runtime_control` drives host-owned workflow
+/// semantics (navigation, completion, Decision IR), so neither is replaceable.
+pub fn replaceable(id: &str) -> bool {
+    get(id).is_some_and(|p| !p.required && p.id != "runtime_control")
+}
+
 pub fn get(id: &str) -> Option<&'static Package> {
     PACKAGES.iter().find(|p| p.id == id)
 }
