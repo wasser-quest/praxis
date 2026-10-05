@@ -31,7 +31,7 @@ pub fn edges(sm: &StateMachine, context: &Value, user: &str) -> Vec<Edge> {
         let condition_met = transition.condition.trim().is_empty()
             || context
                 .as_object()
-                .is_some_and(|obj| crate::sm::evaluate_condition(&transition.condition, obj));
+                .is_some_and(|obj| crate::runtime::engine::evaluate_condition(&transition.condition, obj));
         let blocked_reason = if !sm.states.contains_key(&transition.to) {
             Some("Destination state is undefined".into())
         } else if !condition_met {

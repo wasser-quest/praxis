@@ -806,7 +806,7 @@ pub fn apply_to_context(
 
     // Apply overrides
     for overr in &sm.overrides {
-        if evaluate_condition(&overr.condition, context.as_object().unwrap_or(&serde_json::Map::new())) {
+        if crate::runtime::engine::evaluate_condition(&overr.condition, context.as_object().unwrap_or(&serde_json::Map::new())) {
             set_nested_value(context, &overr.key, serde_json::Value::String(overr.value.clone()));
         }
     }
@@ -814,7 +814,7 @@ pub fn apply_to_context(
     // Collect secret overrides
     let mut secret_changes = Vec::new();
     for secret_overr in &sm.secret_overrides {
-        if evaluate_condition(&secret_overr.condition, context.as_object().unwrap_or(&serde_json::Map::new())) {
+        if crate::runtime::engine::evaluate_condition(&secret_overr.condition, context.as_object().unwrap_or(&serde_json::Map::new())) {
             secret_changes.push((secret_overr.key.clone(), secret_overr.value.clone()));
         }
     }
@@ -859,7 +859,7 @@ fn resolve_auto_state(
     current_state: &str,
 ) -> String {
     for rule in &sm.auto_rules {
-        if evaluate_condition(&rule.condition, context) {
+        if crate::runtime::engine::evaluate_condition(&rule.condition, context) {
             return rule.target_state.clone();
         }
     }
@@ -1087,7 +1087,7 @@ pub fn advance_state(sm: &StateMachine, context: &serde_json::Value) -> Option<S
         .unwrap_or("");
 
     for transition in &sm.transitions {
-        if transition.from == current_state && (transition.condition.trim().is_empty() || evaluate_condition(&transition.condition, obj)) {
+        if transition.from == current_state && (transition.condition.trim().is_empty() || crate::runtime::engine::evaluate_condition(&transition.condition, obj)) {
             return Some(transition.to.clone());
         }
     }

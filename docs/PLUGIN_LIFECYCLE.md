@@ -74,10 +74,11 @@ Template rendering now goes through `runtime::engine`: a `RuntimeEngine`
 trait with `KernelEngine` as the default, selected process-wide. Prompt
 building, skills, compaction, decision routing and template validation call
 `engine::render_strict`/`render_strict_candidate` instead of the POML module
-directly. `KernelEngine` delegates to the unchanged built-in renderer, so
+directly, and state-machine guard/transition conditions, auto-rules and
+overrides are evaluated through `engine::evaluate_condition` instead of the SM
+module. `KernelEngine` delegates to the unchanged built-in implementations, so
 behavior is identical. A `runtime`-role package will install its own engine
-through the host bridge; SM/guard policy is routed through the same seam in the
-next step.
+through the host bridge; receipt signing and that bridge remain.
 
 ## Lifecycle
 
