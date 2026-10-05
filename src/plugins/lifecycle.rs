@@ -823,6 +823,82 @@ pub async fn uninstall(request: &UninstallRequest<'_>) -> anyhow::Result<Uninsta
     })
 }
 
+/// Bundled plugins installed by `praxis plugin install-default` in a source
+/// checkout. Paths resolve from the installation root; missing entries are
+/// reported, not fatal.
+pub const DEFAULT_PRESET_PLUGINS: &[&str] = &[
+    "examples/plugins/hooks_demo",
+    "examples/tool-packages/allowlist_shell",
+];
+
+#[derive(Debug, Clone)]
+pub struct PresetRequest<'a> {
+    pub preset_path: Option<&'a Path>,
+    pub root: &'a Path,
+    pub plugins_dir: &'a Path,
+    pub data_dir: &'a Path,
+    pub run_hooks: bool,
+    pub dry_run: bool,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct PresetReport {
+    pub installed: Vec<String>,
+    pub skipped: Vec<String>,
+    pub failed: Vec<(String, String)>,
+}
+
+/// Install every plugin named by a preset. Existing plugins are skipped. A
+/// custom preset is `{"plugins": ["<dir>", ...]}`; otherwise the bundled
+/// default list is used. Each plugin is installed atomically through `install`.
+pub async fn install_default(request: &PresetRequest<'_>) -> anyhow::Result<PresetReport> {
+    let sources: Vec<String> = match request.preset_path {
+        Some(path) => {
+            #[derive(Deserialize)]
+            struct Raw {
+                #[serde(default)]
+                plugins: Vec<String>,
+            }
+            serde_json::from_slice::<Raw>(&std::fs::read(path)?)?.plugins
+        }
+        None => DEFAULT_PRESET_PLUGINS.iter().map(|s| (*s).to_string()).collect(),
+    };
+    let mut report = PresetReport::default();
+    for relative in &sources {
+        let path = Path::new(relative);
+        let source = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            request.root.join(path)
+        };
+        let manifest = source.join("plugin.json");
+        if !manifest.is_file() {
+            report
+                .failed
+                .push((relative.clone(), "no plugin.json".into()));
+            continue;
+        }
+        let plugin: Plugin = serde_json::from_slice(&std::fs::read(&manifest)?)?;
+        if request.plugins_dir.join(&plugin.name).exists() {
+            report.skipped.push(plugin.name);
+            continue;
+        }
+        match install(&InstallRequest {
+            source: &source,
+            plugins_dir: request.plugins_dir,
+            data_dir: request.data_dir,
+            run_hooks: request.run_hooks,
+            dry_run: request.dry_run,
+        })
+        .await
+        {
+            Ok(installed) => report.installed.push(installed.name),
+            Err(error) => report.failed.push((plugin.name, error.to_string())),
+        }
+    }
+    Ok(report)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

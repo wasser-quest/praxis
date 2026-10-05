@@ -95,12 +95,15 @@ registry revision. A changed uninstall script or mismatched hook hash requires
 ## Presets and `--install-default`
 
 A preset is a signed list of plugin ids, versions, sources, enabled flags,
-secret prompts and the hook policy. `praxis install --install-default` installs
-the standard set (runtime engine, `file_ops`, `runtime_control`, providers,
-memory, RAG, cron, skills, shell, vision, dashboard, `praxis-tui`, and opt-in VM
-and legacy assets), runs each package's hook under the configured policy, and
-writes `praxis.lock.json`. A minimal preset is the kernel plus one runtime engine
-and `file_ops`.
+secret prompts and the hook policy. `praxis plugin install-default` installs the
+bundled example set now; the full `--install-default` standard set (runtime
+engine, `file_ops`, `runtime_control`, providers, memory, RAG, cron, skills,
+shell, vision, dashboard, `praxis-tui`, and opt-in VM and legacy assets) lands
+once those packages are extracted. `praxis install-preset compatibility`
+continues to install the shipped assets and binary packages in the meantime.
+The preset runs each package's hook under the configured policy; the lockfile
+(`praxis.lock.json`) lands with manifest v2 (PR 8b). A minimal preset is the
+kernel plus one runtime engine and `file_ops`.
 
 `praxis.lock.json` pins id/version/source/manifest hash/script hashes/enabled
 state. Startup loads exactly the lock; upgrades stage a new revision and keep
@@ -149,6 +152,10 @@ praxis plugin install ./examples/plugins/hooks_demo --no-scripts
 # Remove; data is preserved unless --purge is passed to the hook
 praxis plugin uninstall hooks_demo --allow-scripts
 praxis plugin uninstall hooks_demo --allow-scripts --purge
+# Install the bundled example plugin set (skips anything already installed)
+praxis plugin install-default --allow-scripts
+# Or a custom preset: {"plugins": ["<dir>", ...]}
+praxis plugin install-default --preset ./my-preset.json
 # Replace an installed plugin with a new revision (previous kept until the new
 # install hook succeeds; a failed hook restores it)
 praxis plugin upgrade ./plugins/hooks_demo --allow-scripts
