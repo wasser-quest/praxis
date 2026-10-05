@@ -123,6 +123,10 @@ pub struct InstallRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub uninstall: Option<HookRecord>,
     pub installed_at: String,
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub source: String,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -179,12 +183,13 @@ fn sha256_file(path: &Path) -> anyhow::Result<String> {
     Ok(sha256_bytes(&std::fs::read(path)?))
 }
 
-fn record_path(data_dir: &Path) -> PathBuf {
-    data_dir.join("plugin_installs.json")
+/// The lockfile lives with the plugins so it travels with an installation.
+fn record_path(plugins_dir: &Path) -> PathBuf {
+    plugins_dir.join("praxis.lock.json")
 }
 
-fn load_records(data_dir: &Path) -> anyhow::Result<serde_json::Map<String, serde_json::Value>> {
-    match std::fs::read_to_string(record_path(data_dir)) {
+fn load_records(plugins_dir: &Path) -> anyhow::Result<serde_json::Map<String, serde_json::Value>> {
+    match std::fs::read_to_string(record_path(plugins_dir)) {
         Ok(data) => Ok(serde_json::from_str(&data)?),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             Ok(serde_json::Map::new())
@@ -194,11 +199,11 @@ fn load_records(data_dir: &Path) -> anyhow::Result<serde_json::Map<String, serde
 }
 
 fn save_records(
-    data_dir: &Path,
+    plugins_dir: &Path,
     records: &serde_json::Map<String, serde_json::Value>,
 ) -> anyhow::Result<()> {
-    std::fs::create_dir_all(data_dir)?;
-    let path = record_path(data_dir);
+    std::fs::create_dir_all(plugins_dir)?;
+    let path = record_path(plugins_dir);
     let tmp = path.with_extension("json.tmp");
     std::fs::write(&tmp, serde_json::to_string_pretty(records)?)?;
     std::fs::rename(tmp, path)?;
@@ -455,6 +460,8 @@ fn build_record(
             .map(|path| hook_record(source_root, path))
             .transpose()?,
         installed_at: chrono::Utc::now().to_rfc3339(),
+        enabled: plugin.enabled,
+        source: source_root.to_string_lossy().into_owned(),
     })
 }
 
@@ -571,9 +578,9 @@ pub async fn install(request: &InstallRequest<'_>) -> anyhow::Result<InstallRepo
             hook.skipped_reason = Some("hooks were not run (policy or --no-scripts)".into());
         }
     }
-    let mut records = load_records(request.data_dir)?;
+    let mut records = load_records(request.plugins_dir)?;
     records.insert(plugin.name.clone(), serde_json::to_value(&record)?);
-    save_records(request.data_dir, &records)?;
+    save_records(request.plugins_dir, &records)?;
     Ok(InstallReport {
         name: plugin.name.clone(),
         dest,
@@ -690,9 +697,9 @@ pub async fn upgrade(request: &UpgradeRequest<'_>) -> anyhow::Result<InstallRepo
     }
     let _ = std::fs::remove_dir_all(&backup);
     let record = build_record(&source_root, &plugin, &hooks, &manifest_bytes)?;
-    let mut records = load_records(request.data_dir)?;
+    let mut records = load_records(request.plugins_dir)?;
     records.insert(plugin.name.clone(), serde_json::to_value(&record)?);
-    save_records(request.data_dir, &records)?;
+    save_records(request.plugins_dir, &records)?;
     Ok(InstallReport {
         name: plugin.name.clone(),
         dest,
@@ -755,7 +762,7 @@ pub async fn uninstall(request: &UninstallRequest<'_>) -> anyhow::Result<Uninsta
         let hooks = validate_hooks(&plugin_dir.canonicalize()?, plugin.hooks.clone())?;
         if let Some(script) = &hooks.uninstall {
             // A changed uninstall script cannot run without explicit consent.
-            let records = load_records(request.data_dir)?;
+            let records = load_records(request.plugins_dir)?;
             if !request.force {
                 if let Some(recorded) = records
                     .get(request.name)
@@ -771,6 +778,7 @@ pub async fn uninstall(request: &UninstallRequest<'_>) -> anyhow::Result<Uninsta
                 }
             }
             if request.run_hooks {
+                std::fs::create_dir_all(request.data_dir)?;
                 let script_path = plugin_dir.join(script);
                 match run_hook(
                     HookKind::Uninstall,
@@ -811,9 +819,9 @@ pub async fn uninstall(request: &UninstallRequest<'_>) -> anyhow::Result<Uninsta
     }
 
     std::fs::remove_dir_all(&plugin_dir)?;
-    let mut records = load_records(request.data_dir)?;
+    let mut records = load_records(request.plugins_dir)?;
     records.remove(request.name);
-    save_records(request.data_dir, &records)?;
+    save_records(request.plugins_dir, &records)?;
     Ok(UninstallReport {
         name: request.name.to_string(),
         context_keys,
@@ -896,6 +904,69 @@ pub async fn install_default(request: &PresetRequest<'_>) -> anyhow::Result<Pres
             Err(error) => report.failed.push((plugin.name, error.to_string())),
         }
     }
+    Ok(report)
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct VerifyReport {
+    pub ok: Vec<String>,
+    /// Plugins whose files no longer match the locked hashes.
+    pub changed: Vec<(String, String)>,
+    /// Locked plugins whose directory is gone.
+    pub missing: Vec<String>,
+    /// Directories on disk that were not installed through the lifecycle.
+    pub unlocked: Vec<String>,
+}
+
+/// Check installed plugins against `praxis.lock.json`. A changed hook or
+/// manifest means the package is no longer the revision the operator approved.
+pub fn verify(plugins_dir: &Path) -> anyhow::Result<VerifyReport> {
+    let records = load_records(plugins_dir)?;
+    let mut report = VerifyReport::default();
+    for (name, value) in &records {
+        let record: InstallRecord = serde_json::from_value(value.clone())?;
+        let dir = plugins_dir.join(name);
+        if !dir.join("plugin.json").is_file() {
+            report.missing.push(name.clone());
+            continue;
+        }
+        let manifest_bytes = std::fs::read(dir.join("plugin.json"))?;
+        if sha256_bytes(&manifest_bytes) != record.manifest_sha256 {
+            report.changed.push((name.clone(), "manifest changed".into()));
+            continue;
+        }
+        let mut mismatch = None;
+        for (slot, hook) in [("install", &record.install), ("uninstall", &record.uninstall)] {
+            if let Some(hook) = hook {
+                match std::fs::read(dir.join(&hook.path)) {
+                    Ok(bytes) if sha256_bytes(&bytes) == hook.sha256 => {}
+                    Ok(_) => mismatch = Some(format!("{slot} hook changed")),
+                    Err(_) => mismatch = Some(format!("{slot} hook missing")),
+                }
+                if mismatch.is_some() {
+                    break;
+                }
+            }
+        }
+        match mismatch {
+            Some(reason) => report.changed.push((name.clone(), reason)),
+            None => report.ok.push(name.clone()),
+        }
+    }
+    if let Ok(entries) = std::fs::read_dir(plugins_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if !entry.path().is_dir() || name.starts_with('.') {
+                continue;
+            }
+            if entry.path().join("plugin.json").is_file() && !records.contains_key(&name) {
+                report.unlocked.push(name);
+            }
+        }
+    }
+    report.ok.sort();
+    report.missing.sort();
+    report.unlocked.sort();
     Ok(report)
 }
 

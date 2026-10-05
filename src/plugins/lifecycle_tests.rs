@@ -80,7 +80,7 @@ async fn install_runs_hook_records_hashes_and_uninstall_removes() {
     assert!(plugins.join("hooked/plugin.json").is_file());
     assert!(data.join("marker").is_file());
     let record: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(data.join("plugin_installs.json")).unwrap())
+        serde_json::from_str(&std::fs::read_to_string(plugins.join("praxis.lock.json")).unwrap())
             .unwrap();
     assert_eq!(record["hooked"]["version"], "1.0.0");
     assert!(record["hooked"]["manifest_sha256"].as_str().unwrap().len() == 64);
@@ -103,7 +103,7 @@ async fn install_runs_hook_records_hashes_and_uninstall_removes() {
     assert!(!plugins.join("hooked").exists());
     assert!(!data.join("marker").exists());
     let record: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(data.join("plugin_installs.json")).unwrap())
+        serde_json::from_str(&std::fs::read_to_string(plugins.join("praxis.lock.json")).unwrap())
             .unwrap();
     assert!(record.get("hooked").is_none());
 }
@@ -136,7 +136,7 @@ async fn install_hook_failure_removes_published_directory_and_leaves_no_record()
         .to_string();
     assert!(error.contains("exit"), "{error}");
     assert!(!plugins.join("hooked").exists());
-    assert!(!data.join("plugin_installs.json").exists());
+    assert!(!plugins.join("praxis.lock.json").exists());
 }
 
 #[tokio::test]
@@ -266,7 +266,7 @@ async fn upgrade_replaces_revision_and_restores_on_hook_failure() {
         "v2"
     );
     let record: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(data.join("plugin_installs.json")).unwrap())
+        serde_json::from_str(&std::fs::read_to_string(plugins.join("praxis.lock.json")).unwrap())
             .unwrap();
     assert_eq!(record["hooked"]["version"], "2.0.0");
 
@@ -465,4 +465,35 @@ async fn install_default_installs_preset_once_and_skips_existing() {
     };
     lifecycle::install_default(&dry).await.unwrap();
     assert!(!dry_root.path().join("plugins/alpha").exists());
+}
+
+#[tokio::test]
+async fn verify_reports_ok_changed_and_missing() {
+    let root = tempfile::tempdir().unwrap();
+    let plugins = root.path().join("plugins");
+    let data = root.path().join("data");
+    let source = root.path().join("source");
+    write_plugin(&source, Some("true\n"), Some("true\n"));
+    lifecycle::install(&install_req(&source, &plugins, &data, true))
+        .await
+        .unwrap();
+    let report = lifecycle::verify(&plugins).unwrap();
+    assert_eq!(report.ok, vec!["hooked"]);
+    assert!(report.changed.is_empty() && report.missing.is_empty());
+
+    // A changed hook is reported.
+    std::fs::write(plugins.join("hooked/hooks/install.sh"), "exit 0\n").unwrap();
+    let report = lifecycle::verify(&plugins).unwrap();
+    assert_eq!(report.changed.len(), 1);
+    assert!(report.changed[0].1.contains("hook changed"), "{:?}", report.changed);
+
+    // A removed directory is reported as missing.
+    std::fs::remove_dir_all(plugins.join("hooked")).unwrap();
+    let report = lifecycle::verify(&plugins).unwrap();
+    assert_eq!(report.missing, vec!["hooked"]);
+
+    // A directory that was never locked shows up as unlocked, not ok.
+    write_named(&plugins.join("stray"), "stray", serde_json::json!({}));
+    let report = lifecycle::verify(&plugins).unwrap();
+    assert_eq!(report.unlocked, vec!["stray"]);
 }
