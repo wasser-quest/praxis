@@ -175,12 +175,42 @@ enum PluginAction {
         /// Path to the plugin directory (must contain plugin.json)
         #[arg(value_name = "PLUGIN_PATH")]
         path: String,
+        /// Run the install hook without asking
+        #[arg(long)]
+        allow_scripts: bool,
+        /// Never run install/uninstall hooks
+        #[arg(long)]
+        no_scripts: bool,
+        /// Assume yes to the interactive hook prompt
+        #[arg(long)]
+        yes: bool,
+        /// Print what would happen without copying, publishing or running hooks
+        #[arg(long)]
+        dry_run: bool,
     },
     /// Uninstall a plugin and clean up its context and secrets
     Uninstall {
         /// Name of the plugin to uninstall
         #[arg(value_name = "PLUGIN_NAME")]
         name: String,
+        /// Run the uninstall hook without asking
+        #[arg(long)]
+        allow_scripts: bool,
+        /// Never run install/uninstall hooks
+        #[arg(long)]
+        no_scripts: bool,
+        /// Assume yes to the interactive hook prompt
+        #[arg(long)]
+        yes: bool,
+        /// Remove the plugin directory even if the uninstall hook fails or changed
+        #[arg(long)]
+        force: bool,
+        /// Tell the uninstall hook to remove plugin data as well
+        #[arg(long)]
+        purge: bool,
+        /// Print what would happen without running hooks or removing files
+        #[arg(long)]
+        dry_run: bool,
     },
     /// List installed plugins
     List,
@@ -794,61 +824,78 @@ async fn handle_plugin_action(action: &PluginAction) -> anyhow::Result<()> {
             println!("Tool package '{id}' {}. Running instances apply it on the next model turn.", if on { "enabled" } else { "disabled" });
             return Ok(());
         }
-        PluginAction::Install { path } => {
-            let src = Path::new(path);
-            if !src.is_dir() {
-                anyhow::bail!("Plugin path '{}' is not a directory", path);
+        PluginAction::Install {
+            path,
+            allow_scripts,
+            no_scripts,
+            yes,
+            dry_run,
+        } => {
+            let policy = praxis::plugins::lifecycle::HookPolicy::from_env()?;
+            let run_hooks = praxis::plugins::lifecycle::resolve_consent(
+                policy,
+                *allow_scripts || *yes,
+                *no_scripts,
+                "Run plugin install hooks?",
+            );
+            let report = praxis::plugins::lifecycle::install(
+                &praxis::plugins::lifecycle::InstallRequest {
+                    source: Path::new(path),
+                    plugins_dir: plugins_path,
+                    data_dir: &data_dir,
+                    run_hooks,
+                    dry_run: *dry_run,
+                },
+            )
+            .await?;
+            if *dry_run {
+                return Ok(());
             }
-            let manifest = src.join("plugin.json");
-            if !manifest.exists() {
-                anyhow::bail!("No plugin.json found in '{}'", path);
-            }
-
-            let data = std::fs::read_to_string(&manifest)?;
-            let plugin: praxis::plugins::Plugin = serde_json::from_str(&data)?;
-
-            let dest = plugins_path.join(&plugin.name);
-            if dest.exists() {
-                anyhow::bail!(
-                    "Plugin '{}' already installed at '{}'",
-                    plugin.name,
-                    dest.display()
-                );
-            }
-
-            std::fs::create_dir_all(plugins_path)?;
-            copy_dir_recursive(src, &dest)?;
-
-            println!("Plugin '{}' installed to {}", plugin.name, dest.display());
-            println!("  Tools: {}", plugin.tools.len());
-            println!("  Context vars: {}", plugin.context.len());
-            println!("  Secrets: {}", plugin.secrets.len());
-            if !plugin.secrets.is_empty() {
+            println!("Plugin '{}' installed to {}", report.name, report.dest.display());
+            println!("  Tools: {}", report.plugin.tools.len());
+            println!("  Context vars: {}", report.plugin.context.len());
+            println!("  Secrets: {}", report.plugin.secrets.len());
+            if !report.plugin.secrets.is_empty() {
                 println!("  Configure secrets via dashboard or API before use.");
             }
         }
-        PluginAction::Uninstall { name } => {
-            let plugin_dir = plugins_path.join(name);
-            if !plugin_dir.exists() {
-                anyhow::bail!("Plugin '{}' not found at '{}'", name, plugin_dir.display());
+        PluginAction::Uninstall {
+            name,
+            allow_scripts,
+            no_scripts,
+            yes,
+            force,
+            purge,
+            dry_run,
+        } => {
+            let policy = praxis::plugins::lifecycle::HookPolicy::from_env()?;
+            let run_hooks = praxis::plugins::lifecycle::resolve_consent(
+                policy,
+                *allow_scripts || *yes,
+                *no_scripts,
+                "Run plugin uninstall hooks?",
+            );
+            let report = praxis::plugins::lifecycle::uninstall(
+                &praxis::plugins::lifecycle::UninstallRequest {
+                    name,
+                    plugins_dir: plugins_path,
+                    data_dir: &data_dir,
+                    run_hooks,
+                    force: *force,
+                    purge: *purge,
+                    dry_run: *dry_run,
+                },
+            )
+            .await?;
+            if *dry_run {
+                return Ok(());
             }
+            println!("Removed plugin directory: {}", plugins_path.join(name).display());
+            let context_keys = report.context_keys;
+            let secret_keys = report.secret_keys;
 
-            let manifest = plugin_dir.join("plugin.json");
-            let (context_keys, secret_keys) = if manifest.exists() {
-                let data = std::fs::read_to_string(&manifest)?;
-                let plugin: praxis::plugins::Plugin = serde_json::from_str(&data)?;
-                let ctx_keys: Vec<String> = plugin.context.keys().cloned().collect();
-                (ctx_keys, plugin.secrets)
-            } else {
-                (vec![], vec![])
-            };
-
-            std::fs::remove_dir_all(&plugin_dir)?;
-            println!("Removed plugin directory: {}", plugin_dir.display());
-
-            let data_dir = std::env::var("DATA_DIR").unwrap_or_else(|_| "./data".to_string());
-            if Path::new(&data_dir).exists() {
-                if let Ok(db) = praxis::db::Database::new(Path::new(&data_dir)) {
+            if data_dir.exists() {
+                if let Ok(db) = praxis::db::Database::new(&data_dir) {
                     if !secret_keys.is_empty() {
                         if praxis::db::secrets::has_secrets() {
                             println!("Note: Secrets ({}) are stored encrypted. Remove them manually via dashboard.", secret_keys.join(", "));
@@ -947,22 +994,6 @@ async fn handle_plugin_action(action: &PluginAction) -> anyhow::Result<()> {
 
     Ok(())
 }
-
-fn copy_dir_recursive(src: &Path, dest: &Path) -> anyhow::Result<()> {
-    std::fs::create_dir_all(dest)?;
-    for entry in std::fs::read_dir(src)? {
-        let entry = entry?;
-        let path = entry.path();
-        let dest_path = dest.join(entry.file_name());
-        if path.is_dir() {
-            copy_dir_recursive(&path, &dest_path)?;
-        } else {
-            std::fs::copy(&path, &dest_path)?;
-        }
-    }
-    Ok(())
-}
-
 
 async fn handle_backup(
     output: Option<String>,
@@ -1358,6 +1389,54 @@ mod tests {
                 _ => panic!("Expected Logs variant"),
             },
             _ => panic!("Expected Service variant"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parsing_plugin_lifecycle_flags() {
+        let cli = Cli::try_parse_from([
+            "praxis",
+            "plugin",
+            "install",
+            "./plugins/demo",
+            "--allow-scripts",
+            "--dry-run",
+        ])
+        .unwrap();
+        match cli {
+            Cli::Plugin { action } => match action {
+                PluginAction::Install {
+                    path,
+                    allow_scripts,
+                    no_scripts,
+                    yes,
+                    dry_run,
+                } => {
+                    assert_eq!(path, "./plugins/demo");
+                    assert!(allow_scripts && dry_run && !no_scripts && !yes);
+                }
+                _ => panic!("Expected Install variant"),
+            },
+            _ => panic!("Expected Plugin variant"),
+        }
+        let cli = Cli::try_parse_from([
+            "praxis", "plugin", "uninstall", "demo", "--force", "--purge",
+        ])
+        .unwrap();
+        match cli {
+            Cli::Plugin { action } => match action {
+                PluginAction::Uninstall {
+                    name,
+                    force,
+                    purge,
+                    ..
+                } => {
+                    assert_eq!(name, "demo");
+                    assert!(force && purge);
+                }
+                _ => panic!("Expected Uninstall variant"),
+            },
+            _ => panic!("Expected Plugin variant"),
         }
     }
 }

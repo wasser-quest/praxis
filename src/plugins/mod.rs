@@ -3,6 +3,7 @@ mod contract_tests;
 #[cfg(all(test, unix))]
 mod source_contract_tests;
 pub mod contracts;
+pub mod lifecycle;
 pub mod minimax_image;
 mod executable;
 
@@ -14,9 +15,30 @@ mod media_tests;
 #[cfg(all(test, unix))]
 mod executable_tests;
 
+#[cfg(all(test, unix))]
+mod lifecycle_tests;
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct PluginHooks {
+    /// Installs dependencies. Idempotent; runs from the package directory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub install: Option<String>,
+    /// Removes what install created. Data under DATA_DIR is preserved unless
+    /// the operator passes --purge.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uninstall: Option<String>,
+}
+
+impl PluginHooks {
+    pub fn is_empty(&self) -> bool {
+        self.install.is_none() && self.uninstall.is_none()
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Plugin {
@@ -34,6 +56,9 @@ pub struct Plugin {
     /// instead of the native code (e.g. `["shell"]`). See docs/TOOL_PACKAGES.md.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub replaces: Vec<String>,
+    /// Operator-approved install/uninstall scripts. See docs/PLUGIN_LIFECYCLE.md.
+    #[serde(default, skip_serializing_if = "PluginHooks::is_empty")]
+    pub hooks: PluginHooks,
 }
 
 fn default_true() -> bool {
@@ -613,6 +638,8 @@ struct PluginManifest {
     secrets: Vec<String>,
     #[serde(default)]
     replaces: Vec<String>,
+    #[serde(default)]
+    hooks: PluginHooks,
 }
 
 pub fn load_plugins_from_dir(dir: &Path) -> anyhow::Result<Vec<Plugin>> {
@@ -716,7 +743,33 @@ fn load_plugin_from_manifest(manifest_path: &Path, plugin_dir: &Path) -> anyhow:
         secrets: manifest.secrets,
         enabled: manifest.enabled,
         replaces: manifest.replaces,
+        hooks: validate_hooks(plugin_dir, manifest.hooks)?,
     })
+}
+
+/// Hook paths are declared relative to the package and must resolve to a
+/// regular file inside it. They stay relative so the registry revision does not
+/// depend on the installation directory; the lifecycle runner joins them.
+pub(crate) fn validate_hooks(plugin_dir: &Path, mut hooks: PluginHooks) -> anyhow::Result<PluginHooks> {
+    let root = plugin_dir.canonicalize()?;
+    for slot in [&mut hooks.install, &mut hooks.uninstall] {
+        if let Some(path) = slot {
+            let relative = Path::new(path);
+            anyhow::ensure!(
+                relative.is_relative()
+                    && relative
+                        .components()
+                        .all(|c| matches!(c, std::path::Component::Normal(_))),
+                "Hook must be a path inside its package"
+            );
+            let resolved = root.join(relative).canonicalize()?;
+            anyhow::ensure!(
+                resolved.starts_with(&root) && resolved.is_file(),
+                "Hook escapes its package or is not a regular file"
+            );
+        }
+    }
+    Ok(hooks)
 }
 
 pub fn register_builtin_plugins(_registry: &mut PluginRegistry) {
@@ -760,6 +813,7 @@ mod plugin_tests {
             secrets: Vec::new(),
             enabled: true,
             replaces: Vec::new(),
+            hooks: Default::default(),
         });
         assert!(registry.get("test").is_some());
         assert_eq!(registry.list().len(), 1);
@@ -804,6 +858,7 @@ mod plugin_tests {
             secrets: Vec::new(),
             enabled: true,
             replaces: Vec::new(),
+            hooks: Default::default(),
         });
         assert_eq!(registry.enabled_tools().len(), 1);
     }
@@ -828,6 +883,7 @@ mod plugin_tests {
             secrets: Vec::new(),
             enabled: false,
             replaces: Vec::new(),
+            hooks: Default::default(),
         });
         assert_eq!(registry.enabled_tools().len(), 0);
     }
@@ -971,6 +1027,7 @@ mod plugin_tests {
             secrets: Vec::new(),
             enabled: true,
             replaces: Vec::new(),
+            hooks: Default::default(),
         });
         assert!(registry.context_defaults().is_empty());
     }
@@ -987,6 +1044,7 @@ mod plugin_tests {
             secrets: vec!["api_key".to_string(), "api_secret".to_string()],
             enabled: true,
             replaces: Vec::new(),
+            hooks: Default::default(),
         });
         let sec = registry.collect_secrets();
         assert_eq!(sec.len(), 2);
