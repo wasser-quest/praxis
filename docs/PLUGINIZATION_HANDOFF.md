@@ -318,9 +318,14 @@ Remaining owners (39 tools total):
         unknown operations fail closed.
   - [x] `get_context`, `set_context`, `delete_context` (single implementation,
         native dispatch delegates).
-  - [ ] `search_tools`, `read_tool_result`, `run_check`, `execute_decision`.
-  - [ ] `agent_next`, `agent_back`, `agent_complete`, `agent_set_path`,
+  - [x] `search_tools`, `read_tool_result`, `run_check`.
+  - [x] `agent_next`, `agent_back`, `agent_complete`, `agent_set_path`,
         `agent_feedback`.
+  - [ ] `execute_decision` — deliberately not a table entry: it lowers to
+        *arbitrary* tools (`inspect_file`, `agent_*`, …) via
+        `gateway::decision_ir::resolve`, so it is a dispatch-loop concern and
+        must stay next to the dispatcher (or gain a general "run this resolved
+call" capability).
   - [ ] `packages/runtime_control/plugin.json` declaring all 12 over `builtin`.
   - [ ] stop seeding the 12 from `db/tools.rs`; preserve enable/disable flags
         and every guard/tool-group identifier; never two owners.

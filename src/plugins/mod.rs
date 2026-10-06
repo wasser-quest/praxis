@@ -680,12 +680,16 @@ impl PluginRegistry {
             // this dispatcher was issued. The package supplies the tool; the
             // kernel supplies the authority and the implementation.
             if let PluginHandler::Builtin { name: operation } = &tool.handler {
+                // A package handler has no dispatcher root of its own; resolve
+                // the host root (never a tool argument).
+                let root = crate::tools::builtin_operations::root();
                 return crate::tools::builtin_operations::execute(
                     &crate::tools::builtin_operations::BuiltinContext {
                         db,
                         plugins: self,
                         user,
                         call,
+                        root: &root,
                     },
                     operation,
                     args,

@@ -127,13 +127,6 @@ async fn dispatch(
         "inspect_file" => crate::tools::apply_patch::inspect(user_id, &args)
             .await
             .unwrap_or_else(|e| format!("Error: {e}")),
-        "run_check" => super::action_contracts::run(user_id, &tc.id, &args)
-            .await
-            .unwrap_or_else(|e| format!("Error: {e}")),
-        "read_tool_result" => crate::tools::tool_output::run(db, user_id, &args)
-            .unwrap_or_else(|e| format!("Error: {e}")),
-        "search_tools" => crate::tools::discovery::search(db, plugins, user_id, &args)
-            .unwrap_or_else(|e| format!("Error: {e}")),
         "memory_profile_create" => crate::tools::memory::profile_create(db, user_id, &args)
             .unwrap_or_else(|e| format!("Error: {e}")),
         "memory_profile_load" => crate::tools::memory::profile_load(db, user_id, &args)
@@ -311,7 +304,9 @@ async fn dispatch(
                     .unwrap_or_else(|error| format!("Error: {error}"))
             } // end else (shared mode)
         }
-        "get_context" | "set_context" | "delete_context" => {
+        "get_context" | "set_context" | "delete_context" | "search_tools"
+        | "read_tool_result" | "run_check" | "agent_next" | "agent_back"
+        | "agent_complete" | "agent_set_path" | "agent_feedback" => {
             // Single implementation, shared with a package's `builtin` handler
             // so result formats cannot drift between the two.
             crate::tools::builtin_operations::execute(
@@ -320,49 +315,13 @@ async fn dispatch(
                     plugins,
                     user: user_id,
                     call: &tc.id,
+                    root,
                 },
                 &tc.function.name,
                 &args,
             )
             .await
             .unwrap_or_else(|error| format!("Error: {error}"))
-        }
-        "agent_next" | "agent_back" => crate::tools::agent_control::navigate_with_plugins(
-            db,
-            root,
-            plugins,
-            user_id,
-            tc.function.name == "agent_back",
-            &args,
-        )
-        .await
-        .unwrap_or_else(|e| e),
-        "agent_complete" => crate::tools::agent_control::run(
-            db,
-            user_id,
-            crate::tools::agent_control::AgentControlSignal::Complete,
-        )
-        .await
-        .unwrap_or_else(|e| format!("Error: {}", e)),
-        "agent_set_path" => {
-            let path = args["path"].as_str().unwrap_or("");
-            crate::tools::agent_control::run(
-                db,
-                user_id,
-                crate::tools::agent_control::AgentControlSignal::Path(path.to_string()),
-            )
-            .await
-            .unwrap_or_else(|e| format!("Error: {}", e))
-        }
-        "agent_feedback" => {
-            let message = args["message"].as_str().unwrap_or("");
-            crate::tools::agent_control::run(
-                db,
-                user_id,
-                crate::tools::agent_control::AgentControlSignal::Feedback(message.to_string()),
-            )
-            .await
-            .unwrap_or_else(|e| format!("Error: {}", e))
         }
         "discord_upload_file" => {
             let settings_upload_ch = if mode == DispatchMode::Agent {
