@@ -14,6 +14,9 @@ enum Cli {
         /// Disable Discord bot
         #[arg(long)]
         no_discord: bool,
+        /// Minimal kernel: file tools and plugin management only
+        #[arg(long)]
+        minimal: bool,
         /// Disable dashboard
         #[arg(long)]
         no_dashboard: bool,
@@ -470,8 +473,9 @@ async fn run() -> anyhow::Result<()> {
             password,
             no_discord,
             no_dashboard,
+            minimal,
             workspace_dir,
-        } => run_services(password, !no_discord, !no_dashboard, workspace_dir).await,
+        } => run_services(password, !no_discord, !no_dashboard, minimal, workspace_dir).await,
         Cli::Pair { code } => pair_command(&code).await,
         Cli::Onboard { interactive: true } => praxis::onboard::run_interactive_onboard(),
         Cli::Onboard { interactive: false } => {
@@ -498,6 +502,7 @@ async fn run_services(
     cli_password: Option<String>,
     enable_discord: bool,
     enable_dashboard: bool,
+    minimal: bool,
     workspace_dir: Option<PathBuf>,
 ) -> anyhow::Result<()> {
     // Master-Key-Zustellung. Reihenfolge = Expositionsrisiko aufsteigend:
@@ -661,17 +666,23 @@ async fn run_services(
     // validates its routed provider before changing workflow state or history.
 
     // Feature registration does not enable tools or initialize guests by itself.
-    praxis::runtime::vm::configure(&db, &config, &mut plugin_registry)?;
-    praxis::runtime::vm::initialize_service(&config, &plugin_registry).await?;
-    praxis::runtime::shell::configure(&config, &mut plugin_registry)?;
-    praxis::runtime::shell::initialize_service(&config, &plugin_registry).await?;
-    praxis::runtime::process_service::configure(&config, &mut plugin_registry)?;
-    praxis::runtime::process_service::initialize_service(&config, &plugin_registry).await?;
-    let _engine_binding =
-        praxis::runtime::engine_bridge::configure(&config, &plugin_registry).await?;
-    if let Err(error) = praxis::runtime::vm::autostart(&config, &plugin_registry, &secrets).await {
-        tracing::warn!(%error, "Configured VM autostart failed (non-fatal)");
-    }
+    // A minimal kernel registers nothing: file tools and plugin management only.
+    let _engine_binding = if config.minimal {
+        None
+    } else {
+        praxis::runtime::vm::configure(&db, &config, &mut plugin_registry)?;
+        praxis::runtime::vm::initialize_service(&config, &plugin_registry).await?;
+        praxis::runtime::shell::configure(&config, &mut plugin_registry)?;
+        praxis::runtime::shell::initialize_service(&config, &plugin_registry).await?;
+        praxis::runtime::process_service::configure(&config, &mut plugin_registry)?;
+        praxis::runtime::process_service::initialize_service(&config, &plugin_registry).await?;
+        if let Err(error) =
+            praxis::runtime::vm::autostart(&config, &plugin_registry, &secrets).await
+        {
+            tracing::warn!(%error, "Configured VM autostart failed (non-fatal)");
+        }
+        Some(praxis::runtime::engine_bridge::configure(&config, &plugin_registry).await?)
+    };
     let feature_plugins = std::sync::Arc::new(plugin_registry);
 
     // Gateway
@@ -735,13 +746,13 @@ async fn run_services(
         );
     }
 
-    // Discord (optional)
+    // Discord (optional): a minimal kernel starts no channel worker.
     #[cfg(not(feature = "discord"))]
-    if enable_discord {
+    if enable_discord && !minimal {
         tracing::warn!("This build has no Discord support; rebuild with the discord feature to enable the bot");
     }
     #[cfg(feature = "discord")]
-    if enable_discord {
+    if enable_discord && !minimal {
         let discord_db = db.clone();
         let discord_secrets = secrets.clone();
         tokio::spawn(async move {

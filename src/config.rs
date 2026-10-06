@@ -17,6 +17,10 @@ impl ApiMode {
 
 #[derive(Clone, Debug)]
 pub struct Config {
+    /// Minimal kernel: `file_ops` and plugin management only. No provider
+    /// readiness, cron scheduler, retention, media, VM, dashboard, voice or
+    /// channel worker is initialized (handoff §6F).
+    pub minimal: bool,
     pub poml_cli: String,
     pub use_provider: String,
     /// Explicit opt-in only: no automatic cross-provider data/cost fallback.
@@ -93,6 +97,9 @@ impl Config {
 
     pub fn from_env() -> Self {
         Self {
+            minimal: env::var("PRAXIS_MINIMAL").is_ok_and(|value| {
+                matches!(value.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on")
+            }),
             poml_cli: env::var("POML_CLI").unwrap_or_else(|_| "./poml/js/cli.cjs".to_string()),
             use_provider: env::var("USE_PROVIDER").unwrap_or_else(|_| "openai".to_string()),
             llm_fallback_providers: env::var("LLM_FALLBACK_PROVIDERS").unwrap_or_default()

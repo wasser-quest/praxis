@@ -24,7 +24,7 @@ vision = ["dep:praxis-vision"]
 # entirely from a core-only host.
 voice = []
 # Discord channel ingress and its voice glue (pulls the voice layer).
-discord = ["dep:serenity", "voice"]
+discord = ["dep:serenity", "dep:hound", "voice"]
 # Web dashboard: UI, listener, TLS and its static assets. The runtime,
 # gateway, CLI and verified workflows work without it.
 dashboard = ["dep:axum-server", "dep:rcgen", "dep:hostname"]
@@ -57,7 +57,6 @@ tracing-attributes = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 tracing-appender = "0.2"
 anyhow = "1"
-image = "0.25"
 png = "0.18"
 serenity = { version = "0.12", features = ["voice"], optional = true }
 axum = { version = "0.7", features = ["ws", "json", "multipart"] }
@@ -99,9 +98,9 @@ rusqlite = { version = "0.32", features = ["bundled", "vtab"] }
 backon = "1"
 
 songbird = { version = "0.6", optional = true, features = ["driver", "builtin-queue", "serenity", "receive"] }
-symphonia = { version = "0.5", features = ["all"] }
-minimp3 = "0.5"
-hound = "3.5"
+hound = { version = "3.5", optional = true }
+
+image = "0.25"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["test-util"] }

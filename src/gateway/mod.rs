@@ -202,19 +202,43 @@ pub async fn start(db: crate::db::Database, config: crate::config::Config) -> an
         std::path::Path::new(&plugins_dir),
         &trust,
     );
-    crate::runtime::vm::configure(&db, &config, &mut plugins)?;
-    crate::runtime::vm::initialize_service(&config, &plugins).await?;
-    crate::runtime::shell::configure(&config, &mut plugins)?;
-    crate::runtime::shell::initialize_service(&config, &plugins).await?;
-    crate::runtime::process_service::configure(&config, &mut plugins)?;
-    crate::runtime::process_service::initialize_service(&config, &plugins).await?;
-    let engine_binding = crate::runtime::engine_bridge::configure(&config, &plugins).await?;
-    if let Err(error) = crate::runtime::vm::autostart(&config, &plugins, &secrets).await {
-        tracing::warn!(%error, "Configured VM autostart failed (non-fatal)");
-    }
+    // A minimal kernel starts no feature worker: file tools and plugin
+    // management only (handoff §6F).
+    let engine_binding = if config.minimal {
+        None
+    } else {
+        crate::runtime::vm::configure(&db, &config, &mut plugins)?;
+        crate::runtime::vm::initialize_service(&config, &plugins).await?;
+        crate::runtime::shell::configure(&config, &mut plugins)?;
+        crate::runtime::shell::initialize_service(&config, &plugins).await?;
+        crate::runtime::process_service::configure(&config, &mut plugins)?;
+        crate::runtime::process_service::initialize_service(&config, &plugins).await?;
+        if let Err(error) = crate::runtime::vm::autostart(&config, &plugins, &secrets).await {
+            tracing::warn!(%error, "Configured VM autostart failed (non-fatal)");
+        }
+        Some(crate::runtime::engine_bridge::configure(&config, &plugins).await?)
+    };
     let result = start_with_plugins(db, config, plugins).await;
     drop(engine_binding);
     result
+}
+
+
+/// Background services a running kernel registers. A minimal kernel registers
+/// none: builtin `file_ops` and plugin management only (handoff §6F).
+fn register_background_services(
+    services: &mut crate::runtime::services::ServiceHost,
+    db: crate::db::Database,
+    config: &crate::config::Config,
+) -> anyhow::Result<()> {
+    if config.minimal {
+        return Ok(());
+    }
+    crate::runtime::retention::register(services, db.clone())?;
+    cron_scheduler::register_service(services, db)?;
+    #[cfg(feature = "shell")]
+    crate::tools::execute_terminal::register_maintenance(services)?;
+    Ok(())
 }
 
 /// Both headless and dashboard entry points share the same feature instances.
@@ -222,8 +246,10 @@ pub async fn start_with_plugins(db: crate::db::Database, config: crate::config::
     let state = management_state(db.clone(), config.clone(), crate::db::secrets::get_secrets(), plugins)?;
     let _ = GATEWAY_STATE.set(state.clone());
 
-    if let Some(error) = inference::readiness(&state).error {
-        tracing::warn!(%error, "Management ready; inference needs operator setup");
+    if !config.minimal {
+        if let Some(error) = inference::readiness(&state).error {
+            tracing::warn!(%error, "Management ready; inference needs operator setup");
+        }
     }
     let feature_services = state.plugins.clone();
     let app = routes(state);
@@ -233,10 +259,7 @@ pub async fn start_with_plugins(db: crate::db::Database, config: crate::config::
 
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     let mut services = crate::runtime::services::ServiceHost::new();
-    crate::runtime::retention::register(&mut services, db.clone())?;
-    cron_scheduler::register_service(&mut services, db)?;
-    #[cfg(feature = "shell")]
-    crate::tools::execute_terminal::register_maintenance(&mut services)?;
+    register_background_services(&mut services, db, &config)?;
     let result = axum::serve(listener, app).await;
     services.shutdown(std::time::Duration::from_secs(2)).await;
     feature_services.shutdown_services(std::time::Duration::from_secs(2)).await;
@@ -298,5 +321,25 @@ mod gateway_tests {
     #[test]
     fn test_gateway_compiles() {
         assert!(true);
+    }
+}
+
+#[cfg(test)]
+mod minimal_kernel_tests {
+    use super::*;
+
+    /// A minimal kernel starts no background worker at all: only builtin
+    /// `file_ops` and plugin management (handoff §6F).
+    #[test]
+    fn minimal_profile_registers_no_background_services() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = crate::db::Database::new(dir.path()).unwrap();
+        let mut config = crate::config::Config::from_env();
+        config.minimal = true;
+        let mut services = crate::runtime::services::ServiceHost::new();
+        register_background_services(&mut services, db, &config).unwrap();
+        // The host owns no service: shutdown has nothing to drain or stop.
+        let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
+        runtime.block_on(services.shutdown(std::time::Duration::from_millis(1)));
     }
 }
