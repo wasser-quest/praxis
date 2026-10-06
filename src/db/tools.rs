@@ -245,36 +245,6 @@ pub(crate) fn get_default_tools() -> Vec<Tool> {
         crate::tools::apply_patch::definition(),
         crate::tools::apply_patch::inspect_definition(),
         Tool {
-            name: "memory_profile_load".into(),
-            description: Some("Load an existing user-owned memory profile for the current session/persona. On entering language_instructor load language_instructor, not a general memory bucket. If exists=false, call memory_profile_create then load again. Never load unrelated profiles without a relevant user request. Shared is separate and cannot be selected.".into()),
-            parameters: serde_json::json!({"type":"object","properties":{"name":{"type":"string","minLength":1,"maxLength":128}},"required":["name"],"additionalProperties":false}),
-            is_enabled: true,
-        },
-        Tool {
-            name: "memory_profile_create".into(),
-            description: Some("Create an empty named memory category owned only by this user. Existing data is never replaced or copied from general memory. Then use memory_profile_load. Examples: language_instructor, code_assistant, researcher. Do not create one bucket for unrelated modes.".into()),
-            parameters: serde_json::json!({"type":"object","properties":{"name":{"type":"string","minLength":1,"maxLength":128}},"required":["name"],"additionalProperties":false}),
-            is_enabled: true,
-        },
-        Tool {
-            name: "memory_profile_list".into(),
-            description: Some("List this user's memory profile names only, without revealing other profiles' contents or other users. Use to locate the relevant category before loading it.".into()),
-            parameters: serde_json::json!({"type":"object","properties":{},"additionalProperties":false}),
-            is_enabled: true,
-        },
-        Tool {
-            name: "memory_get".into(),
-            description: Some("Read a typed variable from the ACTIVE memory profile (SRS, xp, learning_profile etc.), not context custom_data. Returns profile and value; echo both as expected_profile/expected_value when writing. scope=shared is only for rare general name/pronouns/time_zone facts, never course or project data.".into()),
-            parameters: serde_json::json!({"type":"object","properties":{"key":{"type":"string","maxLength":128},"scope":{"type":"string","enum":["profile","shared"],"default":"profile"}},"required":["key"],"additionalProperties":false}),
-            is_enabled: true,
-        },
-        Tool {
-            name: "memory_set".into(),
-            description: Some("Persist typed JSON in the active memory profile. First memory_get, then pass its profile/value as expected_profile/expected_value to protect concurrent edits and mode switches. Null deletes. Shared writes require explicit scope, expected_profile=shared, and a reason for a user-authorized general fact (name/pronouns/time_zone); use VERY RARELY. No credentials. Confirm only success.".into()),
-            parameters: serde_json::json!({"type":"object","properties":{"key":{"type":"string","maxLength":128},"value":{},"expected_value":{"description":"Previously read JSON value; null if absent"},"expected_profile":{"type":"string","maxLength":128},"scope":{"type":"string","enum":["profile","shared"],"default":"profile"},"reason":{"type":"string","maxLength":256}},"required":["key","value"],"additionalProperties":false}),
-            is_enabled: true,
-        },
-        Tool {
             name: "execute_terminal".into(),
             description: Some("Run shell command. Long-running commands: use run_background instead, then poll with background_status (finished jobs also announce themselves).".into()),
             parameters: serde_json::json!({"type":"object","properties":{"command":{"type":"string"}},"required":["command"]}),
@@ -326,24 +296,6 @@ pub(crate) fn get_default_tools() -> Vec<Tool> {
             name: "discord_send_embed".into(),
             description: Some("Send rich embed to Discord channel. If channel_id is omitted, sends to the originating channel.".into()),
             parameters: serde_json::json!({"type":"object","properties":{"channel_id":{"type":"string","description":"Discord channel ID. If omitted, uses the originating channel."},"title":{"type":"string"},"description":{"type":"string"},"url":{"type":"string"},"color":{"type":["string","number"],"description":"Hex color (e.g. '6C5CE7' or '#FF0000') or integer"},"footer":{"type":"string"},"author":{"type":"string"},"thumbnail":{"type":"string","description":"URL to thumbnail image"},"image":{"type":"string","description":"URL to full image"},"fields":{"type":"array","items":{"type":"object","properties":{"name":{"type":"string"},"value":{"type":"string"},"inline":{"type":"boolean"}},"required":["name","value"]}}},"required":[]}),
-            is_enabled: true,
-        },
-        Tool {
-            name: "learn_fact".into(),
-            description: Some("Learn and store a fact".into()),
-            parameters: serde_json::json!({"type":"object","properties":{"fact":{"type":"string"}},"required":["fact"]}),
-            is_enabled: true,
-        },
-        Tool {
-            name: "learn_preference".into(),
-            description: Some("Learn a user preference".into()),
-            parameters: serde_json::json!({"type":"object","properties":{"key":{"type":"string"},"value":{"type":"string"}},"required":["key","value"]}),
-            is_enabled: true,
-        },
-        Tool {
-            name: "learn_topic".into(),
-            description: Some("Track a conversation topic".into()),
-            parameters: serde_json::json!({"type":"object","properties":{"topic":{"type":"string"}},"required":["topic"]}),
             is_enabled: true,
         },
         // RAG Tools
@@ -990,7 +942,7 @@ mod tool_tests {
             .filter(|tool| tool.is_enabled).map(|tool| tool.name).collect();
         let actual_names: Vec<_> = defs.iter().map(|tool| tool.function.name.clone()).collect();
         assert_eq!(actual_names, expected_names);
-        for name in ["execute_terminal", "memory_profile_create", "memory_profile_load", "memory_profile_list"] {
+        for name in ["execute_terminal", "write_file", "inspect_file"] {
             assert!(actual_names.iter().any(|actual| actual == name));
         }
     }

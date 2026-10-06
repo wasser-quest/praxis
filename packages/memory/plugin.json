@@ -1,0 +1,56 @@
+{
+  "name": "memory",
+  "description": "Memory profiles, facts, preferences and topics",
+  "version": "0.1.0",
+  "enabled": true,
+  "tools": [
+    {
+      "name": "memory_profile_load",
+      "description": "Load an existing user-owned memory profile for the current session/persona. On entering language_instructor load language_instructor, not a general memory bucket. If exists=false, call memory_profile_create then load again. Never load unrelated profiles without a relevant user request. Shared is separate and cannot be selected.",
+      "parameters": {"type":"object","properties":{"name":{"type":"string","minLength":1,"maxLength":128}},"required":["name"],"additionalProperties":false},
+      "handler": {"type": "builtin", "name": "memory_profile_load"}
+    },
+    {
+      "name": "memory_profile_create",
+      "description": "Create an empty named memory category owned only by this user. Existing data is never replaced or copied from general memory. Then use memory_profile_load. Examples: language_instructor, code_assistant, researcher. Do not create one bucket for unrelated modes.",
+      "parameters": {"type":"object","properties":{"name":{"type":"string","minLength":1,"maxLength":128}},"required":["name"],"additionalProperties":false},
+      "handler": {"type": "builtin", "name": "memory_profile_create"}
+    },
+    {
+      "name": "memory_profile_list",
+      "description": "List this user's memory profile names only, without revealing other profiles' contents or other users. Use to locate the relevant category before loading it.",
+      "parameters": {"type":"object","properties":{},"additionalProperties":false},
+      "handler": {"type": "builtin", "name": "memory_profile_list"}
+    },
+    {
+      "name": "memory_get",
+      "description": "Read a typed variable from the ACTIVE memory profile (SRS, xp, learning_profile etc.), not context custom_data. Returns profile and value; echo both as expected_profile/expected_value when writing. scope=shared is only for rare general name/pronouns/time_zone facts, never course or project data.",
+      "parameters": {"type":"object","properties":{"key":{"type":"string","maxLength":128},"scope":{"type":"string","enum":["profile","shared"],"default":"profile"}},"required":["key"],"additionalProperties":false},
+      "handler": {"type": "builtin", "name": "memory_get"}
+    },
+    {
+      "name": "memory_set",
+      "description": "Persist typed JSON in the active memory profile. First memory_get, then pass its profile/value as expected_profile/expected_value to protect concurrent edits and mode switches. Null deletes. Shared writes require explicit scope, expected_profile=shared, and a reason for a user-authorized general fact (name/pronouns/time_zone); use VERY RARELY. No credentials. Confirm only success.",
+      "parameters": {"type":"object","properties":{"key":{"type":"string","maxLength":128},"value":{},"expected_value":{"description":"Previously read JSON value; null if absent"},"expected_profile":{"type":"string","maxLength":128},"scope":{"type":"string","enum":["profile","shared"],"default":"profile"},"reason":{"type":"string","maxLength":256}},"required":["key","value"],"additionalProperties":false},
+      "handler": {"type": "builtin", "name": "memory_set"}
+    },
+    {
+      "name": "learn_fact",
+      "description": "Learn and store a fact",
+      "parameters": {"type":"object","properties":{"fact":{"type":"string"}},"required":["fact"]},
+      "handler": {"type": "builtin", "name": "learn_fact"}
+    },
+    {
+      "name": "learn_preference",
+      "description": "Learn a user preference",
+      "parameters": {"type":"object","properties":{"key":{"type":"string"},"value":{"type":"string"}},"required":["key","value"]},
+      "handler": {"type": "builtin", "name": "learn_preference"}
+    },
+    {
+      "name": "learn_topic",
+      "description": "Track a conversation topic",
+      "parameters": {"type":"object","properties":{"topic":{"type":"string"}},"required":["topic"]},
+      "handler": {"type": "builtin", "name": "learn_topic"}
+    }
+  ]
+}

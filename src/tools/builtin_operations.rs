@@ -75,6 +75,13 @@ pub async fn execute(
         // package only declares the tool (§6C).
         "delegate_task" => delegate(ctx, args).await,
         "list_delegations" => list_delegations(ctx),
+        // Memory profiles, facts, preferences and topics over host-owned
+        // storage; one implementation for every declaring package.
+        "memory_profile_create" | "memory_profile_load" | "memory_profile_list"
+        | "memory_get" | "memory_set" | "learn_fact" | "learn_preference" | "learn_topic" => {
+            crate::tools::memory::run(ctx.db, ctx.user, name, args)
+                .unwrap_or_else(|error| format!("Error: {error}"))
+        }
         // Graph/linear navigation keeps its historical error text (already
         // self-describing), unlike the signal tools above.
         "agent_next" | "agent_back" => Box::pin(navigate(ctx, name == "agent_back", args)).await,

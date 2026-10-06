@@ -34,7 +34,7 @@ fn memory_profile_tools_scope_load_create_and_shared_writes() {
         serde_json::from_str(&get(&db, "bob", &json!({"key":"name","scope":"shared"})).unwrap())
             .unwrap();
     assert_eq!(bob["exists"], false);
-    crate::db::tools::disable(&db, "memory_profile_load").unwrap();
+    crate::db::tools::set_plugin_tool_enabled(&db, "memory_profile_load", false).unwrap();
     assert!(profile_load(&db, "alice", &json!({"name":"standard"})).is_err());
 }
 
@@ -58,7 +58,7 @@ fn memory_tools_persist_typed_srs_and_preserve_other_users_and_keys() {
     assert!(loaded["exists"].as_bool().unwrap());
     let ctx = db.load_context("alice").unwrap();
     assert!(ctx.custom_data.get("memory").is_none(), "memory is not a discarded context namespace");
-    crate::db::tools::disable(&db, "memory_set").unwrap();
+    crate::db::tools::set_plugin_tool_enabled(&db, "memory_set", false).unwrap();
     assert!(set(&db, "alice", &json!({"key":"xp", "value":9})).is_err());
     drop(db);
     let db = crate::db::Database::new(dir.path()).unwrap();

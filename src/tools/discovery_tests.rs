@@ -24,7 +24,7 @@ fn discovery_is_bounded_task_local_and_respects_disabled_tools() {
         assert!(definitions(&db, &plugins, &user).unwrap().iter().any(|t| t.function.name == "brave_web_search"));
         assert!(!definitions(&db, &plugins, "other-user").unwrap().iter().any(|t| t.function.name == "brave_web_search"));
         search(&db, &plugins, &user, &json!({"query":"memory_set"})).unwrap();
-        crate::db::tools::disable(&db, "memory_set").unwrap();
+        crate::db::tools::set_plugin_tool_enabled(&db, "memory_set", false).unwrap();
         assert!(!definitions(&db, &plugins, &user).unwrap().iter().any(|t| t.function.name == "memory_set"));
         let result = search(&db, &plugins, &user, &json!({"query":"memory_set"})).unwrap();
         assert!(!result.contains("\"name\":\"memory_set\""));

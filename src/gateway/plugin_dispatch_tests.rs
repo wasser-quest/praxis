@@ -297,9 +297,9 @@ fn plugin_dispatch_replacements_are_validated() {
     let mut registry = PluginRegistry::new();
     assert!(registry.try_register(manifest("a", "runtime_control", "agent_next")).is_err());
     assert!(registry.try_register(manifest("b", "file_ops", "write_file")).is_err());
-    assert!(registry.try_register(manifest("c", "memory", "execute_terminal")).is_err(), "names outside the replaced package stay native");
-    registry.try_register(manifest("d", "memory", "memory_get")).unwrap();
-    assert!(registry.try_register(manifest("e", "memory", "memory_set")).is_err(), "one replacement per package");
-    assert!(matches!(crate::tools::catalog::owner(&registry, "memory_get").unwrap(), crate::tools::catalog::ToolOwner::Plugin { .. }));
-    assert!(matches!(crate::tools::catalog::owner(&registry, "memory_set").unwrap(), crate::tools::catalog::ToolOwner::Builtin));
+    assert!(registry.try_register(manifest("c", "shell", "write_file")).is_err(), "names outside the replaced package stay native");
+    registry.try_register(manifest("d", "shell", "execute_terminal")).unwrap();
+    assert!(registry.try_register(manifest("e", "shell", "run_background")).is_err(), "one replacement per package");
+    assert!(matches!(crate::tools::catalog::owner(&registry, "execute_terminal").unwrap(), crate::tools::catalog::ToolOwner::Plugin { .. }));
+    assert!(matches!(crate::tools::catalog::owner(&registry, "write_file").unwrap(), crate::tools::catalog::ToolOwner::Builtin));
 }

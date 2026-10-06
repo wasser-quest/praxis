@@ -18,7 +18,7 @@ fn shared(args: &Value) -> anyhow::Result<bool> {
 }
 fn enabled(db: &Database, name: &str) -> anyhow::Result<()> {
     anyhow::ensure!(
-        crate::db::tools::get(db, name)?.is_enabled,
+        crate::db::tools::tool_enabled(db, name)?,
         "{name} is disabled"
     );
     Ok(())
@@ -132,3 +132,44 @@ pub fn set(db: &Database, user: &str, args: &Value) -> anyhow::Result<String> {
 #[cfg(test)]
 #[path = "memory_tests.rs"]
 mod tests;
+
+/// Facts, preferences and topics keep their historical result text.
+pub fn learn_fact(db: &Database, user: &str, args: &Value) -> anyhow::Result<String> {
+    enabled(db, "learn_fact")?;
+    let fact = args["fact"].as_str().unwrap_or("");
+    profiles::learn_fact(db, user, fact)?;
+    Ok(format!("Learned: {}", fact))
+}
+
+pub fn learn_preference(db: &Database, user: &str, args: &Value) -> anyhow::Result<String> {
+    enabled(db, "learn_preference")?;
+    let key = args["key"].as_str().unwrap_or("");
+    let value = args.get("value").cloned().unwrap_or(Value::Null);
+    profiles::update_memory(db, user, |memory| {
+        crate::db::memory::update_preference(memory, key, &value);
+    })?;
+    Ok(format!("Preference '{}' = '{}'", key, value))
+}
+
+pub fn learn_topic(db: &Database, user: &str, args: &Value) -> anyhow::Result<String> {
+    enabled(db, "learn_topic")?;
+    let topic = args["topic"].as_str().unwrap_or("");
+    profiles::learn_topic(db, user, topic)?;
+    Ok(format!("Topic tracked: {}", topic))
+}
+
+/// The whole memory namespace: one implementation shared by the package's
+/// `builtin` handlers and any internal caller.
+pub fn run(db: &Database, user: &str, name: &str, args: &Value) -> anyhow::Result<String> {
+    match name {
+        "memory_profile_create" => profile_create(db, user, args),
+        "memory_profile_load" => profile_load(db, user, args),
+        "memory_profile_list" => profile_list(db, user),
+        "memory_get" => get(db, user, args),
+        "memory_set" => set(db, user, args),
+        "learn_fact" => learn_fact(db, user, args),
+        "learn_preference" => learn_preference(db, user, args),
+        "learn_topic" => learn_topic(db, user, args),
+        other => anyhow::bail!("Unknown memory operation: {other}"),
+    }
+}

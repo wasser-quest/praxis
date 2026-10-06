@@ -659,8 +659,17 @@ fn build_tool_definitions_with_selection(
             return Vec::new();
         }
     };
-    if db.is_some() {
-        tools.retain(|tool| native.iter().any(|n| n.name == tool.function.name && n.is_enabled));
+    if let Some(db) = db {
+        // The static table never re-enables a tool the operator disabled and
+        // never invents one without an owner: native names follow their
+        // persisted row, bundled names their package switch and flags.
+        tools.retain(|tool| {
+            if super::packages::bundled_tool(&tool.function.name).is_some() {
+                crate::db::tools::plugin_tool_enabled(db, &tool.function.name).unwrap_or(false)
+            } else {
+                native.iter().any(|n| n.name == tool.function.name && n.is_enabled)
+            }
+        });
         for tool in native.iter().filter(|tool| tool.is_enabled && !crate::runtime::vm::is_vm_tool(&tool.name) && native_on(&tool.name)) {
             let category = get_tool_meta(&tool.name).map(|meta| meta.category).unwrap_or(ToolCategory::Action);
             let activated = full_schemas.contains(&tool.name) || full_cats.as_ref().is_some_and(|cats| cats.contains(&category));
@@ -1430,8 +1439,16 @@ mod registry_tests {
         let db = crate::db::Database::new(dir.path()).unwrap();
         let mut settings = ContextSettings::default();
         settings.tool_discovery_mode = "Full".into();
-        let plugins = [plugin("memory_set"), plugin("brave_web_search")];
-        assert_eq!(names(&build_tool_definitions(&settings, Some(&plugins), Some(&db))), vec!["brave_web_search"]);
+        let plugins = [plugin("write_file"), plugin("brave_web_search")];
+        let tools = build_tool_definitions(&settings, Some(&plugins), Some(&db));
+        let got = names(&tools);
+        // A plugin cannot shadow a builtin name and, with no persisted
+        // registry, the static table must not fill that builtin's contract in.
+        assert!(got.contains(&"brave_web_search"));
+        assert!(!got.contains(&"write_file"), "{got:?}");
+        // Kernel-bundled tools always have an owner, so their contracts come
+        // from the bundled manifest even without persisted rows.
+        assert!(got.contains(&"memory_set"), "{got:?}");
     }
 
     #[test]
@@ -1466,7 +1483,7 @@ mod registry_tests {
             assert_eq!(image.function.parameters["required"], json!(["path", "prompt"]));
             assert_eq!(image.function.parameters["properties"]["_output"]["type"], "object");
         }
-        crate::db::tools::disable(&db, "memory_set").unwrap();
+        crate::db::tools::set_plugin_tool_enabled(&db, "memory_set", false).unwrap();
         let shadow = [plugin("memory_set")];
         assert!(!names(&build_tool_definitions(&settings, Some(&shadow), Some(&db))).contains(&"memory_set"));
     }

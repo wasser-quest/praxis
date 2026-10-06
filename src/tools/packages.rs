@@ -138,6 +138,7 @@ fn bundled_manifest(id: &str) -> Option<&'static str> {
     match id {
         "runtime_control" => Some(include_str!("../../packages/runtime_control/plugin.json")),
         "delegation" => Some(include_str!("../../packages/delegation/plugin.json")),
+        "memory" => Some(include_str!("../../packages/memory/plugin.json")),
         _ => None,
     }
 }
