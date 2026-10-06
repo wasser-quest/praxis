@@ -84,11 +84,11 @@ pub fn subscribe(base: String, key: String, user: String,
             tracing::debug!("Connecting TUI live event stream");
             let result: anyhow::Result<()> = async {
                 let response = client.get(&url).bearer_auth(&key).send().await
-                    .map_err(crate::gateway::llm::error::ProviderError::from_reqwest)?;
+                    ?;
                 anyhow::ensure!(response.status().is_success(), "Live events returned HTTP {} (check gateway key and URL)", response.status().as_u16());
                 let mut response = response;
                 let mut decoder = crate::sse::Decoder::default();
-                while let Some(chunk) = response.chunk().await.map_err(crate::gateway::llm::error::ProviderError::from_reqwest)? {
+                while let Some(chunk) = response.chunk().await? {
                     let events = decoder.push(&chunk).map_err(|_| anyhow::anyhow!("Invalid live-event SSE framing"))?;
                     for event in events {
                         let value: serde_json::Value = serde_json::from_str(&event.data)

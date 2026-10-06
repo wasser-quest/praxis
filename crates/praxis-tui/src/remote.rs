@@ -27,7 +27,7 @@ impl Remote {
         anyhow::ensure!(!result.starts_with('✗') && !result.starts_with("load failed:"),"Backend context command failed");
         Ok(result.into())
     }
-    pub async fn messages(&self,user:&str) -> anyhow::Result<Vec<crate::db::messages::Message>> {
+    pub async fn messages(&self,user:&str) -> anyhow::Result<Vec<crate::model::Message>> {
         let value=self.request(reqwest::Method::GET,&format!("/v1/messages/{}",urlencoding::encode(user)),None).await?;
         Ok(serde_json::from_value(value["messages"].clone())?)
     }

@@ -1,0 +1,39 @@
+[package]
+name = "praxis-tui"
+version = "1.0.3"
+edition = "2021"
+description = "Praxis terminal UI — an unlinked frontend for a local or remote gateway"
+
+# The terminal frontend never links the Praxis kernel or its database: it talks
+# to a gateway over the authenticated /v1 API only.
+[lib]
+name = "praxis_tui"
+path = "src/lib.rs"
+
+[[bin]]
+name = "praxis-tui"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+base64 = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", features = ["derive"] }
+crossterm = { version = "0.28", features = ["event-stream"] }
+futures-util = "0.3"
+rand = "0.8"
+ratatui = "0.29"
+reqwest = { version = "0.12.28", default-features = false, features = ["rustls-tls", "json", "stream"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tempfile = "3"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "io-util"] }
+tracing = "0.1"
+tracing-appender = "0.2"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+unicode-segmentation = "1"
+urlencoding = "2.1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["test-util"] }
+wiremock = "0.6"

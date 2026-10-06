@@ -1,9 +1,8 @@
 //! TUI chat application — state, event loop, and dispatch.
 
-use crate::db::messages::Message;
-use crate::db::Database;
-use crate::tui::sessions::{Session, SessionStore};
-use crate::tui::ui;
+use crate::model::Message;
+use crate::sessions::{Session, SessionStore};
+use crate::ui;
 use crossterm::{
     event::{
         DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture, Event,
@@ -99,17 +98,16 @@ const MAX_CLIPBOARD_BYTES: usize = 100_000;
 
 /// Top-level TUI state.
 pub struct App {
-    pub db: Database,
     pub gateway_url: String,
     pub gateway_api_key: String,
     pub data_dir: String,
     pub sessions: SessionStore,
 
-    /// Currently displayed transcript (rebuilt from DB on session switch
+    /// Currently displayed transcript (rebuilt from the API on session switch
     /// and on poll ticks). The Vec is in chronological order.
     pub transcript: Vec<Bubble>,
     pub live: super::streaming::LiveOutput,
-    pub remote: Option<super::remote::Remote>,
+    pub remote: crate::remote::Remote,
     /// Durable message IDs already rendered; text prefixes are not identities.
     seen_keys: std::collections::HashSet<String>,
     /// Transcript rows shown before their persisted IDs arrive (user echoes and
@@ -159,21 +157,20 @@ pub struct App {
 
 impl App {
     pub fn new(
-        db: Database,
+        remote: crate::remote::Remote,
         gateway_url: String,
         gateway_api_key: String,
         data_dir: String,
     ) -> Self {
         let sessions = SessionStore::load(&data_dir);
         Self {
-            db,
             gateway_url,
             gateway_api_key,
             data_dir,
             sessions,
             transcript: Vec::new(),
             live: Default::default(),
-            remote: None,
+            remote,
             seen_keys: std::collections::HashSet::new(),
             pending_echoes: Vec::new(),
             stream_history: Vec::new(),
@@ -391,12 +388,11 @@ impl App {
         self.folded_bubbles.clear();
     }
 
-    /// Refresh the transcript from the DB. Idempotent — uses `seen_keys` to
-    /// avoid duplicates so it's safe to call on every poll tick.
-    pub fn refresh_transcript(&mut self) {
-        if self.remote.is_some() { return; }
+    /// Refresh the transcript from the gateway. Idempotent — uses `seen_keys`
+    /// to avoid duplicates so it is safe to call on every poll tick.
+    pub async fn refresh_transcript(&mut self) {
         let user_id = self.active_user_id().to_string();
-        let Ok(msgs) = self.db.get_messages(&user_id, 1000) else {
+        let Ok(msgs) = self.remote.messages(&user_id).await else {
             return;
         };
         self.append_messages(msgs);
@@ -545,9 +541,8 @@ impl App {
         let _rest = parts.next().unwrap_or("").to_string();
         match name.as_str() {
             "/clear" => {
-                let result = if let Some(remote) = &self.remote {
-                    remote.request(reqwest::Method::DELETE, &format!("/v1/messages/{}",urlencoding::encode(self.active_user_id())),None).await.map(|_|())
-                } else { self.db.clear_messages(self.active_user_id()) };
+                let result = self.remote
+                    .request(reqwest::Method::DELETE, &format!("/v1/messages/{}",urlencoding::encode(self.active_user_id())),None).await.map(|_|());
                 if let Err(e) = result {
                     self.flash(format!("clear failed: {e}"));
                 } else {
@@ -580,55 +575,7 @@ impl App {
                 });
             }
             "/delegations" => {
-                let user_id = self.active_user_id().to_string();
-                if self.remote.is_some() {
-                    self.flash("Use the backend dashboard for delegated subtasks");
-                    return;
-                }
-                match crate::gateway::delegation::list_delegations(&self.db, &user_id) {
-                    Ok(list) if list.is_empty() => {
-                        self.transcript.push(Bubble::Banner {
-                            kind: BannerKind::Info,
-                            content: "No delegations yet.".to_string(),
-                        });
-                    }
-                    Ok(list) => {
-                        let body = list
-                            .iter()
-                            .map(|d| {
-                                let status_icon = match d.status.as_str() {
-                                    "done" => "✅",
-                                    "failed" => "❌",
-                                    _ => "⏳",
-                                };
-                                let task_short: String = d.task.chars().take(80).collect();
-                                let result_short = d
-                                    .result
-                                    .as_deref()
-                                    .map(|r| {
-                                        let r = r.replace('\n', " ");
-                                        r.chars().take(120).collect::<String>()
-                                    })
-                                    .unwrap_or_else(|| "-".to_string());
-                                format!(
-                                    "{} {} [{}] {}\n    result: {}",
-                                    status_icon, d.id, d.status, task_short, result_short
-                                )
-                            })
-                            .collect::<Vec<_>>()
-                            .join("\n");
-                        self.transcript.push(Bubble::Banner {
-                            kind: BannerKind::Info,
-                            content: format!("🤝 Delegations:\n{}", body),
-                        });
-                    }
-                    Err(e) => {
-                        self.transcript.push(Bubble::Banner {
-                            kind: BannerKind::Error,
-                            content: format!("/delegations: {}", e),
-                        });
-                    }
-                }
+                self.flash("Use the backend dashboard for delegated subtasks");
             }
             "/thinking" | "/show_thinking" => {
                 let value = line.split_whitespace().nth(1).unwrap_or("").to_ascii_lowercase();
@@ -642,9 +589,8 @@ impl App {
                     Some(("thinking_mode", serde_json::json!(value)))
                 } else { None };
                 if let Some((key, value)) = setting {
-                    let result = if let Some(remote) = &self.remote {
-                        remote.command(self.active_user_id(), &format!("/context set settings.{key}={value}")).await.map(|_|())
-                    } else { self.db.merge_context(self.active_user_id(), serde_json::json!({format!("settings.{key}"):value})).map(|_|()) };
+                    let result = self.remote
+                        .command(self.active_user_id(), &format!("/context set settings.{key}={value}")).await.map(|_|());
                     match result {
                         Ok(_) => self.flash("Thinking setting saved"),
                         Err(e) => self.flash(format!("{e}")),
@@ -652,10 +598,8 @@ impl App {
                 } else { self.flash("Invalid thinking setting; see /help"); }
             }
             "/context" | "/ctx" => {
-                if let Some(remote) = &self.remote {
-                    let response = remote.command(self.active_user_id(),line).await;
-                    self.transcript.push(Bubble::System {content:response.unwrap_or_else(|e|format!("{e}"))});
-                } else { self.run_context_command(line); }
+                let response = self.remote.command(self.active_user_id(),line).await;
+                self.transcript.push(Bubble::System {content:response.unwrap_or_else(|e|format!("{e}"))});
             }
             "/rename" => {
                 let title = _rest.trim();
@@ -663,9 +607,8 @@ impl App {
                     self.flash("Usage: /rename <name> (1–128 characters)"); return;
                 }
                 let id = self.active_user_id().to_string();
-                let result = if let Some(remote) = &self.remote {
-                    remote.command(&id,&format!("/context set custom_data.session_title={}",serde_json::json!(title))).await.map(|_|())
-                } else { self.db.merge_context(&id,serde_json::json!({"custom_data.session_title":title})).map(|_|()) };
+                let result = self.remote
+                    .command(&id,&format!("/context set custom_data.session_title={}",serde_json::json!(title))).await.map(|_|());
                 match result {
                     Ok(_) => {
                         if let Some(session) = self.sessions.sessions.iter_mut().find(|s|s.id==id) { session.name=title.into(); }
@@ -796,9 +739,6 @@ impl App {
     }
 
     async fn gateway_get(&self, path: &str) -> anyhow::Result<serde_json::Value> {
-        if let Some(remote) = &self.remote {
-            return remote.request(reqwest::Method::GET, path, None).await;
-        }
         let response = reqwest::Client::builder().timeout(Duration::from_secs(30)).build()?
             .get(format!("{}{path}", self.gateway_url.trim_end_matches('/'))).bearer_auth(&self.gateway_api_key).send().await
             .map_err(|_| anyhow::anyhow!("Gateway not reachable at {} (is `praxis run` running?)", self.gateway_url))?;
@@ -820,26 +760,6 @@ impl App {
         Ok(value)
     }
 
-    fn run_context_command(&mut self, line: &str) {
-        match crate::context_cmd::parse(line) {
-            Ok(op) => {
-                let user_id = self.active_user_id().to_string();
-                let response = crate::context_cmd::apply(&self.db, &user_id, &op);
-                self.transcript.push(Bubble::Banner {
-                    kind: BannerKind::Info,
-                    content: response,
-                });
-            }
-            Err(e) => {
-                self.transcript.push(Bubble::Banner {
-                    kind: BannerKind::Error,
-                    content: format!("/context: {e}"),
-                });
-            }
-        }
-    }
-
-    /// Send the current input + attachments to the gateway.
     async fn send_message(&mut self) {
         let text = self.input.clone();
         if text.trim().is_empty() && self.attachments.is_empty() {
@@ -898,7 +818,7 @@ impl App {
                 .unwrap_or_else(|_| reqwest::Client::new());
             let result: anyhow::Result<()> = async {
                 let response = client.post(&url).bearer_auth(&api_key).json(&body).send().await
-                    .map_err(crate::gateway::llm::error::ProviderError::from_reqwest)?;
+                    ?;
                 anyhow::ensure!(response.status().is_success(), "Chat gateway returned HTTP {} (check connection and gateway key)", response.status().as_u16());
                 let value: serde_json::Value = response.json().await
                     .map_err(|_| anyhow::anyhow!("Chat gateway returned invalid JSON"))?;
@@ -935,10 +855,9 @@ impl App {
         let parent = self.active_user_id().to_string();
         let new_id = SessionStore::generate_id();
         let username = self.sessions.username.clone();
-        let result = if let Some(remote) = &self.remote {
-            remote.request(reqwest::Method::POST,&format!("/v1/context/{}/fork",urlencoding::encode(&parent)),
-                Some(serde_json::json!({"new_user_id":new_id,"username":username}))).await.map(|_|())
-        } else { self.db.fork_context(&parent,&new_id,Some(&username)).map(|_|()) };
+        let result = self.remote
+            .request(reqwest::Method::POST,&format!("/v1/context/{}/fork",urlencoding::encode(&parent)),
+                Some(serde_json::json!({"new_user_id":new_id,"username":username}))).await.map(|_|());
         match result {
             Ok(_) => {
                 let name = format!("Session {}", self.sessions.sessions.len() + 1);
@@ -950,7 +869,7 @@ impl App {
                 self.sessions.set_active(&new_id);
                 self.sessions.save(&self.data_dir);
                 self.reset_view();
-                self.refresh_transcript();
+                self.refresh_transcript().await;
                 self.flash("new session");
             }
             Err(e) => self.flash(format!("fork failed: {e}")),
@@ -963,31 +882,30 @@ impl App {
             return;
         }
         let id = self.active_user_id().to_string();
-        let result = if let Some(remote) = &self.remote {
-            remote.request(reqwest::Method::DELETE,&format!("/v1/context/{}",urlencoding::encode(&id)),None).await.map(|_|())
-        } else { self.db.delete_context(&id) };
+        let result = self.remote
+            .request(reqwest::Method::DELETE,&format!("/v1/context/{}",urlencoding::encode(&id)),None).await.map(|_|());
         if let Err(e) = result { self.flash(format!("{e}")); return; }
         self.sessions.sessions.retain(|s| s.id != id);
         let new_active = self.sessions.sessions[0].id.clone();
         self.sessions.set_active(&new_active);
         self.sessions.save(&self.data_dir);
         self.reset_view();
-        self.refresh_transcript();
+        self.refresh_transcript().await;
         self.flash("session deleted");
     }
 
-    fn switch_session(&mut self, idx: usize) {
+    pub async fn switch_session(&mut self, idx: usize) {
         if let Some(s) = self.sessions.sessions.get(idx) {
             let id = s.id.clone();
             self.sessions.set_active(&id);
             self.sessions.save(&self.data_dir);
             self.reset_view();
-            self.refresh_transcript();
+            self.refresh_transcript().await;
         }
     }
 }
 
-/// Compute a stable dedup key for a DB message.
+/// Compute a stable dedup key for a gateway message.
 fn bubble_key(m: &Message) -> String {
     if let Some(id) = m.id { return format!("id:{id}"); }
     // Compatibility with older history endpoints lacking IDs: never truncate
@@ -1119,37 +1037,37 @@ fn split_at_attachments(input: &str) -> (String, Vec<String>) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 pub async fn run(gateway_url: Option<String>, gateway_key: Option<String>) -> anyhow::Result<()> {
-    let config = crate::config::Config::from_env();
-    // Remote mode never opens the local backend DB or loads local backend secrets.
-    // A temporary empty DB satisfies legacy UI state only; all remote reads and
-    // writes below use the authenticated API, and are not cached as local truth.
-    let remote_dir = if gateway_url.is_some() { Some(tempfile::tempdir()?) } else { None };
-    let data_dir = remote_dir.as_ref().map(|d|d.path().to_string_lossy().to_string()).unwrap_or_else(||config.data_dir.clone());
-    let db = Database::new(std::path::Path::new(&data_dir))?;
-    let key = gateway_key.or_else(||std::env::var("PRAXIS_GATEWAY_KEY").ok());
-    let api_key = if gateway_url.is_some() {
-        key.ok_or_else(||anyhow::anyhow!("Remote chat requires --gateway-key or PRAXIS_GATEWAY_KEY"))?
-    } else {
-        key.or_else(||crate::db::secrets::get_secrets().gateway_api_key.filter(|k|!k.is_empty()))
-            .unwrap_or_else(||config.gateway_api_key.clone())
-    };
-    let is_remote = gateway_url.is_some();
-    let gateway_url = gateway_url.unwrap_or_else(||format!("http://127.0.0.1:{}",config.gateway_port));
-    let mut app = App::new(db, gateway_url.clone(), api_key.clone(), data_dir);
-    if is_remote {
-        let remote = super::remote::Remote::new(gateway_url,api_key)?;
-        let data = remote.request(reqwest::Method::GET,"/v1/sessions",None).await?;
-        let sessions: Vec<Session> = serde_json::from_value(data["sessions"].clone())?;
-        if !sessions.is_empty() {
-            app.sessions.active = sessions[0].id.clone();
-            app.sessions.sessions = sessions;
-        } else {
-            let id = SessionStore::generate_id();
-            app.sessions.sessions[0].id = id.clone(); app.sessions.active = id;
+    // The terminal UI never opens the backend database or its secrets: it
+    // needs a gateway URL and key and does everything else over the API.
+    let port = std::env::var("GATEWAY_PORT").unwrap_or_else(|_| "3537".to_string());
+    let gateway_url = gateway_url.unwrap_or_else(|| format!("http://127.0.0.1:{port}"));
+    let api_key = gateway_key
+        .or_else(|| std::env::var("PRAXIS_GATEWAY_KEY").ok())
+        .filter(|key| !key.trim().is_empty())
+        .ok_or_else(|| {
+            anyhow::anyhow!("Chat requires --gateway-key or PRAXIS_GATEWAY_KEY")
+        })?;
+    let data_dir = match std::env::var("DATA_DIR") {
+        Ok(dir) => dir,
+        Err(_) => {
+            let dir = tempfile::tempdir()?;
+            let path = dir.path().to_string_lossy().into_owned();
+            std::mem::forget(dir);
+            path
         }
-        app.append_messages(remote.messages(app.active_user_id()).await?);
-        app.remote = Some(remote);
-    } else { app.refresh_transcript(); }
+    };
+    let remote = crate::remote::Remote::new(gateway_url.clone(), api_key.clone())?;
+    let mut app = App::new(remote.clone(), gateway_url.clone(), api_key.clone(), data_dir);
+    let data = remote.request(reqwest::Method::GET,"/v1/sessions",None).await?;
+    let sessions: Vec<Session> = serde_json::from_value(data["sessions"].clone())?;
+    if !sessions.is_empty() {
+        app.sessions.active = sessions[0].id.clone();
+        app.sessions.sessions = sessions;
+    } else {
+        let id = SessionStore::generate_id();
+        app.sessions.sessions[0].id = id.clone(); app.sessions.active = id;
+    }
+    app.append_messages(remote.messages(app.active_user_id()).await?);
 
     // Terminal setup. Bracketed paste so multi-line paste arrives as one event.
     enable_raw_mode()?;
@@ -1198,7 +1116,8 @@ async fn run_loop<B: ratatui::backend::Backend>(
             if let Some(task) = stream_task.take() { task.abort(); }
             if let Some(task) = history_task.take() { task.abort(); }
             stream_user = app.active_user_id().to_string();
-            if let Some(remote) = app.remote.clone() {
+            {
+                let remote = app.remote.clone();
                 let user = stream_user.clone(); let tx = stream_tx.clone();
                 history_task = Some(tokio::spawn(async move {
                     loop {
@@ -1236,7 +1155,7 @@ async fn run_loop<B: ratatui::backend::Backend>(
             }
             // Periodic poll of the DB for new messages produced by the agent.
             _ = tick.tick() => {
-                app.refresh_transcript();
+                app.refresh_transcript().await;
                 // Activity is received from the gateway, not this client's
                 // process-local registry (which never owns the remote task).
             }
@@ -1346,7 +1265,7 @@ async fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
         }
         (KeyCode::Char(c), KeyModifiers::ALT) if c.is_ascii_digit() => {
             let idx = (c as u8 - b'1') as usize;
-            app.switch_session(idx);
+            app.switch_session(idx).await;
             return;
         }
         _ => {}
@@ -1591,7 +1510,7 @@ mod tests {
     async fn selection_copy_does_not_quit_or_submit_the_draft() {
         for remote in [false, true] {
             let mut app = dummy_app();
-            if remote { app.remote = Some(super::super::remote::Remote::new("http://127.0.0.1:0".into(), "synthetic".into()).unwrap()); }
+            if remote { app.remote = crate::remote::Remote::new("http://127.0.0.1:0".into(), "synthetic".into()).unwrap(); }
             app.transcript.push(Bubble::Assistant { content: "line one\n  世界 👩‍💻".into() });
             app.input = "unsent draft".into();
             app.cursor = app.input.chars().count();
@@ -1624,7 +1543,7 @@ mod tests {
         for remote in [false, true] {
             let mut app = dummy_app();
             app.gateway_url = server.uri();
-            if remote { app.remote = Some(super::super::remote::Remote::new(server.uri(), "synthetic".into()).unwrap()); }
+            if remote { app.remote = crate::remote::Remote::new(server.uri(), "synthetic".into()).unwrap(); }
             app.transcript.push(Bubble::Assistant {content: content.into()});
             app.input = "draft".into(); app.cursor = 2;
             app.attachments.push("not-uploaded".into());
@@ -1791,9 +1710,9 @@ mod tests {
 
     fn terminal_message(id: i64, tool: &str, command: &str, text: &str) -> Message {
         let mut message = saved_assistant(id, text);
-        message.tool_calls = Some(vec![crate::db::messages::ToolCallData {
+        message.tool_calls = Some(vec![crate::model::ToolCallData {
             id: "reused-call-id".into(),
-            function: crate::db::messages::FunctionCallData {
+            function: crate::model::FunctionCallData {
                 name: tool.into(),
                 arguments: serde_json::json!({"command": command, "cwd": "/synthetic"}).to_string(),
             },
@@ -1865,9 +1784,9 @@ mod tests {
             .and(header("Authorization", "Bearer synthetic-key"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"messages":[message]})))
             .expect(1).mount(&server).await;
-        let remote = super::super::remote::Remote::new(server.uri(), "synthetic-key".into()).unwrap();
+        let remote = crate::remote::Remote::new(server.uri(), "synthetic-key".into()).unwrap();
         let mut app = dummy_app();
-        app.remote = Some(remote.clone());
+        app.remote = remote.clone();
         // The live event is only a truncated preview; use the same authoritative
         // HTTP history path as the remote poll task, never execute the preview.
         app.stream_event("tool_call", r#"{"tool":"execute_terminal","call_id":"reused-call-id","args_preview":{"args":"{\"command\":\"partial"}}"#);
@@ -1909,7 +1828,7 @@ mod tests {
         for history_first in [false, true] {
             let mut app = dummy_app();
             // Exercise remote mode: there is no synchronous local DB refresh.
-            app.remote = Some(super::super::remote::Remote::new("http://127.0.0.1:0".into(), "test".into()).unwrap());
+            app.remote = crate::remote::Remote::new("http://127.0.0.1:0".into(), "test".into()).unwrap();
             let message = saved_assistant(10, "line one\n\n    line two");
             app.stream_event("stream_start", "{}");
             app.stream_event("char", &message.content);
@@ -2032,8 +1951,8 @@ mod tests {
                     .and(header("Authorization", "Bearer synthetic-key"))
                     .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"messages":[message]})))
                     .expect(1).mount(&server).await;
-                let remote = super::super::remote::Remote::new(server.uri(), "synthetic-key".into()).unwrap();
-                app.remote = Some(remote.clone());
+                let remote = crate::remote::Remote::new(server.uri(), "synthetic-key".into()).unwrap();
+                app.remote = remote.clone();
                 remote.messages(&user).await.unwrap()
             };
             for _ in 0..2 {
@@ -2053,12 +1972,13 @@ mod tests {
     }
 
     fn dummy_app() -> App {
-        // We don't need a real DB for these helpers; build a thin stand-in.
-        let dir = tempfile::TempDir::new().unwrap();
-        let db = Database::new(dir.path()).unwrap();
-        // Keep the tempdir alive for the test by leaking it (cheap).
-        Box::leak(Box::new(dir));
-        App::new(db, "http://127.0.0.1:0".into(), "x".into(), ".".into())
+        // These helpers only exercise UI state; the gateway is never dialed.
+        App::new(
+            crate::remote::Remote::new("http://127.0.0.1:0".into(), "x".into()).unwrap(),
+            "http://127.0.0.1:0".into(),
+            "x".into(),
+            ".".into(),
+        )
     }
 }
 

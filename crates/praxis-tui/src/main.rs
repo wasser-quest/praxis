@@ -1,8 +1,8 @@
 //! Standalone terminal frontend: `praxis-tui`.
 //!
-//! This is the executable a TUI package installs. It reuses the same client as
-//! `praxis chat`; the kernel (gateway/dashboard) is a separate process. A later
-//! step moves this code into a `praxis-tui` crate so the kernel does not link it.
+//! This is the executable a TUI package installs. The kernel (gateway and
+//! dashboard) is a separate process: this frontend links neither the kernel
+//! nor its database and talks to a gateway over the authenticated API.
 use clap::Parser;
 
 #[derive(Parser)]
@@ -44,7 +44,7 @@ fn main() -> anyhow::Result<()> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
-    runtime.block_on(praxis::tui::run_chat(cli.gateway_url, cli.gateway_key))
+    runtime.block_on(praxis_tui::run_chat(cli.gateway_url, cli.gateway_key))
 }
 
 #[cfg(test)]

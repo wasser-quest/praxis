@@ -20,7 +20,6 @@ pub mod runtime;
 pub mod skills;
 pub mod tags;
 pub mod tools;
-pub mod tui;
 pub mod util;
 pub mod vm;
 pub mod voice;

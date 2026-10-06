@@ -31,7 +31,7 @@ mod tests {
     use super::*;
     #[test]
     fn structured_results_shared_corpus_decodes_once_and_preserves_unknown() {
-        let cases: Value = serde_json::from_str(include_str!("../../scripts/fixtures/structured_tool_results.json")).unwrap();
+        let cases: Value = serde_json::from_str(include_str!("../../../scripts/fixtures/structured_tool_results.json")).unwrap();
         for case in cases.as_array().unwrap() {
             let raw = case["raw"].as_str().unwrap();
             assert_eq!(format(raw).as_deref(), case["display"].as_str(), "{}", case["name"]);

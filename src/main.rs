@@ -438,7 +438,7 @@ async fn run() -> anyhow::Result<()> {
             .try_init();
         // Keep the guard alive for the duration of the run so logs flush.
         let _keep = _guard;
-        return praxis::tui::run_chat(gateway_url.clone(), gateway_key.clone()).await;
+        return launch_tui(gateway_url.clone(), gateway_key.clone());
     }
 
     // Set up logging with file rotation
@@ -1481,6 +1481,31 @@ async fn handle_restore(file: &str, yes: bool) -> anyhow::Result<()> {
         anyhow::bail!("tar failed: {}", String::from_utf8_lossy(&output.stderr));
     }
 
+    Ok(())
+}
+
+
+/// `praxis chat` launches the standalone terminal frontend. The kernel does not
+/// link it: the `praxis-tui` binary comes from its own crate/package.
+fn launch_tui(gateway_url: Option<String>, gateway_key: Option<String>) -> anyhow::Result<()> {
+    let explicit = std::env::var_os("PRAXIS_TUI_EXECUTABLE").map(std::path::PathBuf::from);
+    let beside = std::env::current_exe().ok().map(|exe| exe.with_file_name("praxis-tui"));
+    let program = explicit
+        .or_else(|| beside.filter(|path| path.is_file()))
+        .unwrap_or_else(|| "praxis-tui".into());
+    let mut command = std::process::Command::new(program);
+    if let Some(url) = gateway_url {
+        command.arg("--gateway-url").arg(url);
+    }
+    if let Some(key) = gateway_key {
+        command.arg("--gateway-key").arg(key);
+    }
+    let status = command.status().map_err(|error| {
+        anyhow::anyhow!("Cannot start the praxis-tui frontend ({error}); install the TUI package or set PRAXIS_TUI_EXECUTABLE")
+    })?;
+    if !status.success() {
+        std::process::exit(status.code().unwrap_or(1));
+    }
     Ok(())
 }
 

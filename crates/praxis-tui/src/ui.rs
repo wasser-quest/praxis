@@ -1,6 +1,6 @@
 //! Rendering for the TUI chat. Layout also reconciles the scroll viewport.
 
-use crate::tui::app::{App, BannerKind, Bubble, Popup, SLASH_COMMANDS};
+use crate::app::{App, BannerKind, Bubble, Popup, SLASH_COMMANDS};
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -1024,11 +1024,9 @@ mod tests {
     }
 
     fn dummy_app() -> (App, tempfile::TempDir) {
-        use crate::db::Database;
         let dir = tempfile::TempDir::new().unwrap();
-        let db = Database::new(dir.path()).unwrap();
         let app = App::new(
-            db,
+            crate::remote::Remote::new("http://127.0.0.1:0".into(), "x".into()).unwrap(),
             "http://127.0.0.1:0".into(),
             "x".into(),
             dir.path().to_string_lossy().into_owned(),
@@ -1138,7 +1136,7 @@ mod tests {
         app.transcript.push(Bubble::Assistant {content: "ORIGINAL\n  世界 e\u{301} 👩‍💻".into()});
         for _ in 0..30 { app.transcript.push(Bubble::User {content: "unselected\nmessage".into()}); }
         for width in [24, 40, 80, 100] {
-            app.copy_selection = Some(crate::tui::app::CopySelection {
+            app.copy_selection = Some(crate::app::CopySelection {
                 index: 0, content: "SNAPSHOT\n  世界 e\u{301} 👩‍💻".into(), reveal: true,
             });
             let mut terminal = Terminal::new(TestBackend::new(width, 22)).unwrap();
@@ -1173,7 +1171,7 @@ mod tests {
         app.show_sidebar = false;
         app.transcript.push(Bubble::Assistant {content: "SELECTED".into()});
         for _ in 0..30 { app.transcript.push(Bubble::User {content: "long unselected message ".repeat(4)}); }
-        app.copy_selection = Some(crate::tui::app::CopySelection {index: 0, content: "SELECTED".into(), reveal: true});
+        app.copy_selection = Some(crate::app::CopySelection {index: 0, content: "SELECTED".into(), reveal: true});
         let mut terminal = Terminal::new(TestBackend::new(100, 22)).unwrap();
         terminal.draw(|f| draw(f, &mut app)).unwrap();
         assert!(screen_rows(&terminal).iter().any(|row| row.contains("SELECTED")));
@@ -1249,7 +1247,7 @@ mod tests {
         let second = rows.iter().position(|r| r.contains("SECOND")).unwrap();
         assert_ne!(first, second, "decoded stdout newlines must be separate rows: {rows:?}");
         assert!(!rows.iter().any(|r| r.contains(r#"\n"#)), "raw JSON escapes leaked into presentation");
-        app.copy_selection = Some(crate::tui::app::CopySelection {index:0,content:raw.clone(),reveal:true});
+        app.copy_selection = Some(crate::app::CopySelection {index:0,content:raw.clone(),reveal:true});
         terminal.draw(|f| draw(f, &mut app)).unwrap();
         assert!(screen_rows(&terminal).iter().any(|r| r.contains(r#"\n"#)), "copy mode must show the exact raw snapshot");
     }

@@ -7,9 +7,9 @@ PROFILE=${PROFILE:-release}
 case "$PROFILE" in release|debug) ;; *) echo "PROFILE must be release or debug" >&2; exit 1 ;; esac
 cd "$PRAXIS_SOURCE_ROOT"
 if [ "$PROFILE" = release ]; then
-  cargo build --locked --release -p praxis --bin praxis-tui
+  cargo build --locked --release -p praxis-tui
 else
-  cargo build --locked -p praxis --bin praxis-tui
+  cargo build --locked -p praxis-tui
 fi
 PRAXIS_PACKAGE_TARGET="$PRAXIS_PACKAGE_PLUGINS/tui"
 if [ -e "$PRAXIS_PACKAGE_TARGET" ] || [ -L "$PRAXIS_PACKAGE_TARGET" ]; then

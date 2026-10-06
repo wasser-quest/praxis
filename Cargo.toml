@@ -5,7 +5,7 @@ edition = "2021"
 description = "AI Agent Platform — Praxis"
 
 [workspace]
-members = ["crates/praxis-vm", "crates/praxis-plugin-api", "crates/praxis-vm-web", "crates/praxis-vm-worker", "crates/praxis-dashboard", "crates/praxis-legacy-file-ops", "crates/praxis-shell", "crates/praxis-vision"]
+members = ["crates/praxis-vm", "crates/praxis-plugin-api", "crates/praxis-tui", "crates/praxis-vm-web", "crates/praxis-vm-worker", "crates/praxis-dashboard", "crates/praxis-legacy-file-ops", "crates/praxis-shell", "crates/praxis-vision"]
 default-members = ["."]
 resolver = "2"
 
@@ -88,9 +88,6 @@ governor = "0.8"
 cron = "0.15"
 rusqlite = { version = "0.32", features = ["bundled", "vtab"] }
 backon = "1"
-ratatui = "0.29"
-unicode-segmentation = "1"
-crossterm = { version = "0.28", features = ["event-stream"] }
 
 vosk = { version = "0.3", optional = true }
 whisper-rs = { version = "0.1", optional = true }
