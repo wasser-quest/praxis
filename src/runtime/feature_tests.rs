@@ -11,6 +11,18 @@ use std::{
 };
 use tokio::sync::Notify;
 
+/// Definitions contributed by installed packages: the kernel's bundled
+/// packages are registered in every registry and excluded here.
+fn installed_tools(
+    registry: &crate::plugins::PluginRegistry,
+) -> Vec<crate::gateway::llm::provider::ToolDefinition> {
+    registry
+        .tool_definitions()
+        .into_iter()
+        .filter(|tool| crate::tools::packages::bundled_tool(&tool.function.name).is_none())
+        .collect()
+}
+
 #[derive(Default)]
 struct Fixture {
     calls: AtomicUsize,
@@ -92,11 +104,11 @@ async fn native_feature_unready_service_is_hidden_until_host_initialization_and_
         .unwrap();
     let handle = registry.service_handle("fixture", "backend").unwrap();
     assert!(!handle.enabled());
-    assert!(registry.tool_definitions().is_empty());
+    assert!(installed_tools(&registry).is_empty());
     assert_eq!(service.initialized.load(Ordering::SeqCst), 0);
     handle.initialize().await.unwrap();
     assert!(handle.enabled());
-    assert_eq!(registry.tool_definitions().len(), 1);
+    assert_eq!(installed_tools(&registry).len(), 1);
     assert!(!handle.disable(Duration::from_millis(10)).await.unwrap());
     assert_eq!(service.forced.load(Ordering::SeqCst), 1);
     assert!(!handle.enabled());
@@ -186,14 +198,14 @@ async fn native_feature_registration_checks_dependencies_without_starting_the_se
         .register_service("fixture", "backend", 1, &["other"], fixture.clone())
         .is_err());
     assert_eq!(registry.revision().unwrap(), before);
-    assert!(registry.tool_definitions().is_empty());
+    assert!(installed_tools(&registry).is_empty());
     bind(&mut registry, fixture.clone());
     assert_ne!(registry.revision().unwrap(), before);
     assert_eq!(
         registry.clone().revision().unwrap(),
         registry.revision().unwrap()
     );
-    assert_eq!(registry.tool_definitions().len(), 1);
+    assert_eq!(installed_tools(&registry).len(), 1);
     assert!(registry
         .register_service("fixture", "backend", 1, &["echo"], fixture.clone())
         .is_err());
@@ -279,7 +291,7 @@ async fn native_feature_missing_disabled_and_stale_bindings_cannot_execute() {
         .disable(Duration::from_millis(50))
         .await
         .unwrap();
-    assert!(registry.tool_definitions().is_empty());
+    assert!(installed_tools(&registry).is_empty());
     assert!(invoke(&registry, &db, user, "disabled").await.is_err());
     assert_eq!(fixture.calls.load(Ordering::SeqCst), 0);
 }
@@ -934,6 +946,9 @@ async fn native_feature_storage_cannot_cross_package_owners_and_binding_revision
     }
     let mut replacement = PluginRegistry::new();
     for package in registry.list() {
+        if crate::tools::packages::bundled(&package.name) {
+            continue;
+        }
         replacement.try_register(package.clone()).unwrap();
     }
     replacement

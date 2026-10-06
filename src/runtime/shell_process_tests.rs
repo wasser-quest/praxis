@@ -180,7 +180,7 @@ async fn installed_shell_package_runs_through_chat_agent_and_worker() {
     }
     std::fs::copy("packages/shell/plugin.json", package.join("plugin.json")).unwrap();
     let mut registry = crate::plugins::load_all_plugins(&dir.path().join("plugins"));
-    assert_eq!(registry.list().len(), 1);
+    assert_eq!(registry.list().len(), 1 + crate::tools::packages::bundled_plugins().len());
     let data = dir.path().join("data");
     let db = Database::new(&data).unwrap();
     crate::db::tools::init_default_tools(&db).unwrap();
@@ -267,7 +267,7 @@ async fn shell_process_manifest_declaration_binds_without_env_override() {
     // Reload through the manifest loader so the worker path is resolved inside
     // the package, as it is in production.
     let mut registry = crate::plugins::load_all_plugins(&dir.path().join("plugins"));
-    assert_eq!(registry.list().len(), 1, "fixture shell package must load");
+    assert_eq!(registry.list().len(), 1 + crate::tools::packages::bundled_plugins().len(), "fixture shell package must load");
     config.shell_service_executable = None;
     super::shell::configure(&config, &mut registry).unwrap();
     super::shell::initialize_service(&config, &registry)

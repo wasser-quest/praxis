@@ -98,7 +98,7 @@ pub fn selected_response(output: &ToolOutput, selection: &Value) -> anyhow::Resu
 }
 
 pub fn run(db: &Database, user: &str, args: &Value) -> anyhow::Result<String> {
-    anyhow::ensure!(crate::db::tools::get(db, "read_tool_result")?.is_enabled, "read_tool_result is disabled");
+    anyhow::ensure!(crate::db::tools::tool_enabled(db, "read_tool_result")?, "read_tool_result is disabled");
     let request: Request = serde_json::from_value(args.clone()).map_err(|_| anyhow::anyhow!("Invalid read_tool_result parameter types or unknown fields"))?;
     request.validate()?;
     let output = db.get_tool_output(user, &request.output_id)?.ok_or_else(|| anyhow::anyhow!(

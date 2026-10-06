@@ -5,9 +5,11 @@
 //! cannot be disabled. Disabling a package removes its tools from the model
 //! catalog, discovery and execution; workflow guards, receipts and the
 //! management CLI/API keep working (they are host-owned, not tools).
+use crate::db::tools::Tool;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
 pub struct Package {
     pub id: &'static str,
@@ -119,6 +121,72 @@ pub fn get(id: &str) -> Option<&'static Package> {
 /// The package that owns a native tool name.
 pub fn owner_of(tool: &str) -> Option<&'static Package> {
     PACKAGES.iter().find(|p| p.tools.contains(&tool))
+}
+
+/// Kernel-shipped privileged packages. Their tools are declared by a bundled
+/// manifest under `packages/`, but the implementations are host-owned
+/// operations in the kernel (`tools::builtin_operations`), so the package is
+/// never installed, never replaced and never trusted with authority: removing
+/// or disabling it removes the tools from the catalog, not the runtime's
+/// ability to enforce guards (`docs/PLUGINIZATION_HANDOFF.md` §6C).
+pub fn bundled(id: &str) -> bool {
+    bundled_manifest(id).is_some()
+}
+
+fn bundled_manifest(id: &str) -> Option<&'static str> {
+    match id {
+        "runtime_control" => Some(include_str!("../../packages/runtime_control/plugin.json")),
+        _ => None,
+    }
+}
+
+static BUNDLED_PLUGINS: LazyLock<Vec<crate::plugins::Plugin>> = LazyLock::new(|| {
+    PACKAGES
+        .iter()
+        .filter_map(|package| bundled_manifest(package.id))
+        .map(|raw| serde_json::from_str(raw).expect("bundled package manifest must parse"))
+        .collect()
+});
+
+static BUNDLED_TOOLS: LazyLock<BTreeMap<String, Tool>> = LazyLock::new(|| {
+    BUNDLED_PLUGINS
+        .iter()
+        .flat_map(|plugin| plugin.tools.iter())
+        .map(|tool| {
+            (
+                tool.name.clone(),
+                Tool {
+                    name: tool.name.clone(),
+                    description: Some(tool.description.clone()),
+                    parameters: tool.parameters.clone(),
+                    is_enabled: true,
+                },
+            )
+        })
+        .collect()
+});
+
+/// The kernel's bundled package declarations, registered before any installed
+/// package so an installed manifest can never take over their tool names.
+pub fn bundled_plugins() -> Vec<crate::plugins::Plugin> {
+    BUNDLED_PLUGINS.clone()
+}
+
+/// Canonical name/description/schema for a tool declared by a bundled package.
+/// Bundled declarations are the one source for their parameter contracts.
+pub fn bundled_tool(name: &str) -> Option<&'static Tool> {
+    BUNDLED_TOOLS.get(name)
+}
+
+/// Whether a tool of a kernel-bundled package is switched on. A bundled
+/// package has no plugin manifest of its own to disable, so its tool-package
+/// switch expresses its absence. Replacement plugins stay controlled by their
+/// own flags, not by the native package they replace.
+pub fn bundled_tool_enabled(data_dir: &Path, tool: &str) -> anyhow::Result<bool> {
+    match owner_of(tool).filter(|package| bundled(package.id)) {
+        Some(package) => enabled(data_dir, package.id),
+        None => Ok(true),
+    }
 }
 
 /// Build-time availability is distinct from the persisted operator switch.
@@ -269,9 +337,128 @@ mod tests {
         }
         for package in PACKAGES {
             for tool in package.tools {
-                assert!(natives.iter().any(|n| n == tool), "{} lists unknown tool {tool}", package.id);
+                assert!(
+                    natives.iter().any(|n| n == tool)
+                        || bundled(package.id)
+                            && bundled_tool(tool).is_some_and(|declared| declared.name == *tool),
+                    "{} lists unknown tool {tool}",
+                    package.id
+                );
             }
         }
+    }
+
+    #[test]
+    fn bundled_manifests_declare_exactly_their_package_tools() {
+        for package in PACKAGES.iter().filter(|p| bundled(p.id)) {
+            let plugin = BUNDLED_PLUGINS
+                .iter()
+                .find(|plugin| plugin.name == package.id)
+                .expect("bundled package manifest is registered");
+            let mut declared: Vec<&str> = plugin.tools.iter().map(|t| t.name.as_str()).collect();
+            let mut owned: Vec<&str> = package.tools.to_vec();
+            declared.sort_unstable();
+            owned.sort_unstable();
+            assert_eq!(declared, owned, "{} declares a different tool set", package.id);
+            for tool in &plugin.tools {
+                assert!(
+                    matches!(&tool.handler, crate::plugins::PluginHandler::Builtin { .. }),
+                    "{} tool {} must run a host-owned operation",
+                    package.id,
+                    tool.name
+                );
+            }
+        }
+    }
+
+    /// Core-only exclusion (§9 step 6): without its package, `runtime_control`
+    /// tools leave the catalog, discovery and execution, while host-owned
+    /// workflow authority keeps enforcing kernel evidence.
+    #[tokio::test]
+    async fn absent_runtime_control_removes_tools_but_not_host_authority() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = crate::db::Database::new(dir.path()).unwrap();
+        crate::db::tools::init_default_tools(&db).unwrap();
+        let plugins = crate::plugins::PluginRegistry::new();
+        let user = format!("pkg-absent-{}", uuid::Uuid::new_v4());
+        let _task = crate::gateway::task_control::begin(&user).unwrap();
+        crate::gateway::task_control::pin_registry(&user, &plugins).unwrap();
+        let call = crate::gateway::llm::provider::ToolCall {
+            id: "call-1".into(),
+            function: crate::gateway::llm::provider::FunctionCall {
+                name: "agent_feedback".into(),
+                arguments: json!({"message": "hi"}).to_string(),
+            },
+        };
+        let dispatch = crate::gateway::tool_dispatch::DispatchContext::new(
+            dir.path(),
+            &db,
+            &user,
+            &plugins,
+            crate::gateway::tool_dispatch::DispatchMode::Chat,
+        );
+        assert_eq!(dispatch.execute(&call).await, "Feedback sent: hi");
+
+        set(&db.data_dir(), "runtime_control", false).unwrap();
+        let catalog: Vec<String> = crate::tools::catalog::definitions(&db, &plugins)
+            .unwrap()
+            .into_iter()
+            .map(|tool| tool.function.name)
+            .collect();
+        for tool in get("runtime_control").unwrap().tools {
+            assert!(!catalog.contains(&tool.to_string()), "{tool} leaked into the catalog");
+        }
+        let denied = dispatch.execute(&call).await;
+        assert!(denied.contains("disabled or unavailable"), "{denied}");
+        let mut settings = crate::db::contexts::ContextSettings::default();
+        settings.activated_tools = vec!["agent_feedback".into(), "execute_decision".into()];
+        assert!(
+            crate::tools::registry::build_tool_definitions(
+                &settings,
+                Some(&plugins.tool_definitions()),
+                Some(&db),
+            )
+            .is_empty(),
+            "a disabled package leaked into the model request"
+        );
+        // The runtime's authority is intact: guards still require verified,
+        // kernel-signed evidence and cannot be satisfied by a claim.
+        let sm = crate::sm::parse(
+            "[state standard]\n[action_guards]\n_complete = [runtime_control/agent_complete]",
+        )
+        .unwrap();
+        crate::gateway::action_contracts::bind(&user, "absent", &sm, dir.path()).unwrap();
+        let error = crate::gateway::action_contracts::require(&user, "_complete").unwrap_err();
+        assert!(error.to_string().contains("verified capabilities"), "{error}");
+    }
+
+    #[test]
+    fn bundled_tools_keep_the_operator_choice_when_the_package_switch_flips() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = crate::db::Database::new(dir.path()).unwrap();
+        // An older install stored the flags on the builtin rows.
+        crate::db::tools::save(
+            &db,
+            &Tool {
+                name: "agent_feedback".into(),
+                description: Some("Send progress update".into()),
+                parameters: json!({"type": "object"}),
+                is_enabled: false,
+            },
+        )
+        .unwrap();
+        crate::db::tools::init_default_tools(&db).unwrap();
+        // The rows are gone; the choice moved to the plugin flag store.
+        assert!(crate::db::tools::get(&db, "agent_feedback").is_err());
+        assert!(!crate::db::tools::tool_enabled(&db, "agent_feedback").unwrap());
+        assert!(crate::db::tools::tool_enabled(&db, "agent_next").unwrap());
+        // The package switch removes the tools; the per-tool flag survives it.
+        set(dir.path(), "runtime_control", false).unwrap();
+        assert!(!crate::db::tools::tool_enabled(&db, "agent_next").unwrap());
+        assert!(!crate::db::tools::tool_enabled(&db, "agent_feedback").unwrap());
+        set(dir.path(), "runtime_control", true).unwrap();
+        assert!(crate::db::tools::tool_enabled(&db, "agent_next").unwrap());
+        assert!(!crate::db::tools::tool_enabled(&db, "agent_feedback").unwrap());
     }
 
     #[test]

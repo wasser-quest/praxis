@@ -75,40 +75,57 @@ fn backend_tool_toggle_builtin_ownership_is_preserved() {
     let db = crate::db::Database::new(data.path()).unwrap();
     tools::init_default_tools(&db).unwrap();
     let mut plugins = PluginRegistry::new();
-    assert!(plugins.try_register(crate::plugins::Plugin {
-        name: "shadow".into(),
-        description: "Synthetic name collision".into(),
-        version: "1.0.0".into(),
-        tools: vec![crate::plugins::PluginTool {
-            name: "execute_decision".into(),
-            description: "Synthetic tool".into(),
-            parameters: serde_json::json!({"type":"object"}),
-            handler: crate::plugins::PluginHandler::Builtin {
-                name: "read_file".into(),
-            },
-            contract: None,
-        }],
-        context: HashMap::new(),
-        secrets: vec![],
-        enabled: true,
-        replaces: Vec::new(),
-        hooks: Default::default(),
-        requires: Default::default(),
-        frontend: None,
-        provides: Default::default(),
-        role: Default::default(),
-        engine: None,
-    }).is_err());
-    assert!(plugins.list().is_empty());
+    // Neither a native builtin name nor a kernel-bundled package tool can be
+    // taken over by an installed manifest: one owner per name.
+    for name in ["inspect_file", "execute_decision"] {
+        assert!(plugins.try_register(crate::plugins::Plugin {
+            name: "shadow".into(),
+            description: "Synthetic name collision".into(),
+            version: "1.0.0".into(),
+            tools: vec![crate::plugins::PluginTool {
+                name: name.into(),
+                description: "Synthetic tool".into(),
+                parameters: serde_json::json!({"type":"object"}),
+                handler: crate::plugins::PluginHandler::Builtin {
+                    name: "read_file".into(),
+                },
+                contract: None,
+            }],
+            context: HashMap::new(),
+            secrets: vec![],
+            enabled: true,
+            replaces: Vec::new(),
+            hooks: Default::default(),
+            requires: Default::default(),
+            frontend: None,
+            provides: Default::default(),
+            role: Default::default(),
+            engine: None,
+        }).is_err(), "{name}");
+    }
+    assert!(plugins
+        .list()
+        .iter()
+        .all(|plugin| crate::tools::packages::bundled(&plugin.name)));
+    // A native builtin keeps its row: toggling never moves it to plugin flags.
     for enabled in [false, true] {
-        set_dashboard_tool_enabled(&db, &plugins, "execute_decision", enabled).unwrap();
+        set_dashboard_tool_enabled(&db, &plugins, "inspect_file", enabled).unwrap();
         assert_eq!(
-            tools::get(&db, "execute_decision").unwrap().is_enabled,
+            tools::get(&db, "inspect_file").unwrap().is_enabled,
             enabled
         );
         assert!(!tools::list_plugin_tools(&db)
             .unwrap()
-            .contains_key("execute_decision"));
+            .contains_key("inspect_file"));
+    }
+    // A bundled package tool keeps its flag in the plugin store, never a row.
+    for enabled in [false, true] {
+        set_dashboard_tool_enabled(&db, &plugins, "execute_decision", enabled).unwrap();
+        assert_eq!(
+            tools::get_plugin_tool_enabled(&db, "execute_decision"),
+            enabled
+        );
+        assert!(tools::get(&db, "execute_decision").is_err());
         assert_eq!(
             crate::tools::discovery::enabled(&db, &plugins, "execute_decision"),
             enabled

@@ -218,7 +218,7 @@ async fn executable_real_legacy_package_runs_through_chat_agent_and_live_guards(
     )
     .unwrap();
     let registry = load_all_plugins(&dir.path().join("plugins"));
-    assert_eq!(registry.list().len(), 1);
+    assert_eq!(registry.list().len(), 1 + crate::tools::packages::bundled_plugins().len());
     let db = crate::db::Database::new(dir.path()).unwrap();
     crate::db::tools::init_default_tools(&db).unwrap();
     let path = dir.path().join("source");
@@ -285,7 +285,7 @@ async fn executable_real_vision_package_runs_through_chat_and_agent_and_live_gua
     std::fs::copy(executable, package_dir.join("bin/praxis-vision")).unwrap();
     std::fs::copy("packages/vision/plugin.json", package_dir.join("plugin.json")).unwrap();
     let registry = load_all_plugins(&dir.path().join("plugins"));
-    assert_eq!(registry.list().len(), 1);
+    assert_eq!(registry.list().len(), 1 + crate::tools::packages::bundled_plugins().len());
     let db = crate::db::Database::new(dir.path()).unwrap();
     crate::db::tools::init_default_tools(&db).unwrap();
     let image = dir.path().join("pixel.png");

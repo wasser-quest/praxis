@@ -14,6 +14,21 @@
 use crate::{db::Database, plugins::PluginRegistry};
 use serde_json::Value;
 
+/// Bound on Decision-IR lowering chains: a workflow may map an opcode to a
+/// call that lowers again, and that must terminate.
+pub const MAX_LOWER_DEPTH: u8 = 4;
+
+/// What a host-owned operation produced for its caller.
+#[derive(Debug)]
+pub enum BuiltinStep {
+    /// The exact result text.
+    Text(String),
+    /// A call the `execute_decision` operation lowered. Only the dispatch loop
+    /// can run it (as its next iteration, with full checks); a caller without a
+    /// dispatch loop must fail closed instead of running it.
+    Lower(crate::gateway::llm::provider::ToolCall),
+}
+
 /// Host-issued identity for a builtin operation. Built by the dispatcher from
 /// the authenticated call only; never reconstructed from tool arguments or a
 /// plugin claim (§2 invariant 2).
@@ -25,7 +40,10 @@ pub struct BuiltinContext<'a> {
     /// The runtime root holding `contexts/`, issued by the dispatcher. Never
     /// taken from a tool argument.
     pub root: &'a std::path::Path,
+    /// Decision-IR lowerings already run for this call (bounded).
+    pub depth: u8,
 }
+
 
 /// Run a host-owned operation on behalf of a `builtin` handler. Unknown names
 /// fail closed: an installed package cannot invent an operation at runtime.
@@ -33,8 +51,13 @@ pub async fn execute(
     ctx: &BuiltinContext<'_>,
     name: &str,
     args: &Value,
-) -> anyhow::Result<String> {
-    Ok(match name {
+) -> anyhow::Result<BuiltinStep> {
+    // One bounded instruction is lowered through the workflow's pinned opcode
+    // table and the resolved call goes back to the dispatch loop (§6C).
+    if name == "execute_decision" {
+        return lower(ctx, args);
+    }
+    Ok(BuiltinStep::Text(match name {
         "get_context" => get_context(ctx),
         "set_context" => set_context(ctx, args),
         "delete_context" => delete_context(ctx, args),
@@ -42,20 +65,45 @@ pub async fn execute(
             .unwrap_or_else(|error| format!("Error: {error}")),
         "read_tool_result" => crate::tools::tool_output::run(ctx.db, ctx.user, args)
             .unwrap_or_else(|error| format!("Error: {error}")),
-        "run_check" => crate::gateway::action_contracts::run(ctx.user, ctx.call, args)
+        "run_check" => Box::pin(crate::gateway::action_contracts::run(ctx.user, ctx.call, args))
             .await
             .unwrap_or_else(|error| format!("Error: {error}")),
-        "agent_complete" => agent_signal(ctx, "Complete", Value::Null).await,
-        "agent_set_path" => agent_signal(ctx, "Path", args.clone()).await,
-        "agent_feedback" => agent_signal(ctx, "Feedback", args.clone()).await,
+        "agent_complete" => Box::pin(agent_signal(ctx, "Complete", Value::Null)).await,
+        "agent_set_path" => Box::pin(agent_signal(ctx, "Path", args.clone())).await,
+        "agent_feedback" => Box::pin(agent_signal(ctx, "Feedback", args.clone())).await,
         // Graph/linear navigation keeps its historical error text (already
         // self-describing), unlike the signal tools above.
-        "agent_next" | "agent_back" => navigate(ctx, name == "agent_back", args).await,
+        "agent_next" | "agent_back" => Box::pin(navigate(ctx, name == "agent_back", args)).await,
         // Media generation needs no host state, so it takes no context.
         "image_generate" | "image_analyze" => {
-            crate::plugins::minimax_image::execute_builtin(name, args).await?
+            Box::pin(crate::plugins::minimax_image::execute_builtin(name, args)).await?
         }
         other => anyhow::bail!("Unknown host builtin operation: {other}"),
+    }))
+}
+
+/// The general "run this resolved call" capability
+/// (`docs/PLUGINIZATION_HANDOFF.md` §6C): lower one bounded Decision IR
+/// instruction through the workflow's pinned opcode table and hand the
+/// resolved call to the dispatch loop, which runs it with the same state
+/// permissions, contracts, rollback and receipts as a direct call. Lowering
+/// stays bounded so a mapped target can never recurse without end.
+fn lower(ctx: &BuiltinContext<'_>, args: &Value) -> anyhow::Result<BuiltinStep> {
+    anyhow::ensure!(
+        ctx.depth < MAX_LOWER_DEPTH,
+        "Decision IR lowering is nested too deeply"
+    );
+    let call = crate::gateway::llm::provider::ToolCall {
+        id: ctx.call.to_string(),
+        function: crate::gateway::llm::provider::FunctionCall {
+            name: "execute_decision".into(),
+            arguments: args.to_string(),
+        },
+    };
+    Ok(match crate::gateway::decision_ir::resolve(ctx.db, ctx.user, &call, ctx.plugins) {
+        Ok(resolved) => BuiltinStep::Lower(resolved),
+        // A rejected instruction keeps its historical error text.
+        Err(error) => BuiltinStep::Text(crate::gateway::workflow_preflight::tool_error(&error)),
     })
 }
 
@@ -133,6 +181,7 @@ pub fn delete_context(ctx: &BuiltinContext<'_>, args: &Value) -> String {
 mod tests {
     use super::*;
     use crate::db::Database;
+    use crate::plugins::Plugin;
     use serde_json::json;
 
     fn context<'a>(db: &'a Database, plugins: &'a PluginRegistry) -> BuiltinContext<'a> {
@@ -142,6 +191,15 @@ mod tests {
             user: "builtin-op-user",
             call: "call-1",
             root: std::path::Path::new("."),
+            depth: 0,
+        }
+    }
+
+    /// The result text of an operation, or a panic when it lowers unexpectedly.
+    async fn text(ctx: &BuiltinContext<'_>, name: &str, args: &Value) -> String {
+        match execute(ctx, name, args).await.unwrap() {
+            BuiltinStep::Text(text) => text,
+            BuiltinStep::Lower(_) => panic!("unexpected lowering from {name}"),
         }
     }
 
@@ -158,26 +216,24 @@ mod tests {
         let ctx = context(&db, &plugins);
 
         assert_eq!(
-            execute(
+            text(
                 &ctx,
                 "set_context",
                 &json!({"key":"custom_data.nickname","value":"Ada"})
             )
-            .await
-            .unwrap(),
+            .await,
             "Context key 'custom_data.nickname' set"
         );
-        let stored = execute(&ctx, "get_context", &json!({})).await.unwrap();
+        let stored = text(&ctx, "get_context", &json!({})).await;
         let parsed: serde_json::Value = serde_json::from_str(&stored).unwrap();
         assert_eq!(parsed["custom_data"]["nickname"], json!("Ada"));
 
         assert_eq!(
-            execute(&ctx, "delete_context", &json!({"key":"custom_data.nickname"}))
-                .await
-                .unwrap(),
+            text(&ctx, "delete_context", &json!({"key":"custom_data.nickname"}))
+                .await,
             "Context key 'custom_data.nickname' deleted"
         );
-        let stored = execute(&ctx, "get_context", &json!({})).await.unwrap();
+        let stored = text(&ctx, "get_context", &json!({})).await;
         let parsed: serde_json::Value = serde_json::from_str(&stored).unwrap();
         assert!(parsed["custom_data"]["nickname"].is_null());
     }
@@ -198,20 +254,129 @@ mod tests {
 
         // Agent feedback keeps its exact historical text.
         assert_eq!(
-            execute(&ctx, "agent_feedback", &json!({"message":"hi"}))
-                .await
-                .unwrap(),
+            text(&ctx, "agent_feedback", &json!({"message":"hi"})).await,
             "Feedback sent: hi"
         );
         // Discovery and check running degrade to result strings, never panics.
-        assert!(!execute(&ctx, "search_tools", &json!({"query":""}))
+        assert!(!text(&ctx, "search_tools", &json!({"query":""}))
             .await
-            .unwrap()
             .is_empty());
-        assert!(!execute(&ctx, "read_tool_result", &json!({"id":"missing"}))
+        assert!(!text(&ctx, "read_tool_result", &json!({"id":"missing"}))
             .await
-            .unwrap()
             .is_empty());
+    }
+
+    /// A package tool backed by a host-owned operation. The name is the
+    /// package's own; `builtin` names the kernel operation it runs.
+    fn register_builtin_tool(plugins: &mut PluginRegistry, tool: &str, operation: &str) {
+        let plugin: Plugin = serde_json::from_value(json!({
+            "name": "pkg", "description": "x", "version": "1",
+            "tools": [{
+                "name": tool,
+                "description": "x",
+                "parameters": {"type": "object"},
+                "handler": {"type": "builtin", "name": operation}
+            }]
+        }))
+        .unwrap();
+        plugins.try_register(plugin).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_builtin_handler_package_reaches_host_operations() {
+        let (_dir, db, _empty) = setup();
+        let mut plugins = PluginRegistry::new();
+        register_builtin_tool(&mut plugins, "pkg_feedback", "agent_feedback");
+        let user = "builtin-pkg-user";
+        let _guard = crate::gateway::task_control::begin(user).unwrap();
+        crate::gateway::task_control::pin_registry(user, &plugins).unwrap();
+        // The package supplies the tool; the kernel supplies the operation and
+        // the host-issued identity, and the result format is the historical one.
+        let out = plugins
+            .execute_tool_with_host(
+                &db,
+                user,
+                "call-1",
+                "pkg_feedback",
+                &json!({"message":"hi"}),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(out, "Feedback sent: hi");
+    }
+
+    #[tokio::test]
+    async fn a_missing_package_fails_closed_instead_of_running_a_builtin() {
+        let (_dir, db, plugins) = setup();
+        let user = "builtin-absent-user";
+        let _guard = crate::gateway::task_control::begin(user).unwrap();
+        crate::gateway::task_control::pin_registry(user, &plugins).unwrap();
+        // No package declares the tool: nothing may run, native or otherwise.
+        let error = plugins
+            .execute_tool_with_host(
+                &db,
+                user,
+                "call-1",
+                "pkg_feedback",
+                &json!({"message":"hi"}),
+                None,
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("unavailable"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn a_package_cannot_invent_a_host_operation() {
+        let (_dir, db, _empty) = setup();
+        let mut plugins = PluginRegistry::new();
+        register_builtin_tool(&mut plugins, "pkg_evil", "invented");
+        let user = "builtin-evil-user";
+        let _guard = crate::gateway::task_control::begin(user).unwrap();
+        crate::gateway::task_control::pin_registry(user, &plugins).unwrap();
+        let error = plugins
+            .execute_tool_with_host(&db, user, "call-1", "pkg_evil", &json!({}), None, None)
+            .await
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("Unknown host builtin operation"),
+            "{error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn nested_decision_lowering_is_bounded() {
+        let (_dir, db, plugins) = setup();
+        let mut ctx = context(&db, &plugins);
+        ctx.depth = MAX_LOWER_DEPTH;
+        // A workflow mapping can chain lowerings; the stack stays bounded.
+        let error = execute(&ctx, "execute_decision", &json!({"ir": "1 A"}))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("nested too deeply"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn bundled_packages_only_name_host_owned_operations() {
+        let (_dir, db, plugins) = setup();
+        let ctx = context(&db, &plugins);
+        for plugin in crate::tools::packages::bundled_plugins() {
+            for tool in &plugin.tools {
+                let crate::plugins::PluginHandler::Builtin { name: operation } = &tool.handler else {
+                    panic!("{} must run a host-owned operation", tool.name);
+                };
+                // Unknown operations fail closed instead of running anything.
+                let out = text(&ctx, operation, &json!({})).await;
+                assert!(
+                    !out.contains("Unknown host builtin operation"),
+                    "{} names an operation the kernel does not own",
+                    tool.name
+                );
+            }
+        }
     }
 
     #[tokio::test]
@@ -219,9 +384,7 @@ mod tests {
         let (_dir, db, plugins) = setup();
         let ctx = context(&db, &plugins);
         // No task/policy is bound here, so no receipt can be produced.
-        let out = execute(&ctx, "run_check", &json!({"name":"tests"}))
-            .await
-            .unwrap();
+        let out = text(&ctx, "run_check", &json!({"name":"tests"})).await;
         assert!(out.starts_with("Error:"), "{out}");
     }
 
@@ -236,9 +399,7 @@ mod tests {
             json!({"custom_data.nickname":"mallory"}),
         )
         .unwrap();
-        let stored = execute(&ctx, "get_context", &json!({"user_id":"someone-else"}))
-            .await
-            .unwrap();
+        let stored = text(&ctx, "get_context", &json!({"user_id":"someone-else"})).await;
         let parsed: serde_json::Value = serde_json::from_str(&stored).unwrap();
         assert_eq!(parsed["user_id"], json!("builtin-op-user"));
         assert!(parsed["custom_data"]["nickname"].is_null());

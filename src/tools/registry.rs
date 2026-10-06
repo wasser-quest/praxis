@@ -38,7 +38,8 @@ fn canonical_tool(name: &str) -> Option<&'static crate::db::tools::Tool> {
     static DEFAULTS: Lazy<HashMap<String, crate::db::tools::Tool>> = Lazy::new(|| {
         crate::db::tools::get_default_tools().into_iter().map(|tool| (tool.name.clone(), tool)).collect()
     });
-    DEFAULTS.get(name)
+    // Bundled package declarations are the one source for their contracts.
+    DEFAULTS.get(name).or_else(|| super::packages::bundled_tool(name))
 }
 
 fn build_registry() -> Vec<ToolMeta> {
@@ -695,12 +696,13 @@ fn build_tool_definitions_with_selection(
         .map(|tool| tool.function.name.as_str()).collect();
     tools.retain(|tool| !replacements.contains(tool.function.name.as_str()));
 
-    // Merge plugin tools - also filter them by state settings
+    // Merge package-declared tools - also filter them by state settings. A
+    // native builtin keeps its own definition; a name owned by a package (an
+    // installed replacement or a bundled package like `runtime_control`) takes
+    // the owner's declaration, never a stale static schema.
     if let Some(plugins) = plugin_tools {
         for plugin_tool in plugins {
-            // Check if tool already exists (static registry override)
-            if (canonical_tool(&plugin_tool.function.name).is_some() && super::packages::native_available(&plugin_tool.function.name) && !replacements.contains(plugin_tool.function.name.as_str()) && !crate::runtime::vm::is_vm_tool(&plugin_tool.function.name))
-                || tools.iter().any(|t| t.function.name == plugin_tool.function.name) {
+            if super::catalog::is_builtin(&plugin_tool.function.name) && super::packages::native_available(&plugin_tool.function.name) && !replacements.contains(plugin_tool.function.name.as_str()) && !crate::runtime::vm::is_vm_tool(&plugin_tool.function.name) {
                 continue;
             }
             // Check if plugin tool is enabled in DB (per-tool enable/disable)
@@ -722,8 +724,12 @@ fn build_tool_definitions_with_selection(
             }
             // Plugin tools obey the same allow-list as built-ins: when the state
             // configures tools explicitly, a plugin tool must be named directly in
-            // full_tool_schemas or via a tool group; otherwise it is not sent.
-            let listed = full_schemas.iter().any(|s| s == &plugin_tool.function.name);
+            // full_tool_schemas, via a tool group, or by its category; otherwise it
+            // is not sent.
+            let category_listed = get_tool_meta(&plugin_tool.function.name)
+                .is_some_and(|meta| full_cats.as_ref().is_some_and(|cats| cats.contains(&meta.category)));
+            let listed = full_schemas.iter().any(|s| s == &plugin_tool.function.name)
+                || category_listed;
             if has_explicit_config && !listed {
                 continue;
             }
@@ -746,6 +752,8 @@ fn build_tool_definitions_with_selection(
             if listed || discovery_mode == ToolDiscoveryMode::Full {
                 super::tool_output::augment_definition(&mut definition);
             }
+            // The owner's declaration replaces any stale entry for this name.
+            tools.retain(|t| t.function.name != plugin_tool.function.name);
             tools.push(definition);
         }
     }

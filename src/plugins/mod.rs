@@ -388,11 +388,18 @@ pub struct PluginRegistry {
 }
 
 impl PluginRegistry {
+    /// The kernel's registry: its bundled packages (host-owned operations) are
+    /// always registered first, so an installed manifest can never own one of
+    /// their names and "never two owners" holds at activation.
     pub fn new() -> Self {
-        Self {
+        let mut registry = Self {
             plugins: HashMap::new(),
             services: HashMap::new(),
+        };
+        for plugin in crate::tools::packages::bundled_plugins() {
+            registry.register(plugin);
         }
+        registry
     }
 
     /// Identity of the resolved declarations, including contracts, defaults and
@@ -683,18 +690,28 @@ impl PluginRegistry {
                 // A package handler has no dispatcher root of its own; resolve
                 // the host root (never a tool argument).
                 let root = crate::tools::builtin_operations::root();
-                return crate::tools::builtin_operations::execute(
+                return match crate::tools::builtin_operations::execute(
                     &crate::tools::builtin_operations::BuiltinContext {
                         db,
                         plugins: self,
                         user,
                         call,
                         root: &root,
+                        depth: 0,
                     },
                     operation,
                     args,
                 )
-                .await;
+                .await
+                {
+                    Ok(crate::tools::builtin_operations::BuiltinStep::Text(text)) => Ok(text),
+                    // Only the dispatch loop can run a lowered call; a caller
+                    // without one fails closed instead of guessing.
+                    Ok(crate::tools::builtin_operations::BuiltinStep::Lower(_)) => {
+                        anyhow::bail!("execute_decision lowering requires the gateway dispatch loop")
+                    }
+                    Err(error) => Err(error),
+                };
             }
             return self
                 .execute_tool_for_task(user, call, name, args, context, secrets)
@@ -1187,10 +1204,6 @@ pub(crate) fn validate_engine(
     Ok(Some(engine))
 }
 
-pub fn register_builtin_plugins(_registry: &mut PluginRegistry) {
-    // No built-in plugins — install plugins via the plugins/ directory
-}
-
 /// Load and validate an installed package directory, including an external
 /// `provides.tools` file. Used by management commands that need the real tool
 /// set rather than the raw manifest.
@@ -1209,8 +1222,6 @@ pub fn load_all_plugins_with_trust(
     trust: &std::collections::BTreeMap<String, TrustRole>,
 ) -> PluginRegistry {
     let mut registry = PluginRegistry::new();
-
-    register_builtin_plugins(&mut registry);
 
     match load_plugins_from_dir(plugins_dir) {
         Ok(plugins) => {
@@ -1242,6 +1253,17 @@ pub fn load_all_plugins_with_trust(
 mod plugin_tests {
     use super::*;
 
+    /// Registries always carry the kernel's bundled packages first.
+    fn bundled_packages() -> usize {
+        crate::tools::packages::bundled_plugins().len()
+    }
+    fn bundled_tools() -> usize {
+        crate::tools::packages::bundled_plugins()
+            .iter()
+            .map(|plugin| plugin.tools.len())
+            .sum()
+    }
+
     #[test]
     fn test_plugin_registry() {
         let mut registry = PluginRegistry::new();
@@ -1262,7 +1284,7 @@ mod plugin_tests {
             engine: None,
         });
         assert!(registry.get("test").is_some());
-        assert_eq!(registry.list().len(), 1);
+        assert_eq!(registry.list().len(), 1 + bundled_packages());
     }
 
     #[test]
@@ -1277,11 +1299,11 @@ mod plugin_tests {
         registry.try_register(fixture("one", "probe")).unwrap();
         for candidate in [fixture("one", "other"), fixture("two", "probe"), fixture("two", "write_file")] {
             assert!(registry.try_register(candidate).is_err());
-            assert_eq!(registry.list().len(), 1);
+            assert_eq!(registry.list().len(), 1 + bundled_packages());
             assert_eq!(registry.get("one").unwrap().tools[0].name, "probe");
         }
         registry.try_register(fixture("two", "vm_probe")).unwrap();
-        assert_eq!(registry.list().len(), 2);
+        assert_eq!(registry.list().len(), 2 + bundled_packages());
     }
 
     #[test]
@@ -1311,7 +1333,7 @@ mod plugin_tests {
             role: Default::default(),
             engine: None,
         });
-        assert_eq!(registry.enabled_tools().len(), 1);
+        assert_eq!(registry.enabled_tools().len(), 1 + bundled_tools());
     }
 
     #[test]
@@ -1341,15 +1363,21 @@ mod plugin_tests {
             role: Default::default(),
             engine: None,
         });
-        assert_eq!(registry.enabled_tools().len(), 0);
+        assert_eq!(registry.enabled_tools().len(), bundled_tools());
     }
 
     #[test]
-    fn test_builtin_plugins_registered() {
-        let mut registry = PluginRegistry::new();
-        register_builtin_plugins(&mut registry);
-        // No built-in plugins — minimax_image is installed via plugins/ directory
-        assert_eq!(registry.list().len(), 0);
+    fn builtin_packages_are_registered_but_owned_by_host_operations() {
+        let registry = PluginRegistry::new();
+        // The kernel's bundled packages (host-owned operations) are present;
+        // nothing else is installed until a plugins/ directory is loaded.
+        assert_eq!(registry.list().len(), bundled_packages());
+        for plugin in registry.list() {
+            assert!(crate::tools::packages::bundled(&plugin.name));
+            for tool in &plugin.tools {
+                assert!(matches!(&tool.handler, PluginHandler::Builtin { .. }));
+            }
+        }
     }
 
     #[test]
@@ -1637,10 +1665,10 @@ mod plugin_tests {
         let mut registry = PluginRegistry::new();
         registry.try_register(fixture("one", "api")).unwrap();
         assert!(registry.try_register(fixture("two", "api")).is_err());
-        assert_eq!(registry.list().len(), 1);
+        assert_eq!(registry.list().len(), 1 + bundled_packages());
         // A second, non-conflicting claim is accepted.
         registry.try_register(fixture("three", "other")).unwrap();
-        assert_eq!(registry.list().len(), 2);
+        assert_eq!(registry.list().len(), 2 + bundled_packages());
     }
 
     #[test]
@@ -1688,23 +1716,32 @@ mod plugin_tests {
 
         // No grant: the runtime role is not activated.
         let empty = std::collections::BTreeMap::new();
-        assert!(load_all_plugins_with_trust(&plugins_dir, &empty).list().is_empty());
+        assert!(load_all_plugins_with_trust(&plugins_dir, &empty)
+            .list()
+            .into_iter()
+            .all(|plugin| crate::tools::packages::bundled(&plugin.name)));
 
         // A lower grant does not authorize a higher declaration.
         let mut weak = std::collections::BTreeMap::new();
         weak.insert("engine".to_string(), TrustRole::Authority);
-        assert!(load_all_plugins_with_trust(&plugins_dir, &weak).list().is_empty());
+        assert!(load_all_plugins_with_trust(&plugins_dir, &weak)
+            .list()
+            .into_iter()
+            .all(|plugin| crate::tools::packages::bundled(&plugin.name)));
 
         // The matching grant activates it, and a higher grant also works.
         let mut granted = std::collections::BTreeMap::new();
         granted.insert("engine".to_string(), TrustRole::Runtime);
         let registry = load_all_plugins_with_trust(&plugins_dir, &granted);
-        assert_eq!(registry.list().len(), 1);
+        assert_eq!(registry.list().len(), 1 + bundled_packages());
         assert_eq!(registry.get("engine").unwrap().role, TrustRole::Runtime);
 
         let mut higher = std::collections::BTreeMap::new();
         higher.insert("engine".to_string(), TrustRole::Runtime);
-        assert_eq!(load_all_plugins_with_trust(&plugins_dir, &higher).list().len(), 1);
+        assert_eq!(
+            load_all_plugins_with_trust(&plugins_dir, &higher).list().len(),
+            1 + bundled_packages()
+        );
     }
 
     #[test]

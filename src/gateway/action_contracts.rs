@@ -646,6 +646,9 @@ pub fn before_tool(user: &str, tool: &str) -> anyhow::Result<()> {
             | "set_context"
             | "delete_context"
             | "background_status"
+            // The wrapper mutates nothing itself: execute_decision lowers to
+            // another tool, whose own dispatch classifies the effect.
+            | "execute_decision"
     ) {
         return Ok(());
     }

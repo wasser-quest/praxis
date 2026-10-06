@@ -38,10 +38,15 @@ optional workflow packs add assets rather than replacing the core interpreter.
   (Removing the built-in dashboard after one release is tracked in the
   handoff §6G.)
 - [ ] PR 5: runtime-control tools and other tool packages. Progress:
-  `legacy_file_ops`, `shell` and `vision` are extracted; `runtime_control`'s 12
-  tools now share a `tools::builtin_operations` host-operation table (11 of 12
-  hosted; `execute_decision` stays dispatch-level because it lowers to arbitrary
-  tools). Manifest ownership + catalog migration remain.
+  `legacy_file_ops`, `shell` and `vision` are extracted. `runtime_control` ships
+  as a privileged bundled package: `packages/runtime_control/plugin.json`
+  declares all 12 tools over `builtin` handlers bound to the
+  `tools::builtin_operations` host-operation table, the tools are no longer
+  seeded from `db/tools.rs` (legacy enable/disable flags migrate), and
+  `execute_decision` lowers one instruction through the dispatch loop (the
+  general "run this resolved call" capability). The remaining owners
+  (`delegation`, `memory`, `rag`, `cron`, `discord`, `interaction`, `skills`,
+  `workflow_authoring`, then `file_ops`) are still native.
 - [ ] PR 6: providers, channels, media and workflow/prompt packages.
 - [ ] PR 7: minimal distribution, compatibility preset and dependency cleanup.
 - [x] PR 8a: lifecycle hooks (`allow|ask|deny`), staged install/uninstall,

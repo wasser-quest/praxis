@@ -55,6 +55,18 @@ fn task(
     guard
 }
 
+/// Definitions contributed by installed packages: the kernel's bundled
+/// packages are registered in every registry and excluded here.
+fn installed_tools(
+    registry: &crate::plugins::PluginRegistry,
+) -> Vec<crate::gateway::llm::provider::ToolDefinition> {
+    registry
+        .tool_definitions()
+        .into_iter()
+        .filter(|tool| crate::tools::packages::bundled_tool(&tool.function.name).is_none())
+        .collect()
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn vm_process_disabled_package_and_missing_executable_never_spawn_a_worker() {
@@ -86,12 +98,12 @@ async fn vm_process_disabled_package_and_missing_executable_never_spawn_a_worker
 async fn vm_process_binding_is_read_only_until_host_initialization_and_keeps_scoped_identity() {
     let (dir, db, config, mut registry) = fixture("echo");
     super::vm::configure(&db, &config, &mut registry).unwrap();
-    assert!(registry.tool_definitions().is_empty());
+    assert!(installed_tools(&registry).is_empty());
     assert!(!dir.path().join("worker.ready").exists());
     super::vm::initialize_service(&config, &registry)
         .await
         .unwrap();
-    assert_eq!(registry.tool_definitions().len(), 25);
+    assert_eq!(installed_tools(&registry).len(), 25);
     assert!(super::vm::guest_backend(&registry));
     assert!(super::vm::runtime(&registry).is_some());
     crate::db::tools::set_plugin_tool_enabled(&db, "vm_shell", true).unwrap();
@@ -143,7 +155,7 @@ async fn vm_process_binding_is_read_only_until_host_initialization_and_keeps_sco
         .disable(Duration::from_secs(2))
         .await
         .unwrap());
-    assert!(registry.tool_definitions().is_empty());
+    assert!(installed_tools(&registry).is_empty());
 }
 
 #[cfg(unix)]
@@ -235,7 +247,7 @@ async fn vm_process_bad_setup_and_crash_fail_closed_without_native_or_host_fallb
             std::fs::read_to_string(dir.path().join("worker.calls")).unwrap(),
             "invoke\n"
         );
-        assert!(registry.tool_definitions().is_empty());
+        assert!(installed_tools(&registry).is_empty());
         assert!(!dir.path().join("host-sentinel").exists());
         assert!(super::vm::initialize_service(&config, &registry)
             .await

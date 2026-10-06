@@ -88,10 +88,11 @@ fn tool_output_scope_rejects_other_users_sessions_and_disabled_reader() {
     assert!(tool_output::run(&db, "alice", &json!({"output_id":id})).is_err());
     ctx.session_id.clear(); db.save_context(&ctx).unwrap();
     assert_eq!(read(&db, "alice", json!({"output_id":id}))["text"], "private result");
-    crate::db::tools::disable(&db, "read_tool_result").unwrap();
+    crate::db::tools::set_plugin_tool_enabled(&db, "read_tool_result", false).unwrap();
     assert!(tool_output::run(&db, "alice", &json!({"output_id":id})).is_err());
     crate::db::tools::init_default_tools(&db).unwrap();
-    assert!(!crate::db::tools::get(&db, "read_tool_result").unwrap().is_enabled);
+    // Startup never re-enables a tool the operator disabled.
+    assert!(!crate::db::tools::tool_enabled(&db, "read_tool_result").unwrap());
 }
 
 #[test]

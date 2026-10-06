@@ -35,6 +35,26 @@ fn save_plugin_tools(db: &Database, tools: &HashMap<String, bool>) -> anyhow::Re
     Ok(())
 }
 
+/// One-time move of a bundled package's legacy per-tool flags. Only absent
+/// entries are written: an explicit plugin flag is the operator's later choice.
+fn migrate_bundled_flags(db: &Database, rows: &[Tool]) -> anyhow::Result<()> {
+    let mut flags = load_plugin_tools(db)?;
+    let mut changed = false;
+    for row in rows {
+        if crate::tools::packages::bundled_tool(&row.name).is_some()
+            && !flags.contains_key(&row.name)
+        {
+            tracing::info!(tool = %row.name, "Moving bundled tool flag to the plugin flag store");
+            flags.insert(row.name.clone(), row.is_enabled);
+            changed = true;
+        }
+    }
+    if changed {
+        save_plugin_tools(db, &flags)?;
+    }
+    Ok(())
+}
+
 pub fn get_plugin_tool_enabled(db: &Database, name: &str) -> bool {
     plugin_tool_enabled(db, name).unwrap_or(false)
 }
@@ -42,11 +62,29 @@ pub fn get_plugin_tool_enabled(db: &Database, name: &str) -> bool {
 /// Native VM ownership moved to a plugin. Keep old operator choices until an
 /// explicit plugin flag overrides them, without enabling tools on startup.
 pub fn plugin_tool_enabled(db: &Database, name: &str) -> anyhow::Result<bool> {
-    if let Some(enabled) = load_plugin_tools(db)?.get(name) { return Ok(*enabled); }
-    if crate::runtime::vm::is_vm_tool(name) {
-        return Ok(load_tools(db)?.iter().find(|t| t.name == name).is_some_and(|t| t.is_enabled));
+    // A kernel-bundled package's switch is the only way to make its tools
+    // absent; per-tool flags are preserved underneath it.
+    if !crate::tools::packages::bundled_tool_enabled(&db.data_dir(), name)? {
+        return Ok(false);
     }
-    Ok(true)
+    if let Some(enabled) = load_plugin_tools(db)?.get(name) { return Ok(*enabled); }
+    let row = load_tools(db)?.into_iter().find(|t| t.name == name);
+    if crate::runtime::vm::is_vm_tool(name) {
+        // VM adoption: a stale row keeps the choice; no row means not adopted.
+        return Ok(row.is_some_and(|t| t.is_enabled));
+    }
+    // Legacy rows keep the operator's earlier choice until an explicit plugin
+    // flag overrides them (migrated bundled tools rely on this).
+    Ok(row.is_none_or(|t| t.is_enabled))
+}
+
+/// Effective switch for a tool name: the persisted builtin row when one exists,
+/// otherwise the plugin flag store that bundled packages and plugins use.
+pub fn tool_enabled(db: &Database, name: &str) -> anyhow::Result<bool> {
+    if let Some(tool) = load_tools(db)?.into_iter().find(|t| t.name == name) {
+        return Ok(tool.is_enabled);
+    }
+    plugin_tool_enabled(db, name)
 }
 
 pub fn set_plugin_tool_enabled(db: &Database, name: &str, enabled: bool) -> anyhow::Result<()> {
@@ -154,6 +192,10 @@ pub fn init_default_tools(db: &Database) -> anyhow::Result<()> {
     let default_names: std::collections::HashSet<String> =
         defaults.iter().map(|t| t.name.clone()).collect();
 
+    // Tools that moved to a kernel-bundled package keep the operator's choice:
+    // copy their flags into the plugin store before the legacy rows go away.
+    migrate_bundled_flags(db, &tools)?;
+
     let mut changed = false;
 
     // Drop any persisted tool that is no longer in the defaults. This keeps
@@ -195,19 +237,13 @@ pub fn init_default_tools(db: &Database) -> anyhow::Result<()> {
 }
 
 /// Canonical built-in contracts shared by discovery and state-based routing.
+/// Tools of a kernel-bundled package (`runtime_control`) are deliberately not
+/// seeded here: their names, schemas and ownership come from the bundled
+/// manifest under `packages/`, while the implementations stay host-owned.
 pub(crate) fn get_default_tools() -> Vec<Tool> {
     vec![
-        crate::gateway::action_contracts::definition(),
         crate::tools::apply_patch::definition(),
-        crate::gateway::decision_ir::definition(),
         crate::tools::apply_patch::inspect_definition(),
-        crate::tools::tool_output::definition(),
-        Tool {
-            name: "search_tools".into(),
-            description: Some("Search enabled builtin/plugin capabilities by name or keywords and load matching schemas for the NEXT model turn in this task. Start here for web search, memory/SRS, media, Discord, VM, scheduling or other non-core tools. Never enables disabled tools. Use precise queries; do not enumerate the catalog.".into()),
-            parameters: serde_json::json!({"type":"object","properties":{"query":{"type":"string","minLength":1,"maxLength":256},"limit":{"type":"integer","minimum":1,"maximum":8,"default":5},"replace":{"type":"boolean","description":"Replace earlier discoveries when the 24 additional-tool limit is reached; core tools stay available","default":false}},"required":["query"],"additionalProperties":false}),
-            is_enabled: true,
-        },
         Tool {
             name: "memory_profile_load".into(),
             description: Some("Load an existing user-owned memory profile for the current session/persona. On entering language_instructor load language_instructor, not a general memory bucket. If exists=false, call memory_profile_create then load again. Never load unrelated profiles without a relevant user request. Shared is separate and cannot be selected.".into()),
@@ -284,54 +320,6 @@ pub(crate) fn get_default_tools() -> Vec<Tool> {
             name: "read_file".into(),
             description: Some("Read file contents".into()),
             parameters: serde_json::json!({"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}),
-            is_enabled: true,
-        },
-        Tool {
-            name: "get_context".into(),
-            description: Some("Read current context".into()),
-            parameters: serde_json::json!({"type":"object","properties":{}}),
-            is_enabled: true,
-        },
-        Tool {
-            name: "set_context".into(),
-            description: Some("Set context variable".into()),
-            parameters: serde_json::json!({"type":"object","properties":{"key":{"type":"string"},"value":{}},"required":["key","value"]}),
-            is_enabled: true,
-        },
-        Tool {
-            name: "delete_context".into(),
-            description: Some("Delete context variable".into()),
-            parameters: serde_json::json!({"type":"object","properties":{"key":{"type":"string"}},"required":["key"]}),
-            is_enabled: true,
-        },
-        Tool {
-            name: "agent_next".into(),
-            description: Some("Advance the workflow. In graph mode select an outgoing edge by its stable zero-based index. Omit edge only when exactly one edge is eligible. Pass from_state to reject stale choices. Conditions and receipt guards remain enforced.".into()),
-            parameters: serde_json::json!({"type":"object","properties":{"edge":{"type":"integer","minimum":0},"from_state":{"type":"string"}},"additionalProperties":false}),
-            is_enabled: true,
-        },
-        Tool {
-            name: "agent_back".into(),
-            description: Some("Return to the previously visited graph node in this task. Restores that state's prompt and IR; source changes are not undone. Receipt guards still apply.".into()),
-            parameters: serde_json::json!({"type":"object","properties":{"from_state":{"type":"string"}},"additionalProperties":false}),
-            is_enabled: true,
-        },
-        Tool {
-            name: "agent_complete".into(),
-            description: Some("Mark task as done".into()),
-            parameters: serde_json::json!({"type":"object","properties":{}}),
-            is_enabled: true,
-        },
-        Tool {
-            name: "agent_set_path".into(),
-            description: Some("Set working directory".into()),
-            parameters: serde_json::json!({"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}),
-            is_enabled: true,
-        },
-        Tool {
-            name: "agent_feedback".into(),
-            description: Some("Send progress update".into()),
-            parameters: serde_json::json!({"type":"object","properties":{"message":{"type":"string"}},"required":["message"]}),
             is_enabled: true,
         },
         Tool {
@@ -843,21 +831,24 @@ pub(crate) fn get_default_tools() -> Vec<Tool> {
 }
 
 /// Convert enabled tools to LLM tool definitions
+pub fn to_tool_definition(
+    tool: &Tool,
+) -> crate::gateway::llm::provider::ToolDefinition {
+    crate::gateway::llm::provider::ToolDefinition {
+        tool_type: "function".to_string(),
+        function: crate::gateway::llm::provider::FunctionDefinition {
+            name: tool.name.clone(),
+            description: tool.description.clone().unwrap_or_default(),
+            parameters: tool.parameters.clone(),
+        },
+    }
+}
+
 pub fn to_tool_definitions(
     db: &Database,
 ) -> anyhow::Result<Vec<crate::gateway::llm::provider::ToolDefinition>> {
     let tools = list_enabled(db)?;
-    Ok(tools
-        .into_iter()
-        .map(|t| crate::gateway::llm::provider::ToolDefinition {
-            tool_type: "function".to_string(),
-            function: crate::gateway::llm::provider::FunctionDefinition {
-                name: t.name,
-                description: t.description.unwrap_or_default(),
-                parameters: t.parameters,
-            },
-        })
-        .collect())
+    Ok(tools.iter().map(to_tool_definition).collect())
 }
 
 #[cfg(test)]

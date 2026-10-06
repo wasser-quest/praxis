@@ -143,15 +143,12 @@ pub(crate) fn require_enabled(
     Ok(())
 }
 
-/// Replacements inherit existing per-tool choices until the operator explicitly
-/// overrides them in plugin flags. Package switches still control native code.
-pub(crate) fn plugin_enabled(db: &Database, plugin: &Plugin, name: &str) -> anyhow::Result<bool> {
-    let flags = crate::db::tools::list_plugin_tools(db)?;
-    if let Some(enabled) = flags.get(name) { return Ok(*enabled); }
-    if replaces(plugin, name) {
-        return Ok(crate::db::tools::list(db)?.iter().find(|row| row.name == name).is_none_or(|row| row.is_enabled));
-    }
-    Ok(true)
+/// Replacements and bundled tools inherit existing per-tool choices until the
+/// operator explicitly overrides them in plugin flags. A kernel-bundled
+/// package's tool-package switch expresses its absence (nothing else can);
+/// a replacement plugin is controlled by its own flags.
+pub(crate) fn plugin_enabled(db: &Database, _plugin: &Plugin, name: &str) -> anyhow::Result<bool> {
+    crate::db::tools::plugin_tool_enabled(db, name)
 }
 
 pub fn definitions(db: &Database, plugins: &PluginRegistry) -> anyhow::Result<Vec<ToolDefinition>> {
@@ -165,19 +162,15 @@ pub fn definitions(db: &Database, plugins: &PluginRegistry) -> anyhow::Result<Ve
         .into_iter()
         .filter(|tool| native(plugins, &tool.function.name) && package_on(&tool.function.name))
         .collect();
-    let flags = crate::db::tools::list_plugin_tools(db)?;
-    let legacy = crate::db::tools::list(db)?;
     tools.extend(
         plugins
             .tool_definitions()
             .into_iter()
-            .filter(|tool| flags.get(&tool.function.name).copied().unwrap_or_else(|| {
-                if crate::runtime::vm::is_vm_tool(&tool.function.name) {
-                    legacy.iter().find(|row| row.name == tool.function.name).is_some_and(|row| row.is_enabled)
-                } else if plugins.list().into_iter().any(|plugin| plugin.enabled && replaces(plugin, &tool.function.name) && plugin.tools.iter().any(|t| t.name == tool.function.name)) {
-                    legacy.iter().find(|row| row.name == tool.function.name).is_none_or(|row| row.is_enabled)
-                } else { true }
-            })),
+            // Package declarations follow the same package switch and per-tool
+            // flags as native names (bundled `runtime_control` is toggled here).
+            .filter(|tool| {
+                crate::db::tools::plugin_tool_enabled(db, &tool.function.name).unwrap_or(false)
+            }),
     );
     tools.sort_by(|a, b| a.function.name.cmp(&b.function.name));
     let mut names = HashSet::new();

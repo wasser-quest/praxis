@@ -187,12 +187,12 @@ impl LLMRouter {
         let mut tools = tools;
         for tool in &mut tools { crate::tools::tool_output::augment_definition(tool); }
         if !tools.is_empty()
-            && crate::db::tools::get(db, "read_tool_result").is_ok_and(|t| t.is_enabled)
-            && crate::tools::packages::tool_package_enabled(&db.data_dir(), "read_tool_result").unwrap_or(false)
+            && crate::db::tools::tool_enabled(db, "read_tool_result").unwrap_or(false)
         {
             if !tools.iter().any(|t| t.function.name == "read_tool_result") {
-                if let Some(reader) = crate::db::tools::to_tool_definitions(db)?.into_iter().find(|t| t.function.name == "read_tool_result") {
-                    tools.push(reader);
+                // Declared by the kernel's bundled package, not a seeded row.
+                if let Some(reader) = crate::tools::packages::bundled_tool("read_tool_result") {
+                    tools.push(crate::db::tools::to_tool_definition(reader));
                 }
             }
             messages.push(provider::ChatMessage { role: "system".into(), content: Some(crate::tools::tool_output::INSTRUCTIONS.into()),

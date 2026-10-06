@@ -1,0 +1,80 @@
+{
+  "name": "runtime_control",
+  "description": "Model-facing workflow navigation, Decision IR execution, discovery, context and checks",
+  "version": "0.1.0",
+  "enabled": true,
+  "tools": [
+    {
+      "name": "search_tools",
+      "description": "Search enabled builtin/plugin capabilities by name or keywords and load matching schemas for the NEXT model turn in this task. Start here for web search, memory/SRS, media, Discord, VM, scheduling or other non-core tools. Never enables disabled tools. Use precise queries; do not enumerate the catalog.",
+      "parameters": {"type":"object","properties":{"query":{"type":"string","minLength":1,"maxLength":256},"limit":{"type":"integer","minimum":1,"maximum":8,"default":5},"replace":{"type":"boolean","description":"Replace earlier discoveries when the 24 additional-tool limit is reached; core tools stay available","default":false}},"required":["query"],"additionalProperties":false},
+      "handler": {"type": "builtin", "name": "search_tools"}
+    },
+    {
+      "name": "execute_decision",
+      "description": "Execute one Praxis Decision IR v1 instruction: 1 OPCODE {flat JSON operands}, or 1 OPCODE for no operands. Use only the active workflow's [DECISION IR] opcode table. Same state permissions, contracts, rollback and receipts as normal tools; each instruction consumes one tool call. No batches, shell or model-supplied mappings. Requires an owned gateway task and pinned workflow.",
+      "parameters": {"type":"object","properties":{"ir":{"type":"string","minLength":3,"maxLength":2097152}},"required":["ir"],"additionalProperties":false},
+      "handler": {"type": "builtin", "name": "execute_decision"}
+    },
+    {
+      "name": "read_tool_result",
+      "description": "Read an already saved tool response, WITHOUT re-executing any action. Default: FULL saved response, no preview. Optionally choose numbered lines, tail, literal search, a JSON field, or max_chars for paging. Follow the returned next object to continue. Current user/session only; capped/expired source data cannot be restored. These view controls are direct parameters here, not nested under _output.",
+      "parameters": {"type":"object","properties":{"output_id":{"type":"string","description":"out_... reference from a previous tool response"},"view":{"type":"string","enum":["full","lines","tail","search"],"default":"full"},"start_line":{"type":"integer","minimum":1,"default":1,"description":"1-based start; for lines/search"},"line_count":{"type":"integer","minimum":1,"maximum":2000,"default":100,"description":"Number of lines, or maximum literal search matches"},"offset":{"type":"integer","minimum":0,"default":0,"description":"Unicode character offset WITHIN the selected view; use returned next arguments"},"max_chars":{"type":"integer","minimum":1,"maximum":32000,"description":"Optional explicit page limit. OMIT to receive the entire selected view; follow next if set and more remains"},"query":{"type":"string","minLength":1,"maxLength":256,"description":"Required for search only: case-sensitive literal substring, not regex"},"json_pointer":{"type":"string","maxLength":1024,"description":"Optional RFC 6901 field selection before the text view; e.g. /stdout or /items/0"}},"required":["output_id"],"additionalProperties":false},
+      "handler": {"type": "builtin", "name": "read_tool_result"}
+    },
+    {
+      "name": "get_context",
+      "description": "Read current context",
+      "parameters": {"type":"object","properties":{}},
+      "handler": {"type": "builtin", "name": "get_context"}
+    },
+    {
+      "name": "set_context",
+      "description": "Set context variable",
+      "parameters": {"type":"object","properties":{"key":{"type":"string"},"value":{}},"required":["key","value"]},
+      "handler": {"type": "builtin", "name": "set_context"}
+    },
+    {
+      "name": "delete_context",
+      "description": "Delete context variable",
+      "parameters": {"type":"object","properties":{"key":{"type":"string"}},"required":["key"]},
+      "handler": {"type": "builtin", "name": "delete_context"}
+    },
+    {
+      "name": "agent_next",
+      "description": "Advance the workflow. In graph mode select an outgoing edge by its stable zero-based index. Omit edge only when exactly one edge is eligible. Pass from_state to reject stale choices. Conditions and receipt guards remain enforced.",
+      "parameters": {"type":"object","properties":{"edge":{"type":"integer","minimum":0},"from_state":{"type":"string"}},"additionalProperties":false},
+      "handler": {"type": "builtin", "name": "agent_next"}
+    },
+    {
+      "name": "agent_back",
+      "description": "Return to the previously visited graph node in this task. Restores that state's prompt and IR; source changes are not undone. Receipt guards still apply.",
+      "parameters": {"type":"object","properties":{"from_state":{"type":"string"}},"additionalProperties":false},
+      "handler": {"type": "builtin", "name": "agent_back"}
+    },
+    {
+      "name": "agent_complete",
+      "description": "Mark task as done",
+      "parameters": {"type":"object","properties":{}},
+      "handler": {"type": "builtin", "name": "agent_complete"}
+    },
+    {
+      "name": "agent_set_path",
+      "description": "Set working directory",
+      "parameters": {"type":"object","properties":{"path":{"type":"string"}},"required":["path"]},
+      "handler": {"type": "builtin", "name": "agent_set_path"}
+    },
+    {
+      "name": "agent_feedback",
+      "description": "Send progress update",
+      "parameters": {"type":"object","properties":{"message":{"type":"string"}},"required":["message"]},
+      "handler": {"type": "builtin", "name": "agent_feedback"}
+    },
+    {
+      "name": "run_check",
+      "description": "Run a trusted named check from the active .sm [checks] section. Praxis owns command, cwd and timeout; pass only the check name. A verified receipt permits guarded state/completion transitions for the current task while declared resources and the shared workspace revision remain unchanged and until another potentially mutating tool runs. Exit 0 proves only the configured check passed, not general correctness.",
+      "parameters": {"type":"object","properties":{"name":{"type":"string","minLength":1,"maxLength":128}},"required":["name"],"additionalProperties":false},
+      "handler": {"type": "builtin", "name": "run_check"}
+    }
+  ]
+}

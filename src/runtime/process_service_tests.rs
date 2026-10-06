@@ -47,7 +47,7 @@ fn fixture(mode: &str) -> (tempfile::TempDir, Database, Config, PluginRegistry) 
     config.root_dir = dir.path().to_string_lossy().into();
     config.data_dir = data.to_string_lossy().into();
     let registry = crate::plugins::load_all_plugins(&dir.path().join("plugins"));
-    assert_eq!(registry.list().len(), 1);
+    assert_eq!(registry.list().len(), 1 + crate::tools::packages::bundled_plugins().len());
     (dir, db, config, registry)
 }
 

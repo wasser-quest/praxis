@@ -395,7 +395,7 @@ mod tests {
             error.to_string().contains("ir_target_not_allowed"),
             "{error}"
         );
-        crate::db::tools::set_enabled(&db, "execute_decision", false).unwrap();
+        crate::db::tools::set_plugin_tool_enabled(&db, "execute_decision", false).unwrap();
         let error = validate(&db, &registry, "fixture", &sm, &ctx).unwrap_err();
         assert!(error.to_string().contains("tool_disabled"), "{error}");
     }

@@ -64,6 +64,9 @@ Keep these true or the design collapses:
 
 * `packages/{dashboard,legacy_file_ops,shell,tui,vision}` — first-party optional
   packages with installers in `scripts/`.
+* `packages/runtime_control` — a **privileged bundled package**: its manifest
+  declares the 12 model-facing tools over `builtin` handlers bound to
+  host-owned operations, and the kernel always registers it (see §5.9).
 * `plugins/*` — shipped v1 tool plugins (vm, comfyui, elevenlabs_tts,
   brave_search, sosse, spotify, system_info, openrouter_image, mimo_understand).
 
@@ -167,6 +170,12 @@ Handlers: `builtin`, `http`, `script`, `executable`, `verification`,
   receiving the kernel's observed evidence snapshot.
 * **Checked `write_file`**: `expected_absent` / `expected_sha256` transactional
   single-file write with the durable journal; legacy raw form unchanged.
+* **`runtime_control` as a privileged bundled package**: the 12 model-facing
+  tools are declared by `packages/runtime_control/plugin.json` (`builtin`
+  handlers) and implemented by host-owned operations in
+  `tools::builtin_operations`; the tools are no longer seeded from
+  `db/tools.rs`, legacy enable/disable flags migrate to the plugin flag store,
+  and `execute_decision` lowers one instruction through the dispatch loop.
 
 ### Future design recorded
 
@@ -248,6 +257,31 @@ panel; no page, script or stylesheet is fetched for an absent slot. So “absent
 means *explained*, never *silently missing*, and drawing the UI never boots a
 VM/media service.
 
+### 5.9 Privileged bundled packages
+
+Some capabilities must keep working for the kernel's own workflows, but should
+still be *declared*, owned and switched like any other package. A **privileged
+bundled package** is a manifest under `packages/` (today `runtime_control`,
+later `file_ops`) that the kernel registers before anything installed:
+
+* Its tools are `builtin` handlers naming host-owned operations
+  (`tools::builtin_operations`). The package supplies the name, schema and
+  ownership; the kernel supplies identity and the implementation, so removing
+  the package removes the tools from the catalog, never the runtime's ability
+  to enforce guards.
+* It is never installed, never replaceable (`tools::packages::replaceable`
+  refuses it) and never self-privileged: an installed manifest cannot take one
+  of its names ("never two owners" holds at activation).
+* Its absence is the tool-package switch (`praxis plugin disable-builtin
+  <id>`), which removes exactly its tools while per-tool flags survive. There
+  is no repository, lifecycle hook or trust grant involved.
+* `execute_decision` is a table entry like the other eleven, backed by the
+  general "run this resolved call" capability: `builtin_operations::lower`
+  resolves one bounded instruction through `gateway::decision_ir` and hands the
+  resolved call back to the dispatch loop, which runs it as its next iteration
+  with the same ownership, flag and contract checks. Lowering never nests a
+  second dispatch chain, and callers without a dispatch loop fail closed.
+
 ## 6. What needs to be done (prioritized)
 
 These checkboxes are the working progress list. An item is ticked only once the
@@ -302,39 +336,43 @@ For `runtime_control` concretely: declare its 12 tools in
 `packages/runtime_control/plugin.json` over that operation table and stop
 seeding them from `db/tools.rs`'s default list. The migration must keep existing
 enable/disable flags and every identifier that SM/IR guards and tool groups
-reference, and must never expose both a builtin and a plugin owner.
+reference, and must never expose both a builtin and a plugin owner. (This is
+now done: see §5.9.)
 
 Already extracted (§9 recipe, one PR each):
 
 - [x] `legacy_file_ops` (2 tools) — optional crate + package + installer.
 - [x] `shell` (3) — optional crate + package + durable background worker.
 - [x] `vision` (1) — optional crate + package.
-
-Remaining owners (39 tools total):
-
-- [ ] **`runtime_control` (12)** — package of `builtin` handlers over host-owned
-  operations. Progress:
+- [x] **`runtime_control` (12)** — privileged bundled package
+  (`packages/runtime_control/plugin.json`), not a `"replaces"` plugin:
   - [x] `tools::builtin_operations` seam with host-issued identity;
         unknown operations fail closed.
-  - [x] `get_context`, `set_context`, `delete_context` (single implementation,
-        native dispatch delegates).
-  - [x] `search_tools`, `read_tool_result`, `run_check`.
-  - [x] `agent_next`, `agent_back`, `agent_complete`, `agent_set_path`,
-        `agent_feedback`.
-  - [ ] `execute_decision` — deliberately not a table entry: it lowers to
-        *arbitrary* tools (`inspect_file`, `agent_*`, …) via
-        `gateway::decision_ir::resolve`, so it is a dispatch-loop concern and
-        must stay next to the dispatcher (or gain a general "run this resolved
-call" capability).
-  - [ ] `packages/runtime_control/plugin.json` declaring all 12 over `builtin`.
-        Note: `tools::packages::replaceable()` deliberately excludes
-        `runtime_control` (like `file_ops`) because it drives host-owned
-        workflow semantics, so this must ship as a **privileged bundled
-        package**, not as a `"replaces"` plugin — the same treatment planned
-        for `file_ops` at the end of §C.
-  - [ ] stop seeding the 12 from `db/tools.rs`; preserve enable/disable flags
-        and every guard/tool-group identifier; never two owners.
-  - [ ] core-only exclusion test.
+  - [x] `get_context`, `set_context`, `delete_context`, `search_tools`,
+        `read_tool_result`, `run_check`, `agent_next`, `agent_back`,
+        `agent_complete`, `agent_set_path`, `agent_feedback` — single
+        implementations; native dispatch delegates to the table.
+  - [x] `execute_decision` — a table entry backed by the general "run this
+        resolved call" capability: `builtin_operations::lower` resolves one
+        instruction via `gateway::decision_ir::resolve` and the dispatch loop
+        runs the resolved call as its next iteration (never a nested dispatch),
+        bounded by `MAX_LOWER_DEPTH`. Callers without a dispatch loop fail
+        closed.
+  - [x] `packages/runtime_control/plugin.json` declares all 12 over `builtin`.
+        `tools::packages::replaceable()` deliberately excludes `runtime_control`
+        (like `file_ops`) because it drives host-owned workflow semantics, so
+        it ships as a **privileged bundled package** — the same treatment
+        planned for `file_ops` at the end of §C.
+  - [x] The 12 are no longer seeded from `db/tools.rs`; legacy enable/disable
+        flags migrate into the plugin flag store at `init_default_tools`, and
+        every guard/tool-group identifier keeps working unchanged. Exactly one
+        owner per name: an installed manifest cannot claim one of them.
+  - [x] Core-only exclusion test: without the package its tools leave the
+        catalog, discovery and the dispatcher, while host-owned guards still
+        require verified kernel evidence.
+
+Remaining owners (27 tools total):
+
 - [ ] `delegation` (2)
 - [ ] `memory` (8)
 - [ ] `rag` (4)
@@ -408,9 +446,11 @@ no VM/UI/media.
   receives the kernel's observed evidence snapshot, and worker failure fails
   closed. Receipt keys persist in `DATA_DIR/receipt.key` (or
   `PRAXIS_RECEIPT_KEY`), so archived receipts verify across restarts.
-* `file_ops`, `runtime_control`, memory, RAG, cron, Discord, interaction,
-  skills, workflow authoring, providers, channels and media still compile into
-  the kernel; only the crates/packages in §3 are independently installable.
+* `file_ops`, memory, RAG, cron, Discord, interaction, skills, workflow
+  authoring, providers, channels and media still compile into the kernel; only
+  the crates/packages in §3 are independently installable. `runtime_control` is
+  the deliberate exception: its tools are package-declared and switchable, and
+  their implementations stay host-owned kernel operations (§5.9).
 * `praxis-tui` is a `src/bin` inside the kernel crate, not yet an unlinked crate.
 * The engine package requires `role: "runtime"` **and** an operator grant; a
   package cannot promote itself.
@@ -477,6 +517,7 @@ PLUGINS_DIR="$TMP/plugins" DATA_DIR="$TMP/data" ROOT_DIR="$TMP/root" \
 | Area | File |
 | --- | --- |
 | Owner catalog / packages | `src/tools/catalog.rs`, `src/tools/packages.rs` |
+| Host-owned operations / bundled manifests | `src/tools/builtin_operations.rs`, `packages/runtime_control/plugin.json` |
 | Dispatch | `src/gateway/tool_dispatch.rs` |
 | Plugin manifest/loader | `src/plugins/mod.rs` |
 | Lifecycle/hooks/lockfile/assets | `src/plugins/lifecycle.rs` |
