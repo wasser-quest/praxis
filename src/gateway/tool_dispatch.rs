@@ -4,7 +4,7 @@
 use super::llm::provider::ToolCall;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum DispatchMode {
+pub enum DispatchMode {
     Chat,
     Agent,
 }
@@ -139,6 +139,7 @@ async fn dispatch_at_depth(
                                 user: user_id,
                                 call: &tc.id,
                                 root,
+                                mode,
                                 depth,
                             },
                             operation,
@@ -316,141 +317,6 @@ async fn dispatch_at_depth(
                             .await
                             .unwrap_or_else(|error| format!("Error: {error}"))
                     } // end else (shared mode)
-                }
-                "discord_upload_file" => {
-                    let settings_upload_ch = if mode == DispatchMode::Agent {
-                        db.load_context(user_id)
-                            .ok()
-                            .and_then(|c| c.settings.upload_channel_id.clone())
-                            .filter(|s| !s.is_empty())
-                    } else {
-                        None
-                    };
-                    let fallback_ch = ctx_data
-                        .as_ref()
-                        .and_then(|c| c.get("channel_id"))
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string())
-                        .or(settings_upload_ch)
-                        .unwrap_or_default();
-                    let channel_id = args["channel_id"]
-                        .as_str()
-                        .filter(|s| !s.is_empty())
-                        .unwrap_or(&fallback_ch);
-                    let filename = args["filename"].as_str().unwrap_or("file");
-                    let base64_content = args["base64_content"].as_str().unwrap_or("");
-                    // Decode base64 to temp file, then upload
-                    use base64::Engine;
-                    match base64::engine::general_purpose::STANDARD.decode(base64_content) {
-                        Ok(bytes) => {
-                            let tmp_path = format!("/tmp/{}", filename);
-                            if let Err(e) = std::fs::write(&tmp_path, &bytes) {
-                                format!("Error writing temp file: {}", e)
-                            } else {
-                                match crate::tools::discord_upload::upload_file(
-                                    channel_id,
-                                    &tmp_path,
-                                    filename,
-                                    args.get("message").and_then(|v| v.as_str()),
-                                )
-                                .await
-                                {
-                                    Ok(result) => {
-                                        let _ = std::fs::remove_file(&tmp_path);
-                                        result
-                                    }
-                                    Err(e) => {
-                                        let _ = std::fs::remove_file(&tmp_path);
-                                        format!("Error: {}", e)
-                                    }
-                                }
-                            }
-                        }
-                        Err(e) => format!("Error decoding base64: {}", e),
-                    }
-                }
-                "discord_send_message" => {
-                    let settings_upload_ch = if mode == DispatchMode::Agent {
-                        db.load_context(user_id)
-                            .ok()
-                            .and_then(|c| c.settings.upload_channel_id.clone())
-                            .filter(|s| !s.is_empty())
-                    } else {
-                        None
-                    };
-                    let fallback_ch = ctx_data
-                        .as_ref()
-                        .and_then(|c| c.get("channel_id"))
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string())
-                        .or(settings_upload_ch)
-                        .unwrap_or_default();
-                    let channel_id = args["channel_id"]
-                        .as_str()
-                        .filter(|s| !s.is_empty())
-                        .unwrap_or(&fallback_ch);
-                    let message = args["message"].as_str().unwrap_or("");
-                    match crate::tools::discord_send_message::send_message(channel_id, message).await {
-                        Ok(_) => "Message sent".to_string(),
-                        Err(e) => format!("Error: {}", e),
-                    }
-                }
-                "discord_send_embed" => {
-                    let fallback_ch = ctx_data
-                        .as_ref()
-                        .and_then(|c| c.get("channel_id"))
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("");
-                    let channel_id = args["channel_id"]
-                        .as_str()
-                        .filter(|s| !s.is_empty())
-                        .unwrap_or(fallback_ch);
-                    let title = args.get("title").and_then(|v| v.as_str());
-                    let description = args.get("description").and_then(|v| v.as_str());
-                    let url = args.get("url").and_then(|v| v.as_str());
-                    let color = args
-                        .get("color")
-                        .and_then(|v| crate::tools::discord_send_embed::parse_color(v));
-                    let footer = args.get("footer").and_then(|v| v.as_str());
-                    let author = args.get("author").and_then(|v| v.as_str());
-                    let thumbnail = args.get("thumbnail").and_then(|v| v.as_str());
-                    let image = args.get("image").and_then(|v| v.as_str());
-                    let fields = args
-                        .get("fields")
-                        .map(|v| crate::tools::discord_send_embed::parse_fields(v))
-                        .unwrap_or_default();
-                    match crate::tools::discord_send_embed::send_embed(
-                        user_id,
-                        channel_id,
-                        title,
-                        description,
-                        url,
-                        color,
-                        footer,
-                        author,
-                        thumbnail,
-                        image,
-                        fields,
-                    )
-                    .await
-                    {
-                        Ok(_) => "Embed sent".to_string(),
-                        Err(e) => format!("Error: {}", e),
-                    }
-                }
-                #[cfg(feature = "vision")]
-                "understand_image" => {
-                    let result = crate::tools::understand_image::run(&args).await;
-                    // Store image content_parts alongside the result
-                    // We return the text, but the caller needs to handle content_parts separately
-                    // Use a special marker to indicate this tool returned image data
-                    break 'step Step::Text(serde_json::json!({
-                        "text": result.text,
-                        "content_parts": result.content_parts.iter().map(|cp| {
-                            serde_json::to_value(cp).unwrap_or_default()
-                        }).collect::<Vec<_>>()
-                    })
-                    .to_string());
                 }
                 "send_screenshot" => {
                     let fallback_ch = ctx_data

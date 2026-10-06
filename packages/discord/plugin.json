@@ -1,0 +1,133 @@
+{
+  "name": "discord",
+  "description": "Discord messages, embeds and uploads",
+  "version": "0.1.0",
+  "enabled": true,
+  "tools": [
+    {
+      "name": "discord_upload_file",
+      "description": "Upload file to Discord channel. If channel_id is omitted, sends to the channel where the request originated.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "channel_id": {
+            "type": "string",
+            "description": "Discord channel ID. If omitted, uses the originating channel."
+          },
+          "filename": {
+            "type": "string",
+            "description": "Display filename for the attachment"
+          },
+          "base64_content": {
+            "type": "string",
+            "description": "Base64-encoded file content"
+          },
+          "message": {
+            "type": "string",
+            "description": "Optional message text"
+          }
+        },
+        "required": [
+          "filename",
+          "base64_content"
+        ]
+      },
+      "handler": {
+        "type": "builtin",
+        "name": "discord_upload_file"
+      }
+    },
+    {
+      "name": "discord_send_message",
+      "description": "Send message to Discord channel. If channel_id is omitted, sends to the originating channel.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "channel_id": {
+            "type": "string",
+            "description": "Discord channel ID. If omitted, uses the originating channel."
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "message"
+        ]
+      },
+      "handler": {
+        "type": "builtin",
+        "name": "discord_send_message"
+      }
+    },
+    {
+      "name": "discord_send_embed",
+      "description": "Send rich embed to Discord channel. If channel_id is omitted, sends to the originating channel.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "channel_id": {
+            "type": "string",
+            "description": "Discord channel ID. If omitted, uses the originating channel."
+          },
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "color": {
+            "type": [
+              "string",
+              "number"
+            ],
+            "description": "Hex color (e.g. '6C5CE7' or '#FF0000') or integer"
+          },
+          "footer": {
+            "type": "string"
+          },
+          "author": {
+            "type": "string"
+          },
+          "thumbnail": {
+            "type": "string",
+            "description": "URL to thumbnail image"
+          },
+          "image": {
+            "type": "string",
+            "description": "URL to full image"
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "value": {
+                  "type": "string"
+                },
+                "inline": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "name",
+                "value"
+              ]
+            }
+          }
+        },
+        "required": []
+      },
+      "handler": {
+        "type": "builtin",
+        "name": "discord_send_embed"
+      }
+    }
+  ]
+}

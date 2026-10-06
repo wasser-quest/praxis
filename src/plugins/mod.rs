@@ -697,6 +697,9 @@ impl PluginRegistry {
                         user,
                         call,
                         root: &root,
+                        // Direct callers have no dispatch mode; agent-only
+                        // fallbacks stay off outside the dispatch loop.
+                        mode: crate::gateway::tool_dispatch::DispatchMode::Chat,
                         depth: 0,
                     },
                     operation,

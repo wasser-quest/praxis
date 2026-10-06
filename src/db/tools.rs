@@ -280,24 +280,6 @@ pub(crate) fn get_default_tools() -> Vec<Tool> {
             parameters: serde_json::json!({"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}),
             is_enabled: true,
         },
-        Tool {
-            name: "discord_upload_file".into(),
-            description: Some("Upload file to Discord channel. If channel_id is omitted, sends to the channel where the request originated.".into()),
-            parameters: serde_json::json!({"type":"object","properties":{"channel_id":{"type":"string","description":"Discord channel ID. If omitted, uses the originating channel."},"filename":{"type":"string","description":"Display filename for the attachment"},"base64_content":{"type":"string","description":"Base64-encoded file content"},"message":{"type":"string","description":"Optional message text"}},"required":["filename","base64_content"]}),
-            is_enabled: true,
-        },
-        Tool {
-            name: "discord_send_message".into(),
-            description: Some("Send message to Discord channel. If channel_id is omitted, sends to the originating channel.".into()),
-            parameters: serde_json::json!({"type":"object","properties":{"channel_id":{"type":"string","description":"Discord channel ID. If omitted, uses the originating channel."},"message":{"type":"string"}},"required":["message"]}),
-            is_enabled: true,
-        },
-        Tool {
-            name: "discord_send_embed".into(),
-            description: Some("Send rich embed to Discord channel. If channel_id is omitted, sends to the originating channel.".into()),
-            parameters: serde_json::json!({"type":"object","properties":{"channel_id":{"type":"string","description":"Discord channel ID. If omitted, uses the originating channel."},"title":{"type":"string"},"description":{"type":"string"},"url":{"type":"string"},"color":{"type":["string","number"],"description":"Hex color (e.g. '6C5CE7' or '#FF0000') or integer"},"footer":{"type":"string"},"author":{"type":"string"},"thumbnail":{"type":"string","description":"URL to thumbnail image"},"image":{"type":"string","description":"URL to full image"},"fields":{"type":"array","items":{"type":"object","properties":{"name":{"type":"string"},"value":{"type":"string"},"inline":{"type":"boolean"}},"required":["name","value"]}}},"required":[]}),
-            is_enabled: true,
-        },
         // RAG Tools
         // Cron Tools
         Tool {

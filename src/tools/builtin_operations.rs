@@ -40,6 +40,9 @@ pub struct BuiltinContext<'a> {
     /// The runtime root holding `contexts/`, issued by the dispatcher. Never
     /// taken from a tool argument.
     pub root: &'a std::path::Path,
+    /// The dispatcher's execution mode, for operations whose behavior differs
+    /// between chat and agent runs (never taken from tool arguments).
+    pub mode: crate::gateway::tool_dispatch::DispatchMode,
     /// Decision-IR lowerings already run for this call (bounded).
     pub depth: u8,
 }
@@ -79,6 +82,18 @@ pub async fn execute(
         "cron_add" | "cron_delete" | "cron_list" | "cron_toggle" | "cron_run" => {
             crate::tools::cron::run(ctx.db, ctx.user, name, args)
                 .unwrap_or_else(|error| format!("Error: {error}"))
+        }
+        // Discord delivery over the host's authenticated channel bindings.
+        "discord_upload_file" | "discord_send_message" | "discord_send_embed" => {
+            Box::pin(crate::tools::discord_tools::run(
+                ctx.db,
+                ctx.user,
+                ctx.mode == crate::gateway::tool_dispatch::DispatchMode::Agent,
+                name,
+                args,
+            ))
+            .await
+            .unwrap_or_else(|error| format!("Error: {error}"))
         }
         // Document ingestion and retrieval over the host-owned store.
         "rag_search" | "rag_ingest" | "rag_list" | "rag_delete" => {
@@ -240,6 +255,7 @@ mod tests {
             user: "builtin-op-user",
             call: "call-1",
             root: std::path::Path::new("."),
+            mode: crate::gateway::tool_dispatch::DispatchMode::Chat,
             depth: 0,
         }
     }
