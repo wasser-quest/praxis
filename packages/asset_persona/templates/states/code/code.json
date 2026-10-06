@@ -1,0 +1,12 @@
+{
+  "scene_goal": "Write, modify, or review code to implement the user's actual requirement",
+  "participants": [
+    {"name": "Developer", "role": "Agent", "description": "Implements, modifies, or reviews code using enabled tools"},
+    {"name": "Codebase", "role": "Patient", "description": "The code artifacts being created, modified, or reviewed"},
+    {"name": "User", "role": "Beneficiary", "description": "Person requesting the code work with specific requirements"}
+  ],
+  "action_to_complete": {"predicate": "implement or modify code per requirements", "agent": "Developer", "patient": "Codebase"},
+  "constraints": ["Read before writing", "Follow existing patterns and conventions", "Minimal changes for the requirement", "Verify with tests or execution", "No speculative features"],
+  "success_criteria": ["Requirement implemented", "Code follows project conventions", "Tests pass or manual verification done", "No unrelated changes"],
+  "output_format": "Summary of changes made, files touched, verification done. Diff or key snippets if helpful."
+}

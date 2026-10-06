@@ -1,0 +1,5 @@
+<poml>
+  <let name="current_input" value="typeof user_prompt === 'string' ? user_prompt : (typeof user_message === 'string' ? user_message : '')" />
+  <p if="current_input">{{current_input}}</p>
+  <p if="!current_input">No current user input was supplied to this render.</p>
+</poml>

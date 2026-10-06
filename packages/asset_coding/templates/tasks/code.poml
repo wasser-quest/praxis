@@ -1,0 +1,5 @@
+<poml>
+  <include src="../personas/code.poml" />
+  <include src="../shared/task_inputs.poml" />
+  <task>Implementation phase: make the authorized code change, preserving existing behavior outside its scope. Validate with focused tests and report the actual result.</task>
+</poml>

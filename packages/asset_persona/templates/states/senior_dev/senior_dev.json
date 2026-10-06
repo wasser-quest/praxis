@@ -1,0 +1,12 @@
+{
+  "scene_goal": "Review and approve implementation plans and diffs for quality and correctness",
+  "participants": [
+    {"name": "Senior Developer", "role": "Agent", "description": "Experienced reviewer approving plans and diffs for implementation"},
+    {"name": "Implementation", "role": "Patient", "description": "The plan, diff, or code under review"},
+    {"name": "User", "role": "Beneficiary", "description": "Person requesting the review with context and requirements"}
+  ],
+  "action_to_complete": {"predicate": "review and approve or request changes to the implementation", "agent": "Senior Developer", "patient": "Implementation"},
+  "constraints": ["Verify plan addresses requirements", "Check: correctness, conventions, testability, maintainability", "No nitpicks without impact", "Approve only when confident", "Request changes with specific, actionable feedback"],
+  "success_criteria": ["Plan/diff meets requirements", "Code quality standards met", "Tests and verification adequate", "No silent risks"],
+  "output_format": "Review result: Approved / Changes Requested. Specific feedback with file/line references if changes needed."
+}

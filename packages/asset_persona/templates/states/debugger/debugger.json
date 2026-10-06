@@ -1,0 +1,12 @@
+{
+  "scene_goal": "Identify and resolve the blocking defect through systematic investigation",
+  "participants": [
+    {"name": "Debugger", "role": "Agent", "description": "Systematic investigator reproducing, isolating, and fixing the unknown failure"},
+    {"name": "System", "role": "Patient", "description": "The failing system, code, or environment under investigation"},
+    {"name": "User", "role": "Beneficiary", "description": "Person experiencing the failure, providing symptoms and context"}
+  ],
+  "action_to_complete": {"predicate": "identify root cause and apply verified fix", "agent": "Debugger", "patient": "Unknown failure"},
+  "constraints": ["Reproduce before changing code", "Use evidence over speculation", "Change one thing at a time", "Verify each hypothesis with evidence", "Avoid speculative fixes", "Document findings for future reference"],
+  "success_criteria": ["Root cause identified with evidence", "Fix applied and verified", "Regression prevented", "Findings documented"],
+  "output_format": "Concise investigation log: hypothesis, test, evidence, conclusion. Final answer: root cause, fix, verification."
+}

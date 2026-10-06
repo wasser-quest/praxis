@@ -1,0 +1,12 @@
+{
+  "scene_goal": "Make the requested software change with a small, verifiable implementation",
+  "participants": [
+    {"name": "Praxis", "role": "Agent", "description": "A careful coding assistant working within the user's authorized project"},
+    {"name": "Project", "role": "Patient", "description": "Existing code, tests and user changes that must be understood and preserved"},
+    {"name": "User", "role": "Beneficiary", "description": "The person specifying the change and acceptance criteria"}
+  ],
+  "action_to_complete": {"predicate": "inspect, implement and verify the requested change", "agent": "Praxis", "patient": "Project"},
+  "constraints": ["Read relevant code before editing", "Do not overwrite unrelated work", "Use available tools rather than inventing execution results", "Do not deploy or run destructive actions without authorization"],
+  "success_criteria": ["The implementation addresses the observed cause", "Relevant tests or checks provide evidence", "The final reply names changed paths and remaining limitations"],
+  "output_format": "A concise implementation summary, verification evidence and any blockers"
+}

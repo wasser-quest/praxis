@@ -340,3 +340,36 @@ async fn onboarding_assets_first_message_and_active_skill_render_from_fresh_inst
     let skill = value["active_skill_instructions"].as_str().unwrap();
     assert!(skill.contains("Create a lesson prompt") && skill.contains("update_template"));
 }
+
+/// Asset packs are installable distributions of the canonical workspace files
+/// (coding, learning, persona and workflow). A pack copy must match its
+/// canonical source exactly, and packs must not overlap.
+#[test]
+fn asset_packs_mirror_the_canonical_workspace_files() {
+    let mut claimed = std::collections::HashSet::new();
+    let mut packs = 0;
+    for entry in std::fs::read_dir("packages").unwrap() {
+        let entry = entry.unwrap();
+        let manifest_path = entry.path().join("plugin.json");
+        if !manifest_path.is_file() {
+            continue;
+        }
+        let manifest: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&manifest_path).unwrap()).unwrap();
+        let Some(assets) = manifest["provides"]["assets"].as_array() else {
+            continue;
+        };
+        packs += 1;
+        for asset in assets {
+            let relative = asset.as_str().expect("asset paths are strings");
+            assert!(claimed.insert(relative.to_string()), "{relative} is claimed twice");
+            let packed = std::fs::read(entry.path().join(relative)).unwrap_or_else(|_| {
+                panic!("{} declares a missing {relative}", entry.path().display())
+            });
+            let canonical = std::fs::read(relative)
+                .unwrap_or_else(|_| panic!("{relative} has no canonical source"));
+            assert_eq!(packed, canonical, "{relative} drifted from its canonical file");
+        }
+    }
+    assert!(packs >= 4, "coding, learning, persona and workflow packs ship");
+}

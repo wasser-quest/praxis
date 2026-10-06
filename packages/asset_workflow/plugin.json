@@ -1,0 +1,30 @@
+{
+  "name": "asset_workflow",
+  "description": "Core workflow assets: the standard runtime prompts, shared includes, blueprints and tasks",
+  "version": "1.0.0",
+  "enabled": true,
+  "provides": {
+    "assets": [
+      "contexts/standard.sm",
+      "contexts/standard-verified.sm",
+      "templates/standard.poml",
+      "templates/system.poml",
+      "templates/user.poml",
+      "templates/compaction.poml",
+      "templates/discovery/skills.poml",
+      "templates/tasks/done.poml",
+      "templates/shared/blueprint.poml",
+      "templates/shared/output_format.poml",
+      "templates/shared/roles.poml",
+      "templates/shared/runtime.poml",
+      "templates/shared/runtime_minimal.poml",
+      "templates/shared/state_base.poml",
+      "templates/shared/task_inputs.poml",
+      "templates/blueprints/code_assistant.json",
+      "templates/blueprints/language_instructor.json",
+      "templates/blueprints/researcher.json",
+      "templates/blueprints/standard.json"
+    ]
+  },
+  "tools": []
+}

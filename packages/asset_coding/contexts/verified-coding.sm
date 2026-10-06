@@ -1,0 +1,23 @@
+# Opt-in example: set WORKSPACE_DIR to the project, keeping assets at ROOT_DIR.
+# Commands are workflow-author configuration, never model-supplied arguments.
+@name "Verified coding"
+@steps [working, done]
+
+[state working]
+settings.activated_tools = ["coding"]
+settings.max_llm_turns = 10
+settings.max_tool_calls = 20
+
+[state done]
+settings.activated_tools = ["read_file", "inspect_file", "run_check", "set_context", "get_context", "agent_complete"]
+
+[checks]
+build = {"program":"cargo","args":["check","--manifest-path","Cargo.toml","--locked"],"cwd":".","timeout_secs":300,"resources":["src","Cargo.toml","Cargo.lock"]}
+tests = {"program":"cargo","args":["test","--manifest-path","Cargo.toml","--locked","--lib"],"cwd":".","timeout_secs":300,"resources":["src","Cargo.toml","Cargo.lock"]}
+
+[guards]
+done = [build, tests]
+_complete = [build, tests]
+
+[tool_groups]
+coding = [read_file, inspect_file, apply_patch, run_check, agent_next, agent_complete, set_context, get_context, read_tool_result]

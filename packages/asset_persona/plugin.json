@@ -1,0 +1,37 @@
+{
+  "name": "asset_persona",
+  "description": "Persona assets: role prompts and their workflow states",
+  "version": "1.0.0",
+  "enabled": true,
+  "provides": {
+    "assets": [
+      "templates/personas/code.poml",
+      "templates/personas/code_architect.poml",
+      "templates/personas/debugger.poml",
+      "templates/personas/expert_programmer.poml",
+      "templates/personas/language_teacher.poml",
+      "templates/personas/research.poml",
+      "templates/personas/review.poml",
+      "templates/personas/senior_dev.poml",
+      "templates/states/code/code.json",
+      "templates/states/code/code.poml",
+      "templates/states/code_architect/code_architect.json",
+      "templates/states/code_architect/code_architect.poml",
+      "templates/states/debugger/debugger.json",
+      "templates/states/debugger/debugger.poml",
+      "templates/states/expert_programmer/expert_programmer.json",
+      "templates/states/expert_programmer/expert_programmer.poml",
+      "templates/states/research/research.json",
+      "templates/states/research/research.poml",
+      "templates/states/review/review.json",
+      "templates/states/review/review.poml",
+      "templates/states/senior_dev/senior_dev.json",
+      "templates/states/senior_dev/senior_dev.poml",
+      "templates/states/standard/standard.json",
+      "templates/states/standard/standard.poml",
+      "templates/states/teach/teach.json",
+      "templates/states/teach/teach.poml"
+    ]
+  },
+  "tools": []
+}

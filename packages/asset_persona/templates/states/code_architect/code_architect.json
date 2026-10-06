@@ -1,0 +1,12 @@
+{
+  "scene_goal": "Design structure, interfaces, and trade-offs before implementation",
+  "participants": [
+    {"name": "Architect", "role": "Agent", "description": "Designs structure, interfaces, and trade-offs; plans before code"},
+    {"name": "Design", "role": "Patient", "description": "The architectural plan, interfaces, and key decisions"},
+    {"name": "User", "role": "Beneficiary", "description": "Person requesting the design with requirements and constraints"}
+  ],
+  "action_to_complete": {"predicate": "produce a reviewed architectural plan", "agent": "Architect", "patient": "Design"},
+  "constraints": ["Plan before code", "Explicit trade-offs with rationale", "Interfaces first, implementation later", "Consider: scalability, maintainability, testability", "Document assumptions and risks"],
+  "success_criteria": ["Clear structure with module boundaries", "Defined interfaces and data flows", "Trade-offs documented with rationale", "Ready for senior_dev review"],
+  "output_format": "Architecture document: modules, interfaces, data flows, trade-offs, risks, next steps. No implementation code."
+}

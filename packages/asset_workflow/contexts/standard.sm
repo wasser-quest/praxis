@@ -1,0 +1,95 @@
+# Routing contract v3: the model switches roles with
+#   set_context("sm_data.role", "<role>")
+# The [auto] rules below map that value to a real state on the very next
+# routing pass (every LLM request, including tool-call follow-ups), which
+# swaps settings.system_template AND the activated tool set. Manual
+# settings.system_template choices stick; a stale name falls back to standard.
+@name "Standard profile routing"
+@version "3.0"
+@steps [routing, standard, teach, code, code_architect, senior_dev, expert_programmer, debugger, review, research]
+
+# The role catalog belongs to this workflow, not to a saved user context.
+# Apply on every routing pass, including contexts imported from other workflows.
+[overrides]
+if active_state != "" -> sm_data.persona_roles = "standard, code, code_architect, senior_dev, expert_programmer, debugger, review, teach, research"
+
+# Tool groups are defined per workflow; there are no built-in groups.
+# Members may be tool names (built-in or plugin) or other group names.
+[tool_groups]
+core_files = [read_file, write_file, edit_file]
+core_terminal = [execute_terminal, core_files]
+coding = [core_terminal, search_tools]
+# Discovery must stay callable even in narrow states (e.g. teach needs memory).
+agent_basic = [agent_complete, agent_next, agent_back, agent_feedback, search_tools, search_skills, use_skill, read_tool_result]
+context = [get_context, set_context, read_tool_result]
+memory = [memory_get, memory_set, learn_fact, learn_preference, learn_topic]
+discovery = [search_tools, search_skills]
+skills = [search_skills, use_skill]
+discord = [discord_send_message, discord_send_embed, discord_upload_file]
+vm = [vm_start, vm_stop, vm_shell, vm_keys, vm_mouse, vm_screenshot, vm_file_transfer, vm_snapshot, vm_shared_folder]
+cron = [cron_add, cron_delete, cron_list, cron_toggle, cron_run]
+# Every state needs set_context to switch roles again.
+role_switch = [set_context, get_context]
+
+[state routing]
+settings.system_template = "states/standard/standard"
+settings.activated_tools = ["core_files", "agent_basic", "role_switch"]
+settings.tool_discovery_mode = "DescriptionOnly"
+
+[state standard]
+settings.system_template = "states/standard/standard"
+settings.activated_tools = ["core_files", "agent_basic", "role_switch"]
+settings.tool_discovery_mode = "DescriptionOnly"
+
+[state teach]
+settings.system_template = "states/teach/teach"
+settings.activated_tools = ["agent_basic", "role_switch"]
+settings.tool_discovery_mode = "DescriptionOnly"
+
+[state code]
+settings.system_template = "states/code/code"
+settings.activated_tools = ["coding", "agent_basic", "role_switch"]
+settings.tool_discovery_mode = "DescriptionOnly"
+
+[state code_architect]
+settings.system_template = "states/code_architect/code_architect"
+settings.activated_tools = ["core_files", "agent_basic", "context"]
+settings.tool_discovery_mode = "DescriptionOnly"
+
+[state senior_dev]
+settings.system_template = "states/senior_dev/senior_dev"
+settings.activated_tools = ["core_files", "agent_basic", "context"]
+settings.tool_discovery_mode = "DescriptionOnly"
+
+[state expert_programmer]
+settings.system_template = "states/expert_programmer/expert_programmer"
+settings.activated_tools = ["coding", "agent_basic", "role_switch"]
+settings.tool_discovery_mode = "DescriptionOnly"
+
+[state debugger]
+settings.system_template = "states/debugger/debugger"
+settings.activated_tools = ["coding", "agent_basic", "context"]
+settings.tool_discovery_mode = "DescriptionOnly"
+
+[state review]
+settings.system_template = "states/review/review"
+settings.activated_tools = ["core_files", "agent_basic", "context"]
+settings.tool_discovery_mode = "DescriptionOnly"
+
+[state research]
+settings.system_template = "states/research/research"
+settings.activated_tools = ["discovery", "agent_basic", "context", "brave_web_search"]
+settings.tool_discovery_mode = "Full"
+
+# Model-driven routing: first match wins, evaluated on every request.
+# An unknown or unset role keeps the current state.
+[auto]
+sm_data.role == "standard" -> use standard
+sm_data.role == "code" -> use code
+sm_data.role == "code_architect" -> use code_architect
+sm_data.role == "senior_dev" -> use senior_dev
+sm_data.role == "expert_programmer" -> use expert_programmer
+sm_data.role == "debugger" -> use debugger
+sm_data.role == "review" -> use review
+sm_data.role == "teach" -> use teach
+sm_data.role == "research" -> use research

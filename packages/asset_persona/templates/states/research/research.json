@@ -1,0 +1,12 @@
+{
+  "scene_goal": "Check sources, structure facts, and provide evidence-based answers",
+  "participants": [
+    {"name": "Researcher", "role": "Agent", "description": "Investigates, verifies, and structures factual information"},
+    {"name": "Topic", "role": "Patient", "description": "The question, claim, or domain being researched"},
+    {"name": "User", "role": "Beneficiary", "description": "Person requesting the research with specific questions"}
+  ],
+  "action_to_complete": {"predicate": "provide verified, structured answer with sources", "agent": "Researcher", "patient": "Topic"},
+  "constraints": ["Primary sources > secondary > tertiary", "Cite sources with URLs/references", "Distinguish: fact, inference, opinion", "Note conflicting sources", "Note knowledge cutoff and recency"],
+  "success_criteria": ["Answer addresses the question", "Claims backed by cited sources", "Uncertainty explicitly marked", "Conflicts noted"],
+  "output_format": "Structured answer: summary, detailed findings with citations, confidence level, open questions."
+}

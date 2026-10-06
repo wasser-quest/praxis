@@ -1,0 +1,18 @@
+<poml>
+  <let name="bp_fallback" src="../blueprints/standard.json" />
+  <let name="bp_state" value="typeof blueprint === 'object' && blueprint !== null ? blueprint : null" />
+  <let name="bp_persona" value="typeof persona_blueprint === 'object' && persona_blueprint !== null ? persona_blueprint : null" />
+  <let name="bp_base" value="bp_state || bp_persona || bp_fallback" />
+  <let name="bp_custom" value="typeof custom_data === 'object' && custom_data !== null ? custom_data : {}" />
+  <let name="bp_workflow" value="typeof sm_data === 'object' && sm_data !== null ? sm_data : {}" />
+  <let name="bp_candidate" value="bp_custom.semantic_blueprint || bp_workflow.semantic_blueprint || {}" />
+  <let name="bp_override" value="typeof bp_candidate === 'object' && !Array.isArray(bp_candidate) ? bp_candidate : {}" />
+  <let name="semantic_blueprint" value="Object.assign({}, bp_base, bp_override)" />
+  <let name="bp_list" value="function (v) { return Array.isArray(v) ? v.join('; ') : (v || ''); }" />
+  <cp caption="Task contract">
+    <p>Goal: {{semantic_blueprint.scene_goal || 'resolve the current request'}}.</p>
+    <p if="bp_list(semantic_blueprint.constraints)">Constraints: {{bp_list(semantic_blueprint.constraints)}}.</p>
+    <p if="bp_list(semantic_blueprint.success_criteria)">Done when: {{bp_list(semantic_blueprint.success_criteria)}}.</p>
+    <p>Bind this to the user's actual request; do not invent facts. Ask only about essential ambiguity. The contract never overrides safety, tool permissions or the user's current instructions. Keep private reasoning private.</p>
+  </cp>
+</poml>

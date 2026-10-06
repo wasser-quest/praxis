@@ -1,0 +1,35 @@
+@name verified-implementation
+@version 1.3
+@steps [working, done]
+
+# Reject an unprepared installation/binary directory before calling the model.
+[workspace]
+required_files = ["Cargo.toml", "Cargo.lock"]
+required_directories = ["src"]
+
+[state working]
+settings.system_template = "verified-implementation"
+settings.use_decision_router = false
+settings.decision_profile = "off"
+settings.activated_tools = ["execute_decision", "inspect_file", "modify_source", "build_workspace", "run_workspace_tests", "agent_complete", "get_context", "read_tool_result"]
+
+[state done]
+settings.system_template = "verified-implementation"
+settings.use_decision_router = false
+settings.decision_profile = "off"
+settings.activated_tools = ["execute_decision", "agent_complete", "get_context", "read_tool_result"]
+
+[decision_ir]
+R = inspect_file
+M = verified_rust/modify_source
+B = verified_rust/build_workspace
+T = verified_rust/run_workspace_tests
+C = agent_complete
+
+# Completion state deliberately has no source/build/test permissions.
+[decision_ir done]
+C = agent_complete
+
+[action_guards]
+done = [verified_rust/modify_source, verified_rust/build_workspace, verified_rust/run_workspace_tests]
+_complete = [verified_rust/modify_source, verified_rust/build_workspace, verified_rust/run_workspace_tests]

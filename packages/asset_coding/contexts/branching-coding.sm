@@ -1,0 +1,135 @@
+@name "Verified Rust graph"
+@version 1.0
+@routing graph
+@start route
+@description "Choose the next useful Rust coding action. Praxis verifies modifications, builds and tests before completion."
+
+[workspace]
+required_files = ["Cargo.toml", "Cargo.lock"]
+required_directories = ["src"]
+
+[state _default]
+settings.system_template = "graph-coding"
+settings.use_decision_router = false
+settings.decision_profile = "off"
+settings.max_llm_turns = 40
+settings.max_tool_calls = 80
+
+[state route]
+settings.system_template = "graph-coding"
+settings.use_decision_router = false
+settings.max_llm_turns = 40
+settings.max_tool_calls = 80
+settings.activated_tools = ["execute_decision", "agent_next", "agent_back"]
+
+[state inspect]
+settings.system_template = "graph-coding"
+settings.use_decision_router = false
+settings.activated_tools = ["execute_decision", "inspect_file", "agent_next", "agent_back"]
+
+[state implement]
+settings.system_template = "graph-coding"
+settings.use_decision_router = false
+settings.activated_tools = ["execute_decision", "inspect_file", "modify_source", "agent_next", "agent_back"]
+
+[state build]
+settings.system_template = "graph-coding"
+settings.use_decision_router = false
+settings.activated_tools = ["execute_decision", "build_workspace", "agent_next", "agent_back"]
+
+[state test]
+settings.system_template = "graph-coding"
+settings.use_decision_router = false
+settings.activated_tools = ["execute_decision", "run_workspace_tests", "agent_next", "agent_back"]
+
+[state review]
+settings.system_template = "graph-coding"
+settings.use_decision_router = false
+settings.activated_tools = ["execute_decision", "inspect_file", "agent_next", "agent_back"]
+
+[state done]
+settings.system_template = "graph-coding"
+settings.use_decision_router = false
+settings.activated_tools = ["execute_decision", "agent_complete", "agent_back"]
+
+[node route]
+title = "Choose a direction"
+description = "Select an outgoing edge using its index. Five choices use indices 0 through 4."
+[node inspect]
+title = "Inspect source"
+description = "Read an existing source file with R. Use its real current SHA-256 for a subsequent modification."
+[node implement]
+title = "Implement change"
+description = "Read with R, then replace an existing Rust file with M. Check the returned committed, verified receipt."
+[node build]
+title = "Build workspace"
+description = "Run B with scope=workspace after the last successful modification. Diagnose a failed receipt."
+[node test]
+title = "Run tests"
+description = "Run T with scope=workspace after the last successful modification. Diagnose a failed receipt."
+[node review]
+title = "Review evidence"
+description = "Review the real results. Edge 0 enters done only when modification, build and tests have current verified receipts. Return to route to repair missing evidence."
+[node done]
+title = "Complete task"
+description = "Use C to request completion, then report the verified result. K returns to review if new changes invalidate evidence."
+
+[transitions]
+route -> inspect
+route -> implement
+route -> build
+route -> test
+route -> review
+inspect -> route
+implement -> route
+build -> route
+test -> route
+review -> done
+
+[edge route:0]
+title = "Read and understand"
+[edge route:1]
+title = "Apply a source change"
+[edge route:2]
+title = "Verify the build"
+[edge route:3]
+title = "Verify the tests"
+[edge route:4]
+title = "Review and finish"
+[edge review:0]
+title = "Enter completion"
+description = "Requires current runtime evidence; a model claim cannot satisfy this guard."
+
+# States without a local table inherit this global navigation table.
+[decision_ir]
+N = agent_next
+K = agent_back
+
+[decision_ir inspect]
+R = inspect_file
+N = agent_next
+K = agent_back
+[decision_ir implement]
+R = inspect_file
+M = verified_rust/modify_source
+N = agent_next
+K = agent_back
+[decision_ir build]
+B = verified_rust/build_workspace
+N = agent_next
+K = agent_back
+[decision_ir test]
+T = verified_rust/run_workspace_tests
+N = agent_next
+K = agent_back
+[decision_ir review]
+R = inspect_file
+N = agent_next
+K = agent_back
+[decision_ir done]
+C = agent_complete
+K = agent_back
+
+[action_guards]
+done = [verified_rust/modify_source, verified_rust/build_workspace, verified_rust/run_workspace_tests]
+_complete = [verified_rust/modify_source, verified_rust/build_workspace, verified_rust/run_workspace_tests]

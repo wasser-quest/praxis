@@ -1,0 +1,6 @@
+<poml>
+  <include src="../standard.poml" />
+  <include src="../shared/task_inputs.poml" />
+  <task>Completion phase: summarize what the available evidence shows was accomplished, the verification performed and any remaining blockers. A done state is not proof of success. Do not claim completion if acceptance criteria are unmet.</task>
+  <output-format>A short result summary with relevant file paths, evidence and next steps.</output-format>
+</poml>

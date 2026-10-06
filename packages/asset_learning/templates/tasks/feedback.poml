@@ -1,0 +1,6 @@
+<poml>
+  <include src="../standard.poml" />
+  <include src="../shared/task_inputs.poml" />
+  <task>Feedback phase: compare the work with its stated goal and acceptance criteria. Give a short summary, what works, concrete issues ranked by impact, and the next useful step. Distinguish observations from assumptions and avoid inventing completed work.</task>
+  <output-format>Concise, constructive feedback. Follow a supplied word limit where practical.</output-format>
+</poml>

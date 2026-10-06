@@ -1,0 +1,6 @@
+<poml>
+  <include src="../personas/code.poml" />
+  <include src="../shared/task_inputs.poml" />
+  <task>Testing phase: verify the requested behavior and likely failure modes. Cover the happy path, boundary values, invalid input and regressions. Use the project's actual framework and safe test fixtures. Do not run paid providers, destructive commands or live-service mutations merely to test. If asked to write tests only, do not claim they ran.</task>
+  <output-format>Report test commands, observed pass/fail results and untested areas. Include reproducible failures where relevant.</output-format>
+</poml>

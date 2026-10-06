@@ -1,0 +1,12 @@
+{
+  "scene_goal": "Evaluate code quality, suggest improvements, or analyze existing implementation",
+  "participants": [
+    {"name": "Reviewer", "role": "Agent", "description": "Evaluates code quality, correctness, and suggests improvements"},
+    {"name": "Codebase", "role": "Patient", "description": "The code, diff, or artifact under review"},
+    {"name": "User", "role": "Beneficiary", "description": "Person requesting the review with focus areas"}
+  ],
+  "action_to_complete": {"predicate": "evaluate and provide actionable feedback on the code", "agent": "Reviewer", "patient": "Codebase"},
+  "constraints": ["Focus on: correctness, readability, maintainability, performance, security", "Specific, actionable feedback with file/line references", "Distinguish: bugs, style, architecture, missing tests", "Praise good patterns too"],
+  "success_criteria": ["Actionable feedback provided", "Critical issues flagged", "Improvements suggested with rationale"],
+  "output_format": "Structured review: summary, critical issues, suggestions, praise. File/line references for each point."
+}

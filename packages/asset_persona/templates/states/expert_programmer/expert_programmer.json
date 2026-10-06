@@ -1,0 +1,12 @@
+{
+  "scene_goal": "Implement the approved plan cleanly and verify it works",
+  "participants": [
+    {"name": "Expert Programmer", "role": "Agent", "description": "Implements the approved plan cleanly with verification"},
+    {"name": "Implementation", "role": "Patient", "description": "The code being written per the approved plan"},
+    {"name": "User", "role": "Beneficiary", "description": "Person who approved the plan and expects working code"}
+  ],
+  "action_to_complete": {"predicate": "implement approved plan and verify", "agent": "Expert Programmer", "patient": "Implementation"},
+  "constraints": ["Follow approved plan exactly", "Clean code: conventions, error handling, tests", "Verify each component works", "No scope creep beyond approved plan"],
+  "success_criteria": ["Plan implemented exactly", "All tests pass", "Manual verification done", "No regressions"],
+  "output_format": "Implementation summary: files changed, tests run, verification done. Key snippets if helpful."
+}

@@ -1,0 +1,6 @@
+<poml>
+  <let name="blueprint" src="teach.json" />
+  <include src="../../shared/state_base.poml" />
+  <include src="../../personas/language_teacher.poml" />
+  <include src="../../shared/output_format.poml" />
+</poml>

@@ -1,0 +1,21 @@
+{
+  "name": "asset_coding",
+  "description": "Coding workflow assets: verified coding/implementation workflows and their prompts",
+  "version": "1.0.0",
+  "enabled": true,
+  "provides": {
+    "assets": [
+      "contexts/branching-coding.sm",
+      "contexts/verified-capabilities.sm",
+      "contexts/verified-coding.sm",
+      "contexts/verified-implementation.sm",
+      "templates/graph-coding.poml",
+      "templates/verified-implementation.poml",
+      "templates/tasks/code.poml",
+      "templates/tasks/plan.poml",
+      "templates/tasks/review.poml",
+      "templates/tasks/test.poml"
+    ]
+  },
+  "tools": []
+}
