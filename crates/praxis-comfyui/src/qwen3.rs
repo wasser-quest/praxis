@@ -1,7 +1,7 @@
 //! Qwen3-TTS Base through the same private, bounded ComfyUI transport as XTTS.
 use super::config::{effective_language, string_setting, timeout_setting};
 use super::workflows;
-use crate::db::contexts::ContextSettings;
+use crate::config::Settings;
 use anyhow::ensure;
 use serde_json::{json, Value};
 use std::{path::PathBuf, time::Duration};
@@ -18,14 +18,14 @@ pub struct Qwen3TtsConfig {
 
 impl Qwen3TtsConfig {
     pub fn from_settings(
-        settings: &ContextSettings,
+        settings: &Settings,
         legacy: Option<&Value>,
     ) -> anyhow::Result<Self> {
         Self::resolve(settings, legacy, |name| std::env::var(name).ok())
     }
 
     pub(super) fn resolve(
-        settings: &ContextSettings,
+        settings: &Settings,
         legacy: Option<&Value>,
         env: impl Fn(&str) -> Option<String>,
     ) -> anyhow::Result<Self> {

@@ -49,9 +49,12 @@ optional workflow packs add assets rather than replacing the core interpreter.
 - [ ] PR 6: providers, channels, media and workflow/prompt packages.
   Progress: `crates/praxis-provider-api` defines the common interfaces
   (streaming, usage, model list, embedding, typed errors) and the kernel's
-  adapters implement them, and `packages/asset_{coding,learning,persona,
-  workflow}` ship installable asset packs. Moving Discord, voice/audio,
-  ComfyUI, GPU routing and image providers into packages remains.
+  adapters implement them; `packages/asset_{coding,learning,persona,workflow}`
+  ship installable asset packs; `plugins/minimax_image` packages the MiniMax
+  image provider; `crates/praxis-comfyui` and `crates/praxis-gpu-router` are
+  provider crates with scoped settings; Discord and voice/audio compile behind
+  `discord`/`voice` with `serenity` optional. The channel ingress seam and the
+  Discord/voice package manifests remain.
 - [ ] PR 7: minimal distribution, compatibility preset and dependency cleanup.
 - [x] PR 8a: lifecycle hooks (`allow|ask|deny`), staged install/uninstall,
   script hashing, install record and example plugins. See

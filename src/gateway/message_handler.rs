@@ -688,12 +688,18 @@ fn spawn_tts(
     // Never reinterpret other providers' voice IDs/local clone paths.
     let comfyui_config = (tts_type == "comfyui_xtts").then(|| {
         db.load_context(user_id).and_then(|ctx| {
-            crate::comfyui::config::ComfyUiConfig::from_settings(settings, Some(&ctx.custom_data))
+            crate::comfyui::config::ComfyUiConfig::from_settings(
+                &crate::comfyui::settings_from(settings),
+                Some(&ctx.custom_data),
+            )
         })
     });
     let comfyui_qwen3_config = (tts_type == "comfyui_qwen3").then(|| {
         db.load_context(user_id).and_then(|ctx| {
-            crate::comfyui::qwen3::Qwen3TtsConfig::from_settings(settings, Some(&ctx.custom_data))
+            crate::comfyui::qwen3::Qwen3TtsConfig::from_settings(
+                &crate::comfyui::settings_from(settings),
+                Some(&ctx.custom_data),
+            )
         })
     });
     let rvc_on = settings.rvc_on;

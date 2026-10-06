@@ -1,0 +1,25 @@
+[package]
+name = "praxis-comfyui"
+version = "1.0.3"
+edition = "2021"
+description = "ComfyUI media client: workflow submission and Qwen3/XTTS synthesis with local WAV output"
+
+# ComfyUI API-to-local-WAV boundary. No retries, queue mutation or provider
+# fallback; remote paths are /view descriptors, never local paths. Hosts map
+# their own typed settings onto `config::Settings`.
+[dependencies]
+anyhow = "1"
+praxis-gpu-router = { path = "../praxis-gpu-router" }
+reqwest = { version = "0.12.28", default-features = false, features = ["rustls-tls", "json", "stream"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tempfile = "3"
+tokio = { version = "1", features = ["io-util", "macros", "rt", "time"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+tracing = "0.1"
+
+[dev-dependencies]
+axum = "0.7"
+futures-util = "0.3"
+tokio = { version = "1", features = ["test-util"] }
+wiremock = "0.6"

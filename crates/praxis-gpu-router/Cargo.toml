@@ -1,0 +1,16 @@
+[package]
+name = "praxis-gpu-router"
+version = "1.0.3"
+edition = "2021"
+description = "pgpu GPU-router client: slot state, wake and hold headers for Praxis media/LLM providers"
+
+# Optional GPU routing in front of local model boxes. Without GPU_ROUTER_URL
+# every function is a safe no-op and direct local setups are untouched.
+[dependencies]
+once_cell = "1"
+reqwest = { version = "0.12.28", default-features = false, features = ["rustls-tls", "json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt", "macros"] }
+tracing = "0.1"
+uuid = { version = "1", features = ["v4"] }

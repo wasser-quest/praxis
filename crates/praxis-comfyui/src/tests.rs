@@ -7,7 +7,22 @@ use wiremock::{
 };
 
 fn wav() -> Vec<u8> {
-    crate::voice::pcm_to_wav(&[1, -1, 0, 1], 24000, 1)
+    // A minimal 24 kHz mono 16-bit WAV; the client only reads the header.
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"RIFF");
+    bytes.extend_from_slice(&36u32.to_le_bytes());
+    bytes.extend_from_slice(b"WAVEfmt ");
+    bytes.extend_from_slice(&16u32.to_le_bytes());
+    bytes.extend_from_slice(&1u16.to_le_bytes());
+    bytes.extend_from_slice(&1u16.to_le_bytes());
+    bytes.extend_from_slice(&24_000u32.to_le_bytes());
+    bytes.extend_from_slice(&48_000u32.to_le_bytes());
+    bytes.extend_from_slice(&2u16.to_le_bytes());
+    bytes.extend_from_slice(&16u16.to_le_bytes());
+    bytes.extend_from_slice(b"data");
+    bytes.extend_from_slice(&8u32.to_le_bytes());
+    bytes.extend_from_slice(&[1, 0, 255, 255, 0, 0, 1, 0]);
+    bytes
 }
 fn workflow() -> Value {
     json!({"test": {"class_type": "test", "inputs": {}}})

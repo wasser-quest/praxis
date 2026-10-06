@@ -415,8 +415,11 @@ pinned against the kernel definitions they replaced where those still exist
   transcription/synthesis layer in or out (with `serenity` optional and the
   voice tests following their feature), so a core-only host's dependency tree
   carries no `serenity`, `songbird`, `whisper-rs` or `vosk`. Their package
-  manifests and the channel ingress seam, ComfyUI's native workflow/qwen3
-  pieces and GPU routing remain.
+  manifests and the channel ingress seam remain. ComfyUI's native
+  workflow/qwen3/XTTS pieces are `crates/praxis-comfyui` (a media provider with
+  plain `config::Settings`, local WAV output and no host types) and GPU routing
+  is `crates/praxis-gpu-router` (runtime-enabled by `GPU_ROUTER_URL`, safe
+  no-ops otherwise, with its scoped URL/token settings and router headers).
 - [ ] Add coding/learning/persona/workflow asset packs.
 
 Acceptance: provider-only chat, verified Rust and language teaching work with

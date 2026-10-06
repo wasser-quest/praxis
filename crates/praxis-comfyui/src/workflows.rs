@@ -79,7 +79,7 @@ mod tests {
     fn config() -> ComfyUiConfig {
         ComfyUiConfig {
             base_url: "http://127.0.0.1:8188".into(),
-            tts_workflow: Path::new(env!("CARGO_MANIFEST_DIR")).join("workflows/tts-api.json"),
+            tts_workflow: Path::new(env!("CARGO_MANIFEST_DIR")).join("../../workflows/tts-api.json"),
             reference_audio: "voices/person.wav".into(),
             language: "de".into(),
             timeout: std::time::Duration::from_secs(900),
@@ -96,7 +96,7 @@ mod tests {
             json!({"text": "Grüße aus Praxis", "language": "de", "reference_audio": "voices/person.wav"})
         );
         assert_eq!(
-            serde_json::from_str::<Value>(include_str!("../../workflows/tts-api.json")).unwrap()
+            serde_json::from_str::<Value>(include_str!("../../../workflows/tts-api.json")).unwrap()
                 ["1"]["inputs"]["text"],
             "Hello from Praxis."
         );

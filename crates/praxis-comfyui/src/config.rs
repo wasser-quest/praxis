@@ -1,8 +1,23 @@
 //! Per-user settings -> legacy custom_data -> process environment -> defaults.
-use crate::db::contexts::ContextSettings;
 use anyhow::{ensure, Context as _};
 use serde_json::Value;
 use std::{path::PathBuf, time::Duration};
+
+/// The typed settings a host maps from its own configuration. Kept plain so a
+/// media provider never depends on host types.
+#[derive(Clone, Debug, Default)]
+pub struct Settings {
+    pub comfyui_base_url: Option<String>,
+    pub comfyui_tts_workflow: Option<String>,
+    pub comfyui_xtts_reference_audio: Option<String>,
+    pub comfyui_xtts_language: Option<String>,
+    pub comfyui_timeout_seconds: Option<u64>,
+    pub comfyui_tts_language_mode: Option<String>,
+    pub qwen_tts_language: Option<String>,
+    pub comfyui_qwen_reference_audio: Option<String>,
+    pub comfyui_qwen_reference_text: Option<String>,
+    pub comfyui_qwen_language: Option<String>,
+}
 
 #[derive(Clone, Debug)]
 pub struct ComfyUiConfig {
@@ -15,14 +30,14 @@ pub struct ComfyUiConfig {
 
 impl ComfyUiConfig {
     pub fn from_settings(
-        settings: &ContextSettings,
+        settings: &Settings,
         legacy: Option<&Value>,
     ) -> anyhow::Result<Self> {
         Self::resolve(settings, legacy, |name| std::env::var(name).ok())
     }
 
     fn resolve(
-        settings: &ContextSettings,
+        settings: &Settings,
         legacy: Option<&Value>,
         env: impl Fn(&str) -> Option<String>,
     ) -> anyhow::Result<Self> {
@@ -88,7 +103,7 @@ pub(super) fn string_setting(
 }
 
 pub(super) fn timeout_setting(
-    settings: &ContextSettings,
+    settings: &Settings,
     legacy: Option<&Value>,
     env: &impl Fn(&str) -> Option<String>,
 ) -> anyhow::Result<Duration> {
@@ -115,7 +130,7 @@ pub(super) fn timeout_setting(
 }
 
 pub(super) fn effective_language(
-    settings: &ContextSettings,
+    settings: &Settings,
     legacy: Option<&Value>,
     env: &impl Fn(&str) -> Option<String>,
     single: impl FnOnce() -> anyhow::Result<String>,
@@ -142,7 +157,7 @@ mod tests {
 
     #[test]
     fn comfyui_settings_override_legacy_and_environment_per_field() {
-        let settings = ContextSettings {
+        let settings = Settings {
             comfyui_base_url: Some("http://100.80.1.2:8188".into()),
             comfyui_tts_workflow: Some("/local/tts.json".into()),
             comfyui_xtts_reference_audio: Some("voices/person.wav".into()),
@@ -169,7 +184,7 @@ mod tests {
 
     #[test]
     fn comfyui_legacy_configuration_and_environment_fallback_remain_supported() {
-        let settings: ContextSettings = serde_json::from_str("{}").unwrap();
+        let settings = Settings::default();
         assert!(settings.comfyui_base_url.is_none());
         assert!(settings.comfyui_tts_workflow.is_none());
         assert!(settings.comfyui_xtts_reference_audio.is_none());
@@ -199,7 +214,7 @@ mod tests {
 
     #[test]
     fn comfyui_empty_settings_inherit_without_hiding_invalid_timeouts() {
-        let settings = ContextSettings {
+        let settings = Settings {
             comfyui_base_url: Some(String::new()),
             comfyui_xtts_language: Some(String::new()),
             ..Default::default()
@@ -215,7 +230,7 @@ mod tests {
         assert_eq!(config.language, "fr");
         assert_eq!(config.timeout, Duration::from_secs(300));
         for seconds in [0, 3601] {
-            let invalid = ContextSettings {
+            let invalid = Settings {
                 comfyui_timeout_seconds: Some(seconds),
                 ..Default::default()
             };
@@ -235,38 +250,4 @@ mod tests {
         assert!(ComfyUiConfig::resolve(&settings, Some(&json!([])), |_| None).is_ok());
     }
 
-    #[test]
-    fn comfyui_settings_survive_context_save_reload_and_validate_json_types() {
-        let directory = tempfile::tempdir().unwrap();
-        let db = crate::db::Database::new(directory.path()).unwrap();
-        let saved = db
-            .merge_context(
-                "comfyui-settings",
-                json!({
-                    "settings.comfyui_base_url": "http://100.80.1.2:8188",
-                    "settings.comfyui_tts_workflow": "workflows/tts-api.json",
-                    "settings.comfyui_xtts_reference_audio": "voices/person.wav",
-                    "settings.comfyui_xtts_language": "de",
-                    "settings.comfyui_timeout_seconds": 300,
-                }),
-            )
-            .unwrap();
-        drop(db);
-        let db = crate::db::Database::new(directory.path()).unwrap();
-        let loaded = db.load_context("comfyui-settings").unwrap();
-        assert_eq!(
-            serde_json::to_value(&loaded.settings).unwrap(),
-            serde_json::to_value(&saved.settings).unwrap()
-        );
-        let config = ComfyUiConfig::resolve(&loaded.settings, None, |_| None).unwrap();
-        assert_eq!(config.language, "de");
-        assert_eq!(config.timeout, Duration::from_secs(300));
-        for invalid in [
-            json!({"comfyui_xtts_language": false}),
-            json!({"comfyui_timeout_seconds": -1}),
-            json!({"comfyui_timeout_seconds": 1.5}),
-        ] {
-            assert!(serde_json::from_value::<ContextSettings>(invalid).is_err());
-        }
-    }
 }

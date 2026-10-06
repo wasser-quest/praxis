@@ -3700,6 +3700,8 @@ dependencies = [
  "minimp3",
  "once_cell",
  "png",
+ "praxis-comfyui",
+ "praxis-gpu-router",
  "praxis-legacy-file-ops",
  "praxis-plugin-api",
  "praxis-provider-api",
@@ -3742,6 +3744,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "praxis-comfyui"
+version = "1.0.3"
+dependencies = [
+ "anyhow",
+ "axum",
+ "futures-util",
+ "praxis-gpu-router",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "wiremock",
+]
+
+[[package]]
 name = "praxis-dashboard"
 version = "0.1.0"
 dependencies = [
@@ -3760,6 +3780,19 @@ dependencies = [
  "tokio-tungstenite 0.24.0",
  "tower-http",
  "urlencoding",
+]
+
+[[package]]
+name = "praxis-gpu-router"
+version = "1.0.3"
+dependencies = [
+ "once_cell",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
