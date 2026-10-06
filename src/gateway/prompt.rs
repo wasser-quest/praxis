@@ -369,7 +369,7 @@ pub async fn build_context(
     crate::skills::discovery::enrich(db, &mut value, root).await?;
     if let Some(name) = ctx.settings.active_skill.as_deref() {
         anyhow::ensure!(
-            crate::db::tools::get(db, "use_skill")?.is_enabled,
+            crate::db::tools::tool_enabled(db, "use_skill")?,
             "Active skill cannot load: use_skill is disabled"
         );
         let skill = crate::skills::lookup_skill(db, &root.join("skills"), name)?;
@@ -859,7 +859,7 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("unmapped"));
-        crate::db::tools::disable(&db, "use_skill").unwrap();
+        crate::db::tools::set_plugin_tool_enabled(&db, "use_skill", false).unwrap();
         assert!(build_context(&db, &ctx, "task", &plugins, 0, root.path())
             .await
             .unwrap_err()

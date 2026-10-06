@@ -11,7 +11,7 @@ pub async fn run(db: &Database, args: &Value) -> anyhow::Result<String> {
 
 pub async fn run_in(db: &Database, args: &Value, directory: &Path) -> anyhow::Result<String> {
     anyhow::ensure!(
-        crate::db::tools::get(db, "use_skill")?.is_enabled,
+        crate::db::tools::tool_enabled(db, "use_skill")?,
         "use_skill is disabled"
     );
     let name = args

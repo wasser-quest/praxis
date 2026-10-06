@@ -256,7 +256,7 @@ fn apply_skill_command_from_dir(
     // off needs neither a readable skill directory nor an enabled loader.
     if !off {
         crate::skills::lookup_skill(db, directory, name)?;
-        anyhow::ensure!(crate::db::tools::get(db, "use_skill")?.is_enabled, "use_skill is disabled");
+        anyhow::ensure!(crate::db::tools::tool_enabled(db, "use_skill")?, "use_skill is disabled");
     }
     let mut ctx = skill_command_context(db, discord_user_id, guild, channel)?;
     ctx.settings.active_skill = if off { None } else { Some(name.to_string()) };
@@ -284,7 +284,7 @@ pub fn apply_skill_command(
         ctx.settings.active_skill = None;
     } else {
         anyhow::ensure!(registry.get(name).is_some(), "Unknown skill '{name}'. Use /skill to list registered skills");
-        anyhow::ensure!(crate::db::tools::get(db, "use_skill")?.is_enabled, "use_skill is disabled");
+        anyhow::ensure!(crate::db::tools::tool_enabled(db, "use_skill")?, "use_skill is disabled");
         ctx.settings.active_skill = Some(name.to_string());
     }
     db.save_context(&ctx)?;
@@ -434,7 +434,7 @@ mod discord_tests {
         assert_eq!(db.load_context("alice").unwrap().settings.active_skill.as_deref(), Some("test"));
         assert!(db.load_context("bob").unwrap().settings.active_skill.is_none());
         assert!(apply_skill_command(&db, "discord-a", None, "channel", "unknown", &registry).is_err());
-        crate::db::tools::disable(&db, "use_skill").unwrap();
+        crate::db::tools::set_plugin_tool_enabled(&db, "use_skill", false).unwrap();
         assert!(apply_skill_command(&db, "discord-a", None, "channel", "test", &registry).is_err());
         apply_skill_command(&db, "discord-a", None, "channel", "off", &registry).unwrap();
         let mut ctx = db.load_context("alice").unwrap();

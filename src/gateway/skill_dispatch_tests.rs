@@ -45,7 +45,7 @@ async fn use_skill_respects_disabled_tool() {
     let dir = tempfile::tempdir().unwrap();
     let db = crate::db::Database::new(dir.path()).unwrap();
     crate::db::tools::init_default_tools(&db).unwrap();
-    crate::db::tools::disable(&db, "use_skill").unwrap();
+    crate::db::tools::set_plugin_tool_enabled(&db, "use_skill", false).unwrap();
     let result = invoke(
         &db,
         serde_json::json!({"name": "debug", "parameters": {"error": "test"}}),

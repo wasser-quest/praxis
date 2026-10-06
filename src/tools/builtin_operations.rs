@@ -83,6 +83,17 @@ pub async fn execute(
             crate::tools::cron::run(ctx.db, ctx.user, name, args)
                 .unwrap_or_else(|error| format!("Error: {error}"))
         }
+        // Skill discovery/activation and template editing over host-owned
+        // files; the packages declare the tools.
+        "search_skills" => Box::pin(crate::tools::search_skills::run(ctx.db, args))
+            .await
+            .unwrap_or_else(|error| format!("Error: {error}")),
+        "use_skill" => Box::pin(crate::tools::use_skill::run(ctx.db, args))
+            .await
+            .unwrap_or_else(|error| format!("Error: {error}")),
+        "update_template" => Box::pin(crate::tools::update_template::run(ctx.db, args))
+            .await
+            .unwrap_or_else(|error| format!("Error: {error}")),
         // Questions and screenshots routed to the user's interface.
         "send_screenshot" | "ask_questions" => {
             Box::pin(crate::tools::interaction::run(

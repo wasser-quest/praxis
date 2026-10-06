@@ -176,12 +176,6 @@ async fn dispatch_at_depth(
                 "inspect_file" => crate::tools::apply_patch::inspect(user_id, &args)
                     .await
                     .unwrap_or_else(|e| format!("Error: {e}")),
-                "search_skills" => crate::tools::search_skills::run(db, &args)
-                    .await
-                    .unwrap_or_else(|e| format!("Error: {e}")),
-                "use_skill" => crate::tools::use_skill::run(db, &args)
-                    .await
-                    .unwrap_or_else(|e| format!("Error: {}", e)),
                 #[cfg(feature = "shell")]
                 "execute_terminal" => {
                     // Execute on the backend selected by the host at registration.
@@ -318,9 +312,20 @@ async fn dispatch_at_depth(
                             .unwrap_or_else(|error| format!("Error: {error}"))
                     } // end else (shared mode)
                 }
-                "update_template" => crate::tools::update_template::run(db, &args)
-                    .await
-                    .unwrap_or_else(|e| format!("Error: {}", e)),
+                #[cfg(feature = "vision")]
+                "understand_image" => {
+                    let result = crate::tools::understand_image::run(&args).await;
+                    // Store image content_parts alongside the result
+                    // We return the text, but the caller needs to handle content_parts separately
+                    // Use a special marker to indicate this tool returned image data
+                    break 'step Step::Text(serde_json::json!({
+                        "text": result.text,
+                        "content_parts": result.content_parts.iter().map(|cp| {
+                            serde_json::to_value(cp).unwrap_or_default()
+                        }).collect::<Vec<_>>()
+                    })
+                    .to_string());
+                }
                 _ => {
                     format!("Error: No native adapter for '{}'", tc.function.name)
                 }

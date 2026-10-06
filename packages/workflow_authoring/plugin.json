@@ -1,0 +1,37 @@
+{
+  "name": "workflow_authoring",
+  "description": "Template editing by the model",
+  "version": "0.1.0",
+  "enabled": true,
+  "tools": [
+    {
+      "name": "update_template",
+      "description": "Update or create a POML template. Strictly renders a temporary file before replacing the destination; validation failure leaves existing content unchanged. Requires Node and POML_CLI.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Template name without .poml, e.g. tasks/custom. Use letters, numbers, underscores, hyphens and / separators; no absolute paths or traversal."
+          },
+          "content": {
+            "type": "string",
+            "description": "Full POML template content"
+          },
+          "context": {
+            "type": "object",
+            "description": "Optional complete JSON context for validation; omitted uses synthetic system variables, never saved user data."
+          }
+        },
+        "required": [
+          "name",
+          "content"
+        ]
+      },
+      "handler": {
+        "type": "builtin",
+        "name": "update_template"
+      }
+    }
+  ]
+}

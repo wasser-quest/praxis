@@ -66,7 +66,7 @@ pub async fn save_validated(
 
 pub async fn run(db: &Database, args: &Value) -> anyhow::Result<String> {
     anyhow::ensure!(
-        crate::db::tools::get(db, "update_template")?.is_enabled,
+        crate::db::tools::tool_enabled(db, "update_template")?,
         "update_template is disabled"
     );
     let name = args

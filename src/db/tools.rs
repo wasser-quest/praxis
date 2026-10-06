@@ -665,24 +665,6 @@ pub(crate) fn get_default_tools() -> Vec<Tool> {
             parameters: serde_json::json!({"type":"object","properties":{"iso_name":{"type":"string","description":"Name to search for in installation_disks (e.g. 'alpine', 'ubuntu', 'arch')"},"iso_path":{"type":"string","description":"Direct path to ISO file (alternative to iso_name)"},"vm_name":{"type":"string","default":"praxis-vm"},"cpu_cores":{"type":"integer","default":2},"ram_mb":{"type":"integer","default":4096},"disk_size":{"type":"string","default":"40G"},"firmware":{"type":"string","enum":["bios","uefi"],"default":"bios","description":"Boot firmware: 'bios' (legacy) or 'uefi' (OVMF). Use 'uefi' for modern OSes that require EFI boot."}}}),
             is_enabled: false,
         },
-        Tool {
-            name: "search_skills".into(),
-            description: Some("Search the persistent skill metadata index using a few keywords. Returns at most 20 names, short descriptions, required_parameters and activation flags, never instructions. Hidden skills are excluded. A user_only result needs human selection via /skill or authenticated context controls. Refine the query rather than enumerating the catalog. Follow the POML discovery policy.".into()),
-            parameters: serde_json::json!({"type":"object","properties":{"query":{"type":"string","maxLength":512,"description":"Literal word-prefix search over names/descriptions. Empty lists a bounded first page."},"limit":{"type":"integer","minimum":1,"maximum":20,"default":5}},"required":["query"],"additionalProperties":false}),
-            is_enabled: true,
-        },
-        Tool {
-            name: "use_skill".into(),
-            description: Some("Load one registered skill's instructions on demand. Discover matching names and required_parameters with search_skills, following the POML discovery policy. Hidden dependencies may be loaded by exact name. User-only skills cannot be activated by this tool. Follow returned instructions with normal tools; loading does not execute scripts or complete the task.".into()),
-            parameters: serde_json::json!({"type":"object","properties":{"name":{"type":"string","maxLength":64,"description":"Exact registered skill name"},"parameters":{"type":"object","description":"Required non-empty string inputs advertised by discovery; additional inputs are skill-specific.","additionalProperties":true}},"required":["name","parameters"],"additionalProperties":false}),
-            is_enabled: true,
-        },
-        Tool {
-            name: "update_template".into(),
-            description: Some("Update or create a POML template. Strictly renders a temporary file before replacing the destination; validation failure leaves existing content unchanged. Requires Node and POML_CLI.".into()),
-            parameters: serde_json::json!({"type":"object","properties":{"name":{"type":"string","description":"Template name without .poml, e.g. tasks/custom. Use letters, numbers, underscores, hyphens and / separators; no absolute paths or traversal."},"content":{"type":"string","description":"Full POML template content"},"context":{"type":"object","description":"Optional complete JSON context for validation; omitted uses synthetic system variables, never saved user data."}},"required":["name","content"]}),
-            is_enabled: true,
-        },
     ]
 }
 
@@ -719,17 +701,17 @@ mod tool_tests {
     }
 
     #[test]
-    fn test_use_skill_registration_and_upgrade() {
+    fn test_default_tool_registration_and_upgrade() {
         let (db, _dir) = test_db();
         save(&db, &get_default_tools()[0]).unwrap();
         init_default_tools(&db).unwrap();
-        let tool = get(&db, "use_skill").unwrap();
+        let tool = get(&db, "execute_terminal").unwrap();
         assert!(tool.is_enabled);
-        assert_eq!(tool.parameters["properties"]["parameters"]["type"], "object");
-        disable(&db, "use_skill").unwrap();
+        assert_eq!(tool.parameters["properties"]["command"]["type"], "string");
+        disable(&db, "execute_terminal").unwrap();
         init_default_tools(&db).unwrap();
-        assert!(!get(&db, "use_skill").unwrap().is_enabled);
-        assert!(!to_tool_definitions(&db).unwrap().iter().any(|t| t.function.name == "use_skill"));
+        assert!(!get(&db, "execute_terminal").unwrap().is_enabled);
+        assert!(!to_tool_definitions(&db).unwrap().iter().any(|t| t.function.name == "execute_terminal"));
     }
 
     #[test]

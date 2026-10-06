@@ -112,7 +112,7 @@ async fn backend_skill_discovery_and_user_activation_policy() {
         assert!(denied.contains("user-only"), "{denied}");
         assert!(db.load_context("alice").unwrap().settings.active_skill.is_none());
     }
-    crate::db::tools::disable(&db, "search_skills").unwrap();
+    crate::db::tools::set_plugin_tool_enabled(&db, "search_skills", false).unwrap();
     let denied = invoke(&db, "alice", "search_skills", serde_json::json!({"query":"palace"})).await;
     assert!(denied.contains("disabled"), "{denied}");
 }
