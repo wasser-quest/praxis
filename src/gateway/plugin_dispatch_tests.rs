@@ -177,7 +177,11 @@ async fn plugin_dispatch_rechecks_disabled_builtin_before_reading_or_writing() {
     std::fs::write(&path, "private-data").unwrap();
     let registry = PluginRegistry::new();
     for name in ["read_file", "write_file"] {
-        crate::db::tools::disable(&db, name).unwrap();
+        if crate::tools::catalog::is_builtin(name) {
+            crate::db::tools::disable(&db, name).unwrap();
+        } else {
+            crate::db::tools::set_plugin_tool_enabled(&db, name, false).unwrap();
+        }
         let result = invoke(
             &db,
             "alice",
@@ -301,5 +305,9 @@ fn plugin_dispatch_replacements_are_validated() {
     registry.try_register(manifest("d", "shell", "execute_terminal")).unwrap();
     assert!(registry.try_register(manifest("e", "shell", "run_background")).is_err(), "one replacement per package");
     assert!(matches!(crate::tools::catalog::owner(&registry, "execute_terminal").unwrap(), crate::tools::catalog::ToolOwner::Plugin { .. }));
-    assert!(matches!(crate::tools::catalog::owner(&registry, "write_file").unwrap(), crate::tools::catalog::ToolOwner::Builtin));
+    match crate::tools::catalog::owner(&registry, "write_file").unwrap() {
+        // The core file contract belongs to the kernel's bundled package.
+        crate::tools::catalog::ToolOwner::Plugin { plugin, .. } => assert_eq!(plugin.name, "file_ops"),
+        _ => panic!("the bundled file_ops package owns write_file"),
+    }
 }

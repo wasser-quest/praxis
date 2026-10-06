@@ -1122,7 +1122,7 @@ mod agent_tests {
         assert!(!tools.is_empty());
         let names: Vec<&str> = tools.iter().map(|t| t.function.name.as_str()).collect();
         assert!(names.contains(&"execute_terminal"));
-        assert!(names.contains(&"write_file"));
+        assert!(names.contains(&"run_background"));
         assert!(names.contains(&"edit_file"));
         assert!(names.contains(&"read_file"));
     }

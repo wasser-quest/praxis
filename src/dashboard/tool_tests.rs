@@ -77,7 +77,7 @@ fn backend_tool_toggle_builtin_ownership_is_preserved() {
     let mut plugins = PluginRegistry::new();
     // Neither a native builtin name nor a kernel-bundled package tool can be
     // taken over by an installed manifest: one owner per name.
-    for name in ["inspect_file", "execute_decision"] {
+    for name in ["execute_terminal", "execute_decision"] {
         assert!(plugins.try_register(crate::plugins::Plugin {
             name: "shadow".into(),
             description: "Synthetic name collision".into(),
@@ -109,14 +109,14 @@ fn backend_tool_toggle_builtin_ownership_is_preserved() {
         .all(|plugin| crate::tools::packages::bundled(&plugin.name)));
     // A native builtin keeps its row: toggling never moves it to plugin flags.
     for enabled in [false, true] {
-        set_dashboard_tool_enabled(&db, &plugins, "inspect_file", enabled).unwrap();
+        set_dashboard_tool_enabled(&db, &plugins, "execute_terminal", enabled).unwrap();
         assert_eq!(
-            tools::get(&db, "inspect_file").unwrap().is_enabled,
+            tools::get(&db, "execute_terminal").unwrap().is_enabled,
             enabled
         );
         assert!(!tools::list_plugin_tools(&db)
             .unwrap()
-            .contains_key("inspect_file"));
+            .contains_key("execute_terminal"));
     }
     // A bundled package tool keeps its flag in the plugin store, never a row.
     for enabled in [false, true] {

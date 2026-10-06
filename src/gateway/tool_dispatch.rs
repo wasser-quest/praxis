@@ -170,12 +170,6 @@ async fn dispatch_at_depth(
             }
 
             Step::Text(match tc.function.name.as_str() {
-                "apply_patch" => crate::tools::apply_patch::run(user_id, &tc.id, &args)
-                    .await
-                    .unwrap_or_else(|e| format!("Error: {e}")),
-                "inspect_file" => crate::tools::apply_patch::inspect(user_id, &args)
-                    .await
-                    .unwrap_or_else(|e| format!("Error: {e}")),
                 #[cfg(feature = "shell")]
                 "execute_terminal" => {
                     // Execute on the backend selected by the host at registration.
@@ -232,34 +226,6 @@ async fn dispatch_at_depth(
                         }
                     }
                 },
-                "write_file" => {
-                    if mode == DispatchMode::Agent && crate::runtime::vm::guest_backend(plugins) {
-                        let path = args["path"].as_str().unwrap_or("");
-                        let content = args["content"].as_str().unwrap_or("");
-                        match invoke_guest(plugins, db, user_id, &tc.id,
-                            "vm_file_transfer",
-                            &serde_json::json!({"path": path, "content": content, "direction": "to_vm"}),
-                        )
-                        .await
-                        {
-                            Ok(result) => result,
-                            Err(error) => format!("Error: {error}"),
-                        }
-                    } else if args.get("expected_absent").is_some() || args.get("expected_sha256").is_some() {
-                        // Versioned contract: single-file transactional write with a
-                        // precondition. Never falls back to the raw write.
-                        crate::tools::apply_patch::write_checked(user_id, &tc.id, &args)
-                            .await
-                            .unwrap_or_else(|error| format!("Error: {error}"))
-                    } else {
-                        let path = args["path"].as_str().unwrap_or("");
-                        let content = args["content"].as_str().unwrap_or("");
-                        match crate::tools::write_file::write_file(path, content).await {
-                            Ok(_) => format!("File written: {}", path),
-                            Err(e) => format!("Error: {}", e),
-                        }
-                    } // end else (shared mode)
-                }
                 #[cfg(feature = "legacy_file_ops")]
                 "edit_file" => {
                     if mode == DispatchMode::Agent && crate::runtime::vm::guest_backend(plugins) {
@@ -346,7 +312,7 @@ async fn dispatch_at_depth(
     }
 }
 
-async fn invoke_guest(plugins: &crate::plugins::PluginRegistry, db: &crate::db::Database, user: &str, call: &str, name: &str, args: &serde_json::Value) -> anyhow::Result<String> {
+pub(crate) async fn invoke_guest(plugins: &crate::plugins::PluginRegistry, db: &crate::db::Database, user: &str, call: &str, name: &str, args: &serde_json::Value) -> anyhow::Result<String> {
     let owner = crate::tools::catalog::owner(plugins, name)?;
     crate::tools::catalog::require_enabled(db, &owner, name)?;
     let secrets = plugins.secrets_for_tool(name, &crate::db::secrets::get_secrets());

@@ -876,7 +876,19 @@ mod tests {
         let tools: Value = http.get(url("/admin/tools")).bearer_auth(&grant.token)
             .send().await.unwrap().json().await.unwrap();
         assert!(tools["total"].as_u64().unwrap() > 0);
-        assert!(tools["tools"].as_array().unwrap().iter().any(|t| t["source"] == "builtin"));
+        assert_eq!(
+            tools["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|t| t["source"] == "builtin"),
+            cfg!(any(
+                feature = "shell",
+                feature = "legacy_file_ops",
+                feature = "vision"
+            )),
+            "compiled-in implementations list as builtin, package declarations as plugins"
+        );
         for path in [
             "/admin/pairings", "/admin/pending-pairings", "/admin/cron", "/admin/memory/u",
             "/admin/skills", "/admin/profiles", "/admin/router",

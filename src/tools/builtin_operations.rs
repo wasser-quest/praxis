@@ -83,6 +83,20 @@ pub async fn execute(
             crate::tools::cron::run(ctx.db, ctx.user, name, args)
                 .unwrap_or_else(|error| format!("Error: {error}"))
         }
+        // The core workspace file contract over kernel-owned implementations.
+        "apply_patch" | "inspect_file" | "write_file" => {
+            Box::pin(crate::tools::file_ops::run(
+                ctx.db,
+                ctx.plugins,
+                ctx.user,
+                ctx.call,
+                ctx.mode == crate::gateway::tool_dispatch::DispatchMode::Agent,
+                name,
+                args,
+            ))
+            .await
+            .unwrap_or_else(|error| format!("Error: {error}"))
+        }
         // Skill discovery/activation and template editing over host-owned
         // files; the packages declare the tools.
         "search_skills" => Box::pin(crate::tools::search_skills::run(ctx.db, args))

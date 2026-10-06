@@ -145,6 +145,7 @@ fn bundled_manifest(id: &str) -> Option<&'static str> {
         "interaction" => Some(include_str!("../../packages/interaction/plugin.json")),
         "skills" => Some(include_str!("../../packages/skills/plugin.json")),
         "workflow_authoring" => Some(include_str!("../../packages/workflow_authoring/plugin.json")),
+        "file_ops" => Some(include_str!("../../packages/file_ops/plugin.json")),
         _ => None,
     }
 }
@@ -449,6 +450,8 @@ mod tests {
             crate::gateway::decision_ir::definition(),
             crate::gateway::action_contracts::definition(),
             crate::tools::tool_output::definition(),
+            crate::tools::apply_patch::definition(),
+            crate::tools::apply_patch::inspect_definition(),
         ] {
             let declared = bundled_tool(&definition.name).expect("kernel definition is bundled");
             assert_eq!(

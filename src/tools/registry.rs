@@ -1439,13 +1439,13 @@ mod registry_tests {
         let db = crate::db::Database::new(dir.path()).unwrap();
         let mut settings = ContextSettings::default();
         settings.tool_discovery_mode = "Full".into();
-        let plugins = [plugin("write_file"), plugin("brave_web_search")];
+        let plugins = [plugin("brave_web_search")];
         let tools = build_tool_definitions(&settings, Some(&plugins), Some(&db));
         let got = names(&tools);
-        // A plugin cannot shadow a builtin name and, with no persisted
-        // registry, the static table must not fill that builtin's contract in.
+        // With no persisted registry, the static table must not fill in a
+        // builtin contract the caller never declared.
         assert!(got.contains(&"brave_web_search"));
-        assert!(!got.contains(&"write_file"), "{got:?}");
+        assert!(!got.contains(&"execute_terminal"), "{got:?}");
         // Kernel-bundled tools always have an owner, so their contracts come
         // from the bundled manifest even without persisted rows.
         assert!(got.contains(&"memory_set"), "{got:?}");

@@ -242,8 +242,6 @@ pub fn init_default_tools(db: &Database) -> anyhow::Result<()> {
 /// manifest under `packages/`, while the implementations stay host-owned.
 pub(crate) fn get_default_tools() -> Vec<Tool> {
     vec![
-        crate::tools::apply_patch::definition(),
-        crate::tools::apply_patch::inspect_definition(),
         Tool {
             name: "execute_terminal".into(),
             description: Some("Run shell command. Long-running commands: use run_background instead, then poll with background_status (finished jobs also announce themselves).".into()),
@@ -260,12 +258,6 @@ pub(crate) fn get_default_tools() -> Vec<Tool> {
             name: "background_status".into(),
             description: Some("Check status/output of a detached background command. Call without job_id to list all jobs.".into()),
             parameters: serde_json::json!({"type":"object","properties":{"job_id":{"type":"string"}}}),
-            is_enabled: true,
-        },
-        Tool {
-            name: "write_file".into(),
-            description: Some("Create or overwrite file. For a checked transactional write, pass expected_absent=true (create only) or expected_sha256 from inspect_file (replace only); without a precondition this is a raw write.".into()),
-            parameters: serde_json::json!({"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"},"expected_absent":{"type":"boolean","description":"Require that the file does not exist (versioned checked write)"},"expected_sha256":{"type":"string","description":"Require this lowercase SHA-256 before replacing (from inspect_file)"}},"required":["path","content"]}),
             is_enabled: true,
         },
         Tool {
@@ -765,12 +757,12 @@ mod tool_tests {
         let (db, _dir) = test_db();
         init_default_tools(&db).unwrap();
 
-        disable(&db, "write_file").unwrap();
-        let tool = get(&db, "write_file").unwrap();
+        disable(&db, "execute_terminal").unwrap();
+        let tool = get(&db, "execute_terminal").unwrap();
         assert!(!tool.is_enabled);
 
-        enable(&db, "write_file").unwrap();
-        let tool = get(&db, "write_file").unwrap();
+        enable(&db, "execute_terminal").unwrap();
+        let tool = get(&db, "execute_terminal").unwrap();
         assert!(tool.is_enabled);
     }
 
@@ -840,7 +832,7 @@ mod tool_tests {
             .filter(|tool| tool.is_enabled).map(|tool| tool.name).collect();
         let actual_names: Vec<_> = defs.iter().map(|tool| tool.function.name.clone()).collect();
         assert_eq!(actual_names, expected_names);
-        for name in ["execute_terminal", "write_file", "inspect_file"] {
+        for name in ["execute_terminal", "run_background", "background_status"] {
             assert!(actual_names.iter().any(|actual| actual == name));
         }
     }
@@ -850,12 +842,14 @@ mod tool_tests {
         let (db, _dir) = test_db();
         init_default_tools(&db).unwrap();
         disable(&db, "execute_terminal").unwrap();
-        disable(&db, "write_file").unwrap();
+        disable(&db, "run_background").unwrap();
 
         let defs = to_tool_definitions(&db).unwrap();
         let expected = get_default_tools().iter().filter(|tool| tool.is_enabled).count();
         assert_eq!(defs.len(), expected - 2);
-        assert!(defs.iter().all(|d| d.function.name != "execute_terminal"));
+        assert!(defs.iter().all(|d| {
+            d.function.name != "execute_terminal" && d.function.name != "run_background"
+        }));
     }
 
     /// Tools removed from `get_default_tools()` between releases must be
