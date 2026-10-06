@@ -176,6 +176,25 @@ Handlers: `builtin`, `http`, `script`, `executable`, `verification`,
   `tools::builtin_operations`; the tools are no longer seeded from
   `db/tools.rs`, legacy enable/disable flags migrate to the plugin flag store,
   and `execute_decision` lowers one instruction through the dispatch loop.
+* **Every tool owner is a package**: `delegation`, `memory`, `rag`, `cron`,
+  `discord`, `interaction`, `skills`, `workflow_authoring` and `file_ops` are
+  privileged bundled packages (`packages/<id>/plugin.json`) over host-owned
+  operations, next to the extracted `legacy_file_ops`, `shell` and `vision`.
+  `db/tools.rs` seeds no tool at all; each name has exactly one owner.
+* **Implementation bytes are pinned**: the registry revision hashes the files
+  every declaration names (tool scripts/executables, service workers, hooks,
+  frontend and engine), so a changed implementation is a different registry
+  and receipts cannot outlive the code that produced their evidence.
+* **Upgrades are complete manifest changes**: the staged manifest is fully
+  validated before anything is replaced, its asset set is applied (and assets
+  it no longer declares are pruned), and a failure restores both the previous
+  directory and its previous asset placement.
+* **`praxis-tui` is an unlinked crate**: the terminal frontend links neither
+  the kernel nor its database and does everything over the authenticated `/v1`
+  API; `praxis chat` launches the standalone binary. The kernel no longer
+  links `ratatui`/`crossterm`/`unicode-segmentation`.
+* **VM status uses per-guest metadata**: it attaches every guest through the
+  endpoints recorded at creation, claim or recovery in either socket mode.
 
 ### Future design recorded
 
@@ -402,9 +421,16 @@ no VM/UI/media.
 
 - [ ] Minimal kernel: `file_ops` + plugin management only (no provider, QEMU,
   dashboard, cron, voice or channel worker initialized).
+  Progress: every tool owner is a package (§6C) and the terminal UI is out of
+  the kernel; the providers, channels, media pipeline and dashboard still
+  compile in.
 - [ ] Standard `--install-default` assembled from packages.
+  Progress: `praxis plugin install-default` installs a bundled default set (or
+  a custom preset); the preset still assumes compiled-in features.
 - [ ] Remove now-unconditional heavy deps (`serenity`, `ratatui`/`crossterm`,
   `image`, audio, TLS) after their packages move out.
+  Progress: `ratatui`/`crossterm`/`unicode-segmentation` left the kernel with
+  the TUI crate; `serenity`, `image`, audio and TLS follow their providers.
 
 ### G. VM/dashboard loose ends
 
@@ -413,14 +439,23 @@ no VM/UI/media.
   first-party installable) with `present`/`hint`, and the dashboard renders an
   absent feature as an install/enable hint panel that loads no page and executes
   no package code. Listing never starts a feature service.
-- [ ] VM upgrade/drain/lifecycle policy for active guests.
-- [ ] Remove the builtin dashboard after a release.
+- [x] VM upgrade/drain/lifecycle policy for active guests: drain and recovery
+      cover active guests (sessions drain on binding drop, guests and disks
+      survive, interrupted operations are recorded, nothing is replayed), and
+      status attaches through each guest's persisted endpoints in either
+      socket mode. Per-guest TCP port *allocation* for new guests remains open
+      alongside PR 3.
+- [ ] Remove the builtin dashboard after a release. Release-gated: the
+      `dashboard` feature and `packages/dashboard` are the replacement; the
+      removal itself waits for a release boundary so existing installs keep a
+      working UI in between.
 
 ### H. Smaller open items
 
-- [ ] PR 8b remainder: pin immutable package/script bytes in the registry
-  revision (today it pins declarations and native binding generations) and
-  complete rollback of a manifest change.
+- [x] PR 8b remainder: the registry revision pins immutable package/script
+  bytes (tool scripts/executables, service workers, hooks, frontend and
+  engine) as well as the declarations, and a manifest change rolls back whole
+  (directory, asset placement and pruning) on any failure.
 - [ ] Keep `plan/README.md`'s delivery checklist in step with this file (PR 4,
   PR 8b routes/UI + migrations wording, PR 8c).
 
@@ -443,12 +478,14 @@ no VM/UI/media.
   receives the kernel's observed evidence snapshot, and worker failure fails
   closed. Receipt keys persist in `DATA_DIR/receipt.key` (or
   `PRAXIS_RECEIPT_KEY`), so archived receipts verify across restarts.
-* `file_ops`, memory, RAG, cron, Discord, interaction, skills, workflow
-  authoring, providers, channels and media still compile into the kernel; only
-  the crates/packages in §3 are independently installable. `runtime_control` is
-  the deliberate exception: its tools are package-declared and switchable, and
-  their implementations stay host-owned kernel operations (§5.9).
-* `praxis-tui` is a `src/bin` inside the kernel crate, not yet an unlinked crate.
+* Every tool is package-declared (`file_ops`, `runtime_control`, memory, RAG,
+  cron, Discord, interaction, skills, workflow authoring and delegation are
+  bundled packages whose implementations stay host-owned kernel operations,
+  §5.9). What still compiles into the kernel is everything *above* the tool
+  layer: providers, channels, the media pipeline, the dashboard and the VM
+  hosts (§6D/§6F).
+* VM guest TCP *port allocation* for new guests is still fixed to the
+  defaults; existing guests reuse their recorded endpoints.
 * The engine package requires `role: "runtime"` **and** an operator grant; a
   package cannot promote itself.
 * **Test environment note:** on the small handoff box, compiling the lib test
@@ -473,6 +510,8 @@ CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS=1 \
 cargo test --locked --bin praxis
 cargo test --locked --no-default-features --bin praxis
 cargo test -p praxis-shell -p praxis-vision -p praxis-plugin-api
+cargo test -p praxis-tui
+node scripts/test_tui_selection_pty.js
 cargo tree --locked --no-default-features -p praxis   # no optional packages
 node scripts/test_ui_static.js
 node scripts/test_workflow_dashboard.js
