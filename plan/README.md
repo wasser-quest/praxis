@@ -34,8 +34,14 @@ optional workflow packs add assets rather than replacing the core interpreter.
 - [x] PR 1: canonical registry and shared dispatch/host API.
 - [x] PR 2: headless VM adapter extraction, preserving current behavior.
 - [ ] PR 3: independently packaged VM service, routes, UI contribution and lifecycle.
-- [ ] PR 4: optional dashboard with feature-independent runtime APIs/events.
-- [ ] PR 5: runtime-control tools and other tool packages.
+- [x] PR 4: optional dashboard with feature-independent runtime APIs/events.
+  (Removing the built-in dashboard after one release is tracked in the
+  handoff §6G.)
+- [ ] PR 5: runtime-control tools and other tool packages. Progress:
+  `legacy_file_ops`, `shell` and `vision` are extracted; `runtime_control`'s 12
+  tools now share a `tools::builtin_operations` host-operation table (11 of 12
+  hosted; `execute_decision` stays dispatch-level because it lowers to arbitrary
+  tools). Manifest ownership + catalog migration remain.
 - [ ] PR 6: providers, channels, media and workflow/prompt packages.
 - [ ] PR 7: minimal distribution, compatibility preset and dependency cleanup.
 - [x] PR 8a: lifecycle hooks (`allow|ask|deny`), staged install/uninstall,
@@ -57,7 +63,7 @@ optional workflow packs add assets rather than replacing the core interpreter.
   worker `web_info`), proxied through the dashboard/Host API feature routes, and
   run namespaced, reversible migrations (`provides.migrations` → `migrations/*.sql`
   against `DATA_DIR/plugin_data/<owner>.db`, `praxis plugin migrate [--down]`).
-- [ ] PR 8c: kernel interfaces (trust levels, evidence observer and signed
+- [x] PR 8c: kernel interfaces (trust levels, evidence observer and signed
   receipts, replaceable runtime engine interface).
   Progress: the `role` declaration and the operator trust store
   (`praxis plugin trust`, `DATA_DIR/plugin_trust.json`) are implemented; a
