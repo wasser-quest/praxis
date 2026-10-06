@@ -250,21 +250,31 @@ VM/media service.
 
 ## 6. What needs to be done (prioritized)
 
+These checkboxes are the working progress list. An item is ticked only once the
+change is merged and verified (§8).
+
 ### A. Finish the kernel seam — done
 
-Async SM evaluation (A.1), observed evidence to the engine (A.2) and a stable
-receipt-key store (A.3) are implemented. See §5.4, §5.5 and §7. The remaining
-kernel-seam work is in §B (routes/UI loading and migrations).
+- [x] **A.1 Async SM evaluation.** `sm::{advance_workflow, advance_state,
+  resolve_auto_state, apply_to_context}` and every condition call are async,
+  and `RuntimeEngine::evaluate_condition` is async so a process engine owns
+  guard policy too.
+- [x] **A.2 Observed evidence to the engine.** Every guard/transition condition
+  receives the kernel's evidence snapshot (signed receipts, exit codes,
+  resource/workspace hashes, reply facts), not just the context map.
+- [x] **A.3 Receipt persistence.** `PRAXIS_RECEIPT_KEY`, or the stable
+  `DATA_DIR/receipt.key` store (mode `0600`, never overwritten), so archived
+  receipts verify across restarts.
 
 ### B. Manifest v2 loading — done
 
-A declared `provides.web` binds a package's service to an authenticated web
-contribution: the host derives the descriptor, requires the worker's `web_info`
-to match it, and proxies it through the dashboard/Host API feature routes
-(one owner, authenticated). Declared `provides.migrations` resolve to
-`migrations/<id>.sql` scripts that run against a per-package database
-(`DATA_DIR/plugin_data/<owner>.db`) with recorded hashes and optional `.down.sql`
-reversal (`praxis plugin migrate [--down]`). See §5.2.
+- [x] **`routes`/`ui`/`web` loading.** `provides.web` binds a package's service
+  to an authenticated web contribution: the host derives the descriptor,
+  requires the worker's `web_info` to match it, and proxies it through the
+  dashboard/Host API feature routes (one owner, authenticated).
+- [x] **`migrations` execution.** `migrations/<id>.sql` + optional `.down.sql`
+  run against a per-package database (`DATA_DIR/plugin_data/<owner>.db`) with
+  recorded script hashes (`praxis plugin migrate [--down]`).
 
 ### C. Package extraction (one PR per owner)
 
@@ -294,33 +304,88 @@ seeding them from `db/tools.rs`'s default list. The migration must keep existing
 enable/disable flags and every identifier that SM/IR guards and tool groups
 reference, and must never expose both a builtin and a plugin owner.
 
+Already extracted (§9 recipe, one PR each):
+
+- [x] `legacy_file_ops` (2 tools) — optional crate + package + installer.
+- [x] `shell` (3) — optional crate + package + durable background worker.
+- [x] `vision` (1) — optional crate + package.
+
+Remaining owners (39 tools total):
+
+- [ ] **`runtime_control` (12)** — package of `builtin` handlers over host-owned
+  operations. Progress:
+  - [x] `tools::builtin_operations` seam with host-issued identity;
+        unknown operations fail closed.
+  - [x] `get_context`, `set_context`, `delete_context` (single implementation,
+        native dispatch delegates).
+  - [ ] `search_tools`, `read_tool_result`, `run_check`, `execute_decision`.
+  - [ ] `agent_next`, `agent_back`, `agent_complete`, `agent_set_path`,
+        `agent_feedback`.
+  - [ ] `packages/runtime_control/plugin.json` declaring all 12 over `builtin`.
+  - [ ] stop seeding the 12 from `db/tools.rs`; preserve enable/disable flags
+        and every guard/tool-group identifier; never two owners.
+  - [ ] core-only exclusion test.
+- [ ] `delegation` (2)
+- [ ] `memory` (8)
+- [ ] `rag` (4)
+- [ ] `cron` (5) + its scheduler worker
+- [ ] `discord` (3)
+- [ ] `interaction` (2)
+- [ ] `skills` (2) + `skills/` assets
+- [ ] `workflow_authoring` (1)
+- [ ] `file_ops` (3) as a privileged bundled plugin
+
 ### D. Providers, channels, media, assets (PR 6)
 
-Move providers behind common streaming/usage/error interfaces; move Discord,
-voice/audio, ComfyUI, GPU routing, image providers; add coding/learning/persona/
-workflow asset packs.
+- [ ] Common provider interfaces: streaming, usage, model list, embedding and
+  typed errors. Budget, rate-limit/backoff, compaction and fallback stay
+  host-owned; a retry must not replay a committed tool action.
+- [ ] Move Discord, voice/audio, ComfyUI, GPU routing and image providers to
+  independently enabled packages with scoped credentials and delivery adapters.
+- [ ] Add coding/learning/persona/workflow asset packs.
+
+Acceptance: provider-only chat, verified Rust and language teaching work with
+no VM/UI/media.
 
 ### E. TUI crate extraction
 
-Move `src/tui` into an unlinked `praxis-tui` crate; complete the remote Host API
-path so it no longer reads the local DB or links the kernel.
+- [ ] Move `src/tui` into an unlinked `praxis-tui` crate.
+- [ ] Complete the remote Host API path so it no longer reads the local DB or
+  links the kernel.
 
 ### F. Minimal distribution and dependency cleanup (PR 7)
 
-Minimal kernel + `file_ops` + plugin management; a standard `--install-default`
-assembled from packages; remove now-unconditional heavy deps (`serenity`,
-`ratatui`/`crossterm`, `image`, audio, TLS) after their packages move out.
+- [ ] Minimal kernel: `file_ops` + plugin management only (no provider, QEMU,
+  dashboard, cron, voice or channel worker initialized).
+- [ ] Standard `--install-default` assembled from packages.
+- [ ] Remove now-unconditional heavy deps (`serenity`, `ratatui`/`crossterm`,
+  `image`, audio, TLS) after their packages move out.
 
 ### G. VM/dashboard loose ends
 
-Dashboard navigation slots for absent features are implemented: the host
-reports registered `runtime::feature_slots` (live, installed-but-unready and
-first-party installable features) with `present`/`hint`, and the dashboard
-renders an absent feature as an install/enable hint panel that loads no page
-and executes no package code. Listing never starts a feature service.
+- [x] Dashboard navigation slots for absent features: the host reports
+  registered `runtime::feature_slots` (live, installed-but-unready and
+  first-party installable) with `present`/`hint`, and the dashboard renders an
+  absent feature as an install/enable hint panel that loads no page and executes
+  no package code. Listing never starts a feature service.
+- [ ] VM upgrade/drain/lifecycle policy for active guests.
+- [ ] Remove the builtin dashboard after a release.
 
-Still open: VM upgrade/drain/lifecycle policy for active guests, and removing
-the builtin dashboard after a release.
+### H. Smaller open items
+
+- [ ] PR 8b remainder: pin immutable package/script bytes in the registry
+  revision (today it pins declarations and native binding generations) and
+  complete rollback of a manifest change.
+- [ ] Keep `plan/README.md`'s delivery checklist in step with this file (PR 4,
+  PR 8b routes/UI + migrations wording, PR 8c).
+
+### I. Future (design recorded, not started)
+
+- [ ] **`xis`** — separate executable: signed repository indexes, setup bundles
+  (plugins/skills/templates/contexts/config profile), plan + apply with
+  keep/backup/overwrite, ownership lock and a MOTD of required changes,
+  delegating plugin installs to the Praxis CLI. The kernel does not link it.
+  See [the xis design](XIS_PACKAGE_MANAGER.md).
 
 ## 7. Known limitations and caveats
 
@@ -369,12 +434,14 @@ node tests/test_chat_commands.js
 git diff --check
 ```
 
-Lifecycle smoke (temp dirs; note `ROOT_DIR` receives declared assets):
+Lifecycle smoke (temp dirs; note `ROOT_DIR` receives declared assets and the
+plugin path is resolved against the pinned install root, so pass an absolute
+path):
 
 ```bash
 TMP=$(mktemp -d); mkdir -p "$TMP/root/templates"
 PLUGINS_DIR="$TMP/plugins" DATA_DIR="$TMP/data" ROOT_DIR="$TMP/root" PLUGIN_HOOKS=allow \
-  ./target/debug/praxis plugin install ./examples/plugins/file_tools --no-scripts
+  ./target/debug/praxis plugin install "$PWD/examples/plugins/file_tools" --no-scripts
 PLUGINS_DIR="$TMP/plugins" DATA_DIR="$TMP/data" ROOT_DIR="$TMP/root" \
   ./target/debug/praxis plugin verify
 ```
