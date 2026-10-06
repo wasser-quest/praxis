@@ -5,7 +5,7 @@ edition = "2021"
 description = "AI Agent Platform — Praxis"
 
 [workspace]
-members = ["crates/praxis-vm", "crates/praxis-plugin-api", "crates/praxis-comfyui", "crates/praxis-provider-api", "crates/praxis-gpu-router", "crates/praxis-tui", "crates/praxis-vm-web", "crates/praxis-vm-worker", "crates/praxis-dashboard", "crates/praxis-legacy-file-ops", "crates/praxis-shell", "crates/praxis-vision"]
+members = ["crates/praxis-vm", "crates/praxis-plugin-api", "crates/praxis-voice", "crates/praxis-comfyui", "crates/praxis-provider-api", "crates/praxis-gpu-router", "crates/praxis-tui", "crates/praxis-vm-web", "crates/praxis-vm-worker", "crates/praxis-dashboard", "crates/praxis-legacy-file-ops", "crates/praxis-shell", "crates/praxis-vision"]
 default-members = ["."]
 resolver = "2"
 
@@ -29,15 +29,16 @@ discord = ["dep:serenity", "voice"]
 # gateway, CLI and verified workflows work without it.
 dashboard = ["dep:axum-server", "dep:rcgen", "dep:hostname"]
 vm = ["dep:praxis-vm", "dep:praxis-vm-web"]
-voice_vosk = ["vosk"]
-voice_whisper = ["whisper-rs"]
+voice_vosk = ["praxis-voice/voice_vosk"]
+voice_whisper = ["praxis-voice/voice_whisper"]
 songbird = ["dep:songbird"]
-vosk = ["dep:vosk"]
+vosk = ["voice_vosk"]
 
 [dependencies]
 praxis-plugin-api = { path = "crates/praxis-plugin-api" }
 praxis-provider-api = { path = "crates/praxis-provider-api" }
 praxis-comfyui = { path = "crates/praxis-comfyui" }
+praxis-voice = { path = "crates/praxis-voice" }
 praxis-gpu-router = { path = "crates/praxis-gpu-router" }
 praxis-legacy-file-ops = { path = "crates/praxis-legacy-file-ops", optional = true }
 praxis-shell = { path = "crates/praxis-shell", optional = true }
@@ -97,8 +98,6 @@ cron = "0.15"
 rusqlite = { version = "0.32", features = ["bundled", "vtab"] }
 backon = "1"
 
-vosk = { version = "0.3", optional = true }
-whisper-rs = { version = "0.1", optional = true }
 songbird = { version = "0.6", optional = true, features = ["driver", "builtin-queue", "serenity", "receive"] }
 symphonia = { version = "0.5", features = ["all"] }
 minimp3 = "0.5"

@@ -1,5 +1,5 @@
 //! Qwen3-TTS output rejoins native RVC, persistence, dashboard and Discord playback.
-use crate::comfyui::{
+use praxis_comfyui::{
     qwen3::{self, Qwen3TtsConfig},
     workflows::TTS_OUTPUT_NODE,
     ComfyUiClient,

@@ -1,0 +1,39 @@
+[package]
+name = "praxis-voice"
+version = "1.0.3"
+edition = "2021"
+description = "Praxis voice/audio: transcription, synthesis and their ComfyUI/Vosk/Whisper/ElevenLabs backends"
+
+# Transcription, synthesis and audio utilities. Providers are selected by
+# plain settings; hosts map their own typed configuration onto them and supply
+# credentials. No host types, no queue mutation, no provider fallback.
+[dependencies]
+anyhow = "1"
+async-trait = "0.1"
+base64 = "0.22"
+futures-util = "0.3"
+hound = "3.5"
+minimp3 = "0.5"
+praxis-comfyui = { path = "../praxis-comfyui" }
+praxis-gpu-router = { path = "../praxis-gpu-router" }
+reqwest = { version = "0.12.28", default-features = false, features = ["rustls-tls", "json", "stream", "multipart"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tempfile = "3"
+thiserror = "1"
+tokio = { version = "1", features = ["io-util", "macros", "rt", "rt-multi-thread", "time"] }
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+tracing = "0.1"
+urlencoding = "2.1"
+vosk = { version = "0.3", optional = true }
+whisper-rs = { version = "0.1", optional = true }
+
+[features]
+default = []
+voice_vosk = ["vosk"]
+voice_whisper = ["whisper-rs"]
+
+[dev-dependencies]
+tokio = { version = "1", features = ["test-util"] }
+wiremock = "0.6"

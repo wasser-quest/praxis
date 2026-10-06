@@ -3709,6 +3709,7 @@ dependencies = [
  "praxis-vision",
  "praxis-vm",
  "praxis-vm-web",
+ "praxis-voice",
  "rand 0.8.6",
  "rcgen",
  "regex",
@@ -3737,8 +3738,6 @@ dependencies = [
  "tracing-subscriber",
  "urlencoding",
  "uuid",
- "vosk",
- "whisper-rs",
  "wiremock",
  "zeroize",
 ]
@@ -3934,6 +3933,33 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+]
+
+[[package]]
+name = "praxis-voice"
+version = "1.0.3"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64",
+ "futures-util",
+ "hound",
+ "minimp3",
+ "praxis-comfyui",
+ "praxis-gpu-router",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-tungstenite 0.24.0",
+ "tokio-util",
+ "tracing",
+ "urlencoding",
+ "vosk",
+ "whisper-rs",
+ "wiremock",
 ]
 
 [[package]]

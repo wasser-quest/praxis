@@ -1,5 +1,5 @@
 use super::*;
-use crate::voice::{pcm_to_wav, transcribe_audio, STTConfig};
+use crate::{pcm_to_wav, transcribe_audio, STTConfig};
 use tokio_tungstenite::{accept_async, tungstenite::Message};
 
 fn stt_config(url: String) -> STTConfig {
@@ -215,12 +215,4 @@ fn vosk_remote_url_and_context_defaults() {
     ] {
         assert!(VoskRemote::new(url, Duration::from_secs(1)).is_err());
     }
-    let settings: crate::db::contexts::ContextSettings = serde_json::from_str("{}").unwrap();
-    assert!(settings.voice_vosk_url.is_none());
-    let settings: crate::db::contexts::ContextSettings =
-        serde_json::from_value(json!({"voice_vosk_url": "ws://100.80.1.2:2700"})).unwrap();
-    assert_eq!(
-        settings.voice_vosk_url.as_deref(),
-        Some("ws://100.80.1.2:2700")
-    );
 }

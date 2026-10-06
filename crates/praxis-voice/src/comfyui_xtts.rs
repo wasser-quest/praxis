@@ -1,6 +1,6 @@
 //! ComfyUI XTTS-v2 provider, returning WAV bytes to the unchanged native TTS,
 //! RVC, persistence and Discord playback pipeline.
-use crate::comfyui::{config::ComfyUiConfig, workflows, ComfyUiClient};
+use praxis_comfyui::{config::ComfyUiConfig, workflows, ComfyUiClient};
 use tokio_util::sync::CancellationToken;
 
 pub async fn speak(
