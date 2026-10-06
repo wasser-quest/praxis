@@ -150,6 +150,8 @@ pub struct InstallRequest<'a> {
 
 #[derive(Debug, Clone)]
 pub struct InstallReport {
+    /// Declared assets placed under the root by this lifecycle action.
+    pub assets: AssetsReport,
     pub name: String,
     pub dest: PathBuf,
     pub plugin: Plugin,
@@ -506,6 +508,7 @@ pub async fn install(request: &InstallRequest<'_>) -> anyhow::Result<InstallRepo
             println!("  uninstall hook: {path}");
         }
         return Ok(InstallReport {
+            assets: AssetsReport::default(),
             name: plugin.name.clone(),
             dest,
             plugin,
@@ -578,6 +581,7 @@ pub async fn install(request: &InstallRequest<'_>) -> anyhow::Result<InstallRepo
     records.insert(plugin.name.clone(), serde_json::to_value(&record)?);
     save_records(request.plugins_dir, &records)?;
     Ok(InstallReport {
+        assets: AssetsReport::default(),
         name: plugin.name.clone(),
         dest,
         plugin,
@@ -590,6 +594,8 @@ pub struct UpgradeRequest<'a> {
     pub source: &'a Path,
     pub plugins_dir: &'a Path,
     pub data_dir: &'a Path,
+    /// Where declared assets are placed (ROOT_DIR).
+    pub root: &'a Path,
     pub run_hooks: bool,
     pub dry_run: bool,
 }
@@ -623,6 +629,7 @@ pub async fn upgrade(request: &UpgradeRequest<'_>) -> anyhow::Result<InstallRepo
             plugin.version
         );
         return Ok(InstallReport {
+            assets: AssetsReport::default(),
             name: plugin.name.clone(),
             dest,
             plugin,
@@ -638,6 +645,9 @@ pub async fn upgrade(request: &UpgradeRequest<'_>) -> anyhow::Result<InstallRepo
     let stage = request.plugins_dir.join(format!(".upgrade-{}-{suffix}", plugin.name));
     let backup = request.plugins_dir.join(format!(".backup-{}-{suffix}", plugin.name));
     copy_dir_recursive(&source_root, &stage)?;
+    // A manifest change must be completely valid before anything is replaced:
+    // declared contributions, asset files, migrations and resolved handlers.
+    crate::plugins::load_plugin_from_manifest(&stage.join("plugin.json"), &stage)?;
     std::fs::rename(&dest, &backup)?;
     if let Err(error) = std::fs::rename(&stage, &dest) {
         let _ = std::fs::rename(&backup, &dest);
@@ -688,12 +698,44 @@ pub async fn upgrade(request: &UpgradeRequest<'_>) -> anyhow::Result<InstallRepo
             hook.skipped_reason = Some("hooks were not run (policy or --no-scripts)".into());
         }
     }
+    // The manifest change includes its placed assets: apply the new set and
+    // prune the ones it no longer declares. Any failure restores the previous
+    // directory AND its assets, so a manifest change is all-or-nothing.
+    let previous = crate::plugins::load_installed_plugin(&backup).ok();
+    let assets = match apply_assets(&dest, &plugin, request.data_dir, request.root) {
+        Ok(assets) => assets,
+        Err(error) => {
+            let _ = std::fs::remove_dir_all(&dest);
+            let _ = std::fs::rename(&backup, &dest);
+            if let Some(previous) = previous {
+                let _ = apply_assets(&dest, &previous, request.data_dir, request.root);
+                // Files the failed manifest introduced are owned by neither
+                // revision; drop them while they still hold its bytes.
+                for asset in &plugin.provides.assets {
+                    if previous.provides.assets.contains(asset) {
+                        continue;
+                    }
+                    let placed = request.root.join(asset);
+                    let introduced = request.source.join(asset);
+                    if placed.is_file()
+                        && introduced.is_file()
+                        && sha256_bytes(&std::fs::read(&placed).unwrap_or_default())
+                            == sha256_bytes(&std::fs::read(&introduced).unwrap_or_default())
+                    {
+                        let _ = std::fs::remove_file(&placed);
+                    }
+                }
+            }
+            return Err(error);
+        }
+    };
     let _ = std::fs::remove_dir_all(&backup);
     let record = build_record(&source_root, &plugin, &hooks, &manifest_bytes)?;
     let mut records = load_records(request.plugins_dir)?;
     records.insert(plugin.name.clone(), serde_json::to_value(&record)?);
     save_records(request.plugins_dir, &records)?;
     Ok(InstallReport {
+        assets,
         name: plugin.name.clone(),
         dest,
         plugin,
@@ -1104,11 +1146,11 @@ pub fn apply_assets(
     assets_root: &Path,
 ) -> anyhow::Result<AssetsReport> {
     let mut report = AssetsReport::default();
-    if plugin.provides.assets.is_empty() {
-        return Ok(report);
-    }
     let mut records = load_asset_records(data_dir)?;
     let mut owned = owned_assets(&records, &plugin.name);
+    // Read every declared asset before writing any: a manifest change is
+    // applied completely or not at all.
+    let mut declared = Vec::new();
     for asset in &plugin.provides.assets {
         let relative = Path::new(asset);
         anyhow::ensure!(
@@ -1120,8 +1162,11 @@ pub fn apply_assets(
         );
         let bytes = std::fs::read(plugin_dir.join(relative))
             .map_err(|error| anyhow::anyhow!("Asset '{asset}' is missing from the package: {error}"))?;
-        let hash = sha256_bytes(&bytes);
-        let dest = assets_root.join(relative);
+        declared.push((asset.clone(), bytes));
+    }
+    for (asset, bytes) in &declared {
+        let hash = sha256_bytes(bytes);
+        let dest = assets_root.join(asset);
         if dest.exists() {
             let current = sha256_bytes(&std::fs::read(&dest)?);
             let ours = owned.get(asset).is_some_and(|known| known == &current);
@@ -1133,11 +1178,34 @@ pub fn apply_assets(
         if let Some(parent) = dest.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(&dest, &bytes)?;
+        std::fs::write(&dest, bytes)?;
         owned.insert(asset.clone(), hash);
         report.written.push(asset.clone());
     }
-    records.insert(plugin.name.clone(), serde_json::to_value(&owned)?);
+    // A manifest change is complete: assets it no longer declares stop being
+    // owned, and untouched copies are removed. Operator edits stay.
+    let kept: std::collections::HashSet<&str> =
+        declared.iter().map(|(asset, _)| asset.as_str()).collect();
+    for (asset, hash) in owned.clone() {
+        if kept.contains(asset.as_str()) {
+            continue;
+        }
+        let dest = assets_root.join(&asset);
+        if dest.is_file() {
+            if sha256_bytes(&std::fs::read(&dest)?) == hash {
+                std::fs::remove_file(&dest)?;
+                report.removed.push(asset.clone());
+            } else {
+                report.kept.push(asset.clone());
+            }
+        }
+        owned.remove(&asset);
+    }
+    if owned.is_empty() {
+        records.remove(&plugin.name);
+    } else {
+        records.insert(plugin.name.clone(), serde_json::to_value(&owned)?);
+    }
     save_asset_records(data_dir, &records)?;
     Ok(report)
 }

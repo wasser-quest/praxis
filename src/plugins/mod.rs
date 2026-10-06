@@ -36,6 +36,18 @@ pub struct PluginHooks {
     /// the operator passes --purge.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub uninstall: Option<String>,
+    /// Resolved hook files for byte pinning. The declarations stay
+    /// install-relative so the registry revision is stable across install
+    /// locations; these paths are never serialized into it.
+    #[serde(skip, default)]
+    pub resolved: ResolvedHooks,
+}
+
+/// Absolute hook paths, resolved at load and hashed into the registry revision.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ResolvedHooks {
+    pub install: Option<std::path::PathBuf>,
+    pub uninstall: Option<std::path::PathBuf>,
 }
 
 impl PluginHooks {
@@ -387,6 +399,51 @@ pub struct PluginRegistry {
     services: HashMap<String, crate::runtime::features::ServiceHandle>,
 }
 
+/// The implementation file a handler names, if it has one.
+fn handler_file(handler: &PluginHandler) -> Option<&str> {
+    match handler {
+        PluginHandler::Script { path, .. } => Some(path),
+        PluginHandler::Executable { path, .. } => Some(path),
+        PluginHandler::Service(adapter) => adapter.executable.as_deref(),
+        PluginHandler::Verification(_) | PluginHandler::SourceEdit(_) => None,
+        PluginHandler::Http { .. } | PluginHandler::Builtin { .. } => None,
+    }
+}
+
+/// Hash an implementation file's bytes for the registry revision. Results are
+/// cached by size and mtime so a dispatch does not re-read unchanged packages;
+/// the digest itself is always of the bytes.
+fn file_digest(path: &Path) -> anyhow::Result<String> {
+    use sha2::{Digest, Sha256};
+    use std::sync::{LazyLock, Mutex};
+    static DIGESTS: LazyLock<Mutex<HashMap<std::path::PathBuf, (u64, u64, String)>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+    // An unreadable implementation is pinned as absent: the digest still
+    // changes when a file appears, disappears or changes, and execution of a
+    // missing script fails on its own.
+    let Ok(meta) = std::fs::metadata(path) else {
+        return Ok("missing".to_string());
+    };
+    let mtime = meta
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|since| since.as_nanos() as u64)
+        .unwrap_or(0);
+    let mut cache = DIGESTS.lock().map_err(|_| anyhow::anyhow!("Digest cache unavailable"))?;
+    if let Some((size, cached_mtime, digest)) = cache.get(path) {
+        if (*size, *cached_mtime) == (meta.len(), mtime) {
+            return Ok(digest.clone());
+        }
+    }
+    let Ok(bytes) = std::fs::read(path) else {
+        return Ok("missing".to_string());
+    };
+    let digest = format!("{:x}", Sha256::digest(bytes));
+    cache.insert(path.to_path_buf(), (meta.len(), mtime, digest.clone()));
+    Ok(digest)
+}
+
 impl PluginRegistry {
     /// The kernel's registry: its bundled packages (host-owned operations) are
     /// always registered first, so an installed manifest can never own one of
@@ -424,12 +481,48 @@ impl PluginRegistry {
             .map(|handle| handle.descriptor())
             .collect();
         services.sort_by(|a, b| (&a.owner, &a.id).cmp(&(&b.owner, &b.id)));
+        // Immutable implementation bytes: a changed script, hook or executable
+        // is a different registry even when every declaration is unchanged, so
+        // receipts cannot outlive the code that produced their evidence.
+        let mut implementations = Vec::new();
+        for plugin in self.plugins.values() {
+            let mut files: Vec<(String, &Path)> = Vec::new();
+            for tool in &plugin.tools {
+                if let Some(path) = handler_file(&tool.handler) {
+                    files.push((format!("tool/{}", tool.name), Path::new(path)));
+                }
+                if let Some(handler) = tool
+                    .contract
+                    .as_ref()
+                    .and_then(|contract| contract.compensation.as_ref())
+                    .map(|compensation| &compensation.handler)
+                    .and_then(handler_file)
+                {
+                    files.push((format!("tool/{}/compensation", tool.name), Path::new(handler)));
+                }
+            }
+            for (key, path) in [
+                ("hook/install", plugin.hooks.resolved.install.as_deref()),
+                ("hook/uninstall", plugin.hooks.resolved.uninstall.as_deref()),
+                ("frontend", plugin.frontend.as_ref().map(|f| Path::new(&f.executable))),
+                ("engine", plugin.engine.as_ref().map(|e| Path::new(&e.executable))),
+            ] {
+                if let Some(path) = path {
+                    files.push((key.into(), path));
+                }
+            }
+            for (key, path) in files {
+                implementations.push((format!("{}/{}", plugin.name, key), file_digest(path)?));
+            }
+        }
+        implementations.sort();
         let bytes = serde_json::to_vec(&(
             "praxis.registry.v1", env!("CARGO_PKG_VERSION"),
             crate::runtime::services::SERVICE_API_VERSION,
             crate::runtime::features::INVOCATION_API_VERSION,
             declarations,
             services,
+            implementations,
         ))?;
         Ok(format!("{:x}", Sha256::digest(bytes)))
     }
@@ -991,7 +1084,7 @@ pub fn load_plugins_from_dir(dir: &Path) -> anyhow::Result<Vec<Plugin>> {
     Ok(plugins)
 }
 
-fn load_plugin_from_manifest(manifest_path: &Path, plugin_dir: &Path) -> anyhow::Result<Plugin> {
+pub(crate) fn load_plugin_from_manifest(manifest_path: &Path, plugin_dir: &Path) -> anyhow::Result<Plugin> {
     let data = std::fs::read_to_string(manifest_path)?;
     let manifest: PluginManifest = serde_json::from_str(&data)?;
     manifest.provides.validate(&manifest.name)?;
@@ -1103,7 +1196,10 @@ fn load_plugin_from_manifest(manifest_path: &Path, plugin_dir: &Path) -> anyhow:
 /// depend on the installation directory; the lifecycle runner joins them.
 pub(crate) fn validate_hooks(plugin_dir: &Path, mut hooks: PluginHooks) -> anyhow::Result<PluginHooks> {
     let root = plugin_dir.canonicalize()?;
-    for slot in [&mut hooks.install, &mut hooks.uninstall] {
+    for (slot, record) in [
+        (&mut hooks.install, &mut hooks.resolved.install),
+        (&mut hooks.uninstall, &mut hooks.resolved.uninstall),
+    ] {
         if let Some(path) = slot {
             let relative = Path::new(path);
             anyhow::ensure!(
@@ -1118,6 +1214,7 @@ pub(crate) fn validate_hooks(plugin_dir: &Path, mut hooks: PluginHooks) -> anyho
                 resolved.starts_with(&root) && resolved.is_file(),
                 "Hook escapes its package or is not a regular file"
             );
+            *record = Some(resolved);
         }
     }
     Ok(hooks)
@@ -1265,6 +1362,36 @@ mod plugin_tests {
             .iter()
             .map(|plugin| plugin.tools.len())
             .sum()
+    }
+
+    #[test]
+    fn revision_pins_implementation_bytes_not_only_declarations() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("run.sh"), "#!/bin/sh\necho v1\n").unwrap();
+        std::fs::write(
+            dir.path().join("plugin.json"),
+            serde_json::to_string_pretty(&serde_json::json!({
+                "name": "byte_pinned", "description": "fixture", "version": "1",
+                "tools": [{
+                    "name": "run", "description": "x", "parameters": {"type": "object"},
+                    "handler": {"type": "script", "path": "run.sh", "interpreter": "sh"}
+                }]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let mut registry = PluginRegistry::new();
+        registry
+            .try_register(load_installed_plugin(dir.path()).unwrap())
+            .unwrap();
+        let before = registry.revision().unwrap();
+        assert_eq!(registry.revision().unwrap(), before, "unchanged bytes pin");
+        std::fs::write(dir.path().join("run.sh"), "#!/bin/sh\necho a longer revision\n").unwrap();
+        assert_ne!(
+            registry.revision().unwrap(),
+            before,
+            "a changed script is a different registry, so receipts cannot outlive it"
+        );
     }
 
     #[test]

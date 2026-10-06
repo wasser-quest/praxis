@@ -1063,6 +1063,7 @@ async fn handle_plugin_action(action: &PluginAction) -> anyhow::Result<()> {
                     source: Path::new(path),
                     plugins_dir: plugins_path,
                     data_dir: &data_dir,
+                    root: assets_root,
                     run_hooks,
                     dry_run: *dry_run,
                 },
@@ -1072,12 +1073,9 @@ async fn handle_plugin_action(action: &PluginAction) -> anyhow::Result<()> {
                 return Ok(());
             }
             println!("Plugin '{}' upgraded at {}", report.name, report.dest.display());
-            let assets = praxis::plugins::lifecycle::apply_assets(
-                &report.dest,
-                &report.plugin,
-                &data_dir,
-                assets_root,
-            )?;
+            // The upgrade applies its manifest change (including placed
+            // assets) atomically and rolls both back together on failure.
+            let assets = &report.assets;
             for asset in &assets.written {
                 println!("  asset installed {asset}");
             }

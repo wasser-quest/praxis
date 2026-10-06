@@ -339,49 +339,46 @@ enable/disable flags and every identifier that SM/IR guards and tool groups
 reference, and must never expose both a builtin and a plugin owner. (This is
 now done: see §5.9.)
 
-Already extracted (§9 recipe, one PR each):
+Already extracted (§9 recipe, one PR each). Every tool now has exactly one
+package owner; `db/tools.rs` seeds none of them:
 
 - [x] `legacy_file_ops` (2 tools) — optional crate + package + installer.
 - [x] `shell` (3) — optional crate + package + durable background worker.
 - [x] `vision` (1) — optional crate + package.
-- [x] **`runtime_control` (12)** — privileged bundled package
+- [x] `runtime_control` (12) — privileged bundled package
   (`packages/runtime_control/plugin.json`), not a `"replaces"` plugin:
   - [x] `tools::builtin_operations` seam with host-issued identity;
         unknown operations fail closed.
-  - [x] `get_context`, `set_context`, `delete_context`, `search_tools`,
-        `read_tool_result`, `run_check`, `agent_next`, `agent_back`,
-        `agent_complete`, `agent_set_path`, `agent_feedback` — single
-        implementations; native dispatch delegates to the table.
   - [x] `execute_decision` — a table entry backed by the general "run this
         resolved call" capability: `builtin_operations::lower` resolves one
         instruction via `gateway::decision_ir::resolve` and the dispatch loop
         runs the resolved call as its next iteration (never a nested dispatch),
         bounded by `MAX_LOWER_DEPTH`. Callers without a dispatch loop fail
         closed.
-  - [x] `packages/runtime_control/plugin.json` declares all 12 over `builtin`.
-        `tools::packages::replaceable()` deliberately excludes `runtime_control`
-        (like `file_ops`) because it drives host-owned workflow semantics, so
-        it ships as a **privileged bundled package** — the same treatment
-        planned for `file_ops` at the end of §C.
-  - [x] The 12 are no longer seeded from `db/tools.rs`; legacy enable/disable
-        flags migrate into the plugin flag store at `init_default_tools`, and
-        every guard/tool-group identifier keeps working unchanged. Exactly one
-        owner per name: an installed manifest cannot claim one of them.
-  - [x] Core-only exclusion test: without the package its tools leave the
-        catalog, discovery and the dispatcher, while host-owned guards still
-        require verified kernel evidence.
+- [x] `delegation` (2) — bundled package; the child agent loop stays host-owned.
+- [x] `memory` (8) — bundled package over host-owned memory-profile storage.
+- [x] `rag` (4) — bundled package over the host-owned document store.
+- [x] `cron` (5) — bundled package over the host-owned job store; the scheduler
+      stays a host service because a job runs the host's agent loop.
+- [x] `discord` (3) — bundled package over the host's authenticated channel
+      bindings (the agent-only upload fallback is preserved).
+- [x] `interaction` (2) — bundled package; pairing, routing and the
+      web/Discord adapters stay host-owned.
+- [x] `skills` (2) — bundled package over host-owned skill files. The `skills/`
+      assets stay installation assets under `ROOT_DIR`.
+- [x] `workflow_authoring` (1) — bundled package over host-owned templates.
+- [x] `file_ops` (3) — privileged bundled package for the core file contract;
+      checked writes still fail closed and agent runs still redirect to a bound
+      VM guest.
 
-Remaining owners (27 tools total):
-
-- [ ] `delegation` (2)
-- [ ] `memory` (8)
-- [ ] `rag` (4)
-- [ ] `cron` (5) + its scheduler worker
-- [ ] `discord` (3)
-- [ ] `interaction` (2)
-- [ ] `skills` (2) + `skills/` assets
-- [ ] `workflow_authoring` (1)
-- [ ] `file_ops` (3) as a privileged bundled plugin
+Migration notes for these owners: the tools are no longer seeded from
+`db/tools.rs`, legacy enable/disable flags migrate into the plugin flag store
+at `init_default_tools`, and every guard/tool-group identifier keeps working
+unchanged. Exactly one owner per name: an installed manifest cannot claim a
+bundled name (`tools::packages::replaceable` refuses bundled packages), and a
+core-only exclusion test covers the package switch. The bundled manifests are
+pinned against the kernel definitions they replaced where those still exist
+(`tools::packages::tests::bundled_declarations_match_the_kernel_definitions`).
 
 ### D. Providers, channels, media, assets (PR 6)
 

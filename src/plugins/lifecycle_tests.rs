@@ -255,6 +255,7 @@ async fn upgrade_replaces_revision_and_restores_on_hook_failure() {
         source: &v2,
         plugins_dir: &plugins,
         data_dir: &data,
+        root: root.path(),
         run_hooks: true,
         dry_run: false,
     })
@@ -277,6 +278,7 @@ async fn upgrade_replaces_revision_and_restores_on_hook_failure() {
         source: &v3,
         plugins_dir: &plugins,
         data_dir: &data,
+        root: root.path(),
         run_hooks: true,
         dry_run: false,
     })
@@ -305,6 +307,7 @@ async fn upgrade_requires_an_installed_plugin_and_dry_run_changes_nothing() {
         source: &source,
         plugins_dir: &plugins,
         data_dir: &data,
+        root: root.path(),
         run_hooks: true,
         dry_run: false,
     })
@@ -320,6 +323,7 @@ async fn upgrade_requires_an_installed_plugin_and_dry_run_changes_nothing() {
         source: &source,
         plugins_dir: &plugins,
         data_dir: &data,
+        root: root.path(),
         run_hooks: true,
         dry_run: true,
     })
@@ -327,6 +331,129 @@ async fn upgrade_requires_an_installed_plugin_and_dry_run_changes_nothing() {
     .unwrap();
     assert!(!report.hook.ran);
     assert_eq!(std::fs::read_to_string(plugins.join("hooked/plugin.json")).unwrap(), before);
+}
+
+fn write_asset_plugin(
+    dir: &Path,
+    version: &str,
+    assets: &[(&str, &str)],
+    install: Option<&str>,
+) {
+    std::fs::create_dir_all(dir).unwrap();
+    let mut declared = Vec::new();
+    for (relative, contents) in assets {
+        let target = dir.join(relative);
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(&target, contents).unwrap();
+        declared.push(relative.to_string());
+    }
+    let mut hooks = serde_json::Map::new();
+    if let Some(script) = install {
+        std::fs::create_dir_all(dir.join("hooks")).unwrap();
+        std::fs::write(dir.join("hooks/install.sh"), script).unwrap();
+        hooks.insert("install".into(), serde_json::json!("hooks/install.sh"));
+    }
+    std::fs::write(
+        dir.join("plugin.json"),
+        serde_json::to_string_pretty(&serde_json::json!({
+            "name": "asset_pkg",
+            "description": "fixture",
+            "version": version,
+            "enabled": true,
+            "hooks": serde_json::Value::Object(hooks),
+            "provides": {"assets": declared},
+            "tools": [],
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+}
+
+#[tokio::test]
+async fn upgrade_completes_a_manifest_change_and_rolls_it_back_whole() {
+    let root = tempfile::tempdir().unwrap();
+    let plugins = root.path().join("plugins");
+    let data = root.path().join("data");
+    let assets = root.path().join("assets");
+    std::fs::create_dir_all(&assets).unwrap();
+
+    // v1 places one asset.
+    let v1 = root.path().join("src-v1");
+    write_asset_plugin(&v1, "1.0.0", &[("templates/one.txt", "one")], None);
+    lifecycle::install(&install_req(&v1, &plugins, &data, false))
+        .await
+        .unwrap();
+    let installed = crate::plugins::load_installed_plugin(&plugins.join("asset_pkg")).unwrap();
+    lifecycle::apply_assets(&plugins.join("asset_pkg"), &installed, &data, &assets).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(assets.join("templates/one.txt")).unwrap(),
+        "one"
+    );
+
+    // v2 replaces it with a different asset: the dropped one is removed.
+    let v2 = root.path().join("src-v2");
+    write_asset_plugin(&v2, "2.0.0", &[("templates/two.txt", "two")], None);
+    let report = lifecycle::upgrade(&UpgradeRequest {
+        source: &v2,
+        plugins_dir: &plugins,
+        data_dir: &data,
+        root: &assets,
+        run_hooks: true,
+        dry_run: false,
+    })
+    .await
+    .unwrap();
+    assert_eq!(report.assets.written, vec!["templates/two.txt".to_string()]);
+    assert_eq!(report.assets.removed, vec!["templates/one.txt".to_string()]);
+    assert!(!assets.join("templates/one.txt").exists());
+    assert_eq!(
+        std::fs::read_to_string(assets.join("templates/two.txt")).unwrap(),
+        "two"
+    );
+
+    // A failing upgrade keeps the whole previous manifest change: directory
+    // and placed assets.
+    let v3 = root.path().join("src-v3");
+    write_asset_plugin(
+        &v3,
+        "3.0.0",
+        &[("templates/three.txt", "three")],
+        Some("exit 7\n"),
+    );
+    assert!(lifecycle::upgrade(&UpgradeRequest {
+        source: &v3,
+        plugins_dir: &plugins,
+        data_dir: &data,
+        root: &assets,
+        run_hooks: true,
+        dry_run: false,
+    })
+    .await
+    .is_err());
+    assert!(assets.join("templates/two.txt").is_file(), "previous placement kept");
+    assert!(!assets.join("templates/three.txt").exists(), "nothing from the failed revision");
+    let manifest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(plugins.join("asset_pkg/plugin.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(manifest["version"], "2.0.0", "previous revision restored");
+
+    // An invalid manifest change is rejected before anything is replaced.
+    let v4 = root.path().join("src-v4");
+    write_asset_plugin(&v4, "4.0.0", &[("templates/four.txt", "four")], None);
+    std::fs::remove_file(v4.join("templates/four.txt")).unwrap();
+    assert!(lifecycle::upgrade(&UpgradeRequest {
+        source: &v4,
+        plugins_dir: &plugins,
+        data_dir: &data,
+        root: &assets,
+        run_hooks: true,
+        dry_run: false,
+    })
+    .await
+    .is_err());
+    assert!(assets.join("templates/two.txt").is_file());
+    assert!(!assets.join("templates/four.txt").exists());
 }
 
 fn write_named(dir: &Path, name: &str, requires: serde_json::Value) {
