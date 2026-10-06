@@ -3,6 +3,7 @@ pub mod branding;
 pub mod sm;
 pub mod sse;
 pub mod config;
+#[cfg(feature = "voice")]
 pub mod comfyui;
 pub mod context_cmd;
 #[cfg(feature = "dashboard")]
@@ -10,6 +11,7 @@ pub mod dashboard;
 pub mod services;
 pub mod host_api;
 pub mod db;
+#[cfg(feature = "discord")]
 pub mod discord;
 pub mod event_channel;
 pub mod gateway;
@@ -22,5 +24,6 @@ pub mod tags;
 pub mod tools;
 pub mod util;
 pub mod vm;
+#[cfg(feature = "voice")]
 pub mod voice;
 pub mod workspace;

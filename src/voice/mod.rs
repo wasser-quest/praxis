@@ -1,3 +1,4 @@
+#[cfg(feature = "discord")]
 pub mod handler;
 pub mod comfyui_xtts;
 pub mod comfyui_qwen3;

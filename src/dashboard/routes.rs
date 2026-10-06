@@ -1128,6 +1128,7 @@ async fn get_sm_info(
 }
 
 #[cfg(test)]
+#[cfg(feature = "voice")]
 #[path = "audio_tests.rs"]
 mod audio_tests;
 

@@ -736,6 +736,11 @@ async fn run_services(
     }
 
     // Discord (optional)
+    #[cfg(not(feature = "discord"))]
+    if enable_discord {
+        tracing::warn!("This build has no Discord support; rebuild with the discord feature to enable the bot");
+    }
+    #[cfg(feature = "discord")]
     if enable_discord {
         let discord_db = db.clone();
         let discord_secrets = secrets.clone();

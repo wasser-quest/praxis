@@ -1,6 +1,7 @@
 use crate::gateway::llm::provider::{ChatMessage, ChatRequest};
 use crate::gateway::GatewayState;
 use crate::tools::registry::build_tool_definitions_for_user;
+#[cfg(feature = "voice")]
 use crate::voice::tts;
 
 pub async fn handle_message(
@@ -489,6 +490,7 @@ async fn handle_message_agent_loop(
             }
         }
         // STT language confidence for the transcript-check rule (see voice::last_stt_confidence)
+        #[cfg(feature = "voice")]
         if let Some(c) = crate::voice::last_stt_confidence() {
             let threshold = ctx.settings.stt_low_confidence_threshold;
             obj.insert("stt_confidence".to_string(), serde_json::json!(c));
@@ -606,7 +608,31 @@ async fn handle_message_agent_loop(
     Ok(reply)
 }
 
+/// Core-only hosts have no synthesis: replies are never spoken.
+#[cfg(not(feature = "voice"))]
+fn reply_tts_enabled(
+    _settings: &crate::db::contexts::ContextSettings,
+    _channel_id: Option<&str>,
+) -> bool {
+    false
+}
+
+/// Core-only hosts have no synthesis: spawning is a no-op.
+#[cfg(not(feature = "voice"))]
+#[allow(clippy::too_many_arguments)]
+fn spawn_tts(
+    _text: String,
+    _settings: &crate::db::contexts::ContextSettings,
+    _secrets: &crate::db::secrets::Secrets,
+    _user_id: &str,
+    _db: &crate::db::Database,
+    _message_id: Option<i64>,
+    _channel_id: Option<&str>,
+) {
+}
+
 #[cfg(test)]
+
 async fn execute_tool_call(db: &crate::db::Database, user_id: &str, tc: &crate::gateway::llm::provider::ToolCall, plugins: &crate::plugins::PluginRegistry) -> String {
     execute_tool_call_in(std::path::Path::new("."), db, user_id, tc, plugins).await
 }
@@ -626,6 +652,7 @@ async fn execute_tool_call_in(
         super::tool_dispatch::DispatchMode::Chat).execute(tc).await
 }
 
+#[cfg(feature = "voice")]
 fn reply_tts_enabled(settings: &crate::db::contexts::ContextSettings, channel_id: Option<&str>) -> bool {
     if channel_id == Some("web") {
         settings.web_chat_tts
@@ -634,6 +661,7 @@ fn reply_tts_enabled(settings: &crate::db::contexts::ContextSettings, channel_id
     }
 }
 
+#[cfg(feature = "voice")]
 fn spawn_tts(
     text: String,
     settings: &crate::db::contexts::ContextSettings,
@@ -992,11 +1020,13 @@ mod message_tool_loop_tests;
 #[path = "local_model_live_tests.rs"]
 mod local_model_live_tests;
 
+#[cfg(feature = "voice")]
 #[cfg(test)]
 #[path = "message_audio_tests.rs"]
 mod message_audio_tests;
 
 #[cfg(test)]
+#[cfg(feature = "voice")]
 #[path = "comfyui_tts_tests.rs"]
 mod comfyui_tts_tests;
 

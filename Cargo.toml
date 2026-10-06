@@ -11,7 +11,7 @@ resolver = "2"
 
 [features]
 default = ["compatibility"]
-compatibility = ["vm", "dashboard", "legacy_file_ops", "shell", "vision"]
+compatibility = ["vm", "dashboard", "legacy_file_ops", "shell", "vision", "voice", "discord"]
 # Legacy read/edit implementation; omitted entirely from a core-only host.
 # The independently installed package serves the same tool names.
 legacy_file_ops = ["dep:praxis-legacy-file-ops"]
@@ -20,6 +20,11 @@ legacy_file_ops = ["dep:praxis-legacy-file-ops"]
 shell = ["dep:praxis-shell"]
 # Raw image loading for understand_image; omitted from a core-only host.
 vision = ["dep:praxis-vision"]
+# Voice/audio: transcription, synthesis and their ComfyUI backends; omitted
+# entirely from a core-only host.
+voice = []
+# Discord channel ingress and its voice glue (pulls the voice layer).
+discord = ["dep:serenity", "voice"]
 # Web dashboard: UI, listener, TLS and its static assets. The runtime,
 # gateway, CLI and verified workflows work without it.
 dashboard = ["dep:axum-server", "dep:rcgen", "dep:hostname"]
@@ -43,7 +48,7 @@ futures-util = "0.3"
 futures = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-reqwest = { version = "0.12.28", default-features = false, features = ["rustls-tls", "json", "stream"] }
+reqwest = { version = "0.12.28", default-features = false, features = ["rustls-tls", "json", "stream", "multipart"] }
 tracing = "0.1"
 tracing-attributes = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
@@ -51,7 +56,7 @@ tracing-appender = "0.2"
 anyhow = "1"
 image = "0.25"
 png = "0.18"
-serenity = { version = "0.12", features = ["voice"] }
+serenity = { version = "0.12", features = ["voice"], optional = true }
 axum = { version = "0.7", features = ["ws", "json", "multipart"] }
 axum-server = { version = "0.7", features = ["tls-rustls"], optional = true }
 rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs"] }

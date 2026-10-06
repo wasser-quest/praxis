@@ -410,7 +410,12 @@ pinned against the kernel definitions they replaced where those still exist
   `openrouter_image` and `mimo_understand` as installable scripts with declared
   secrets; the native MiniMax implementation and its builtin operations are
   gone), and `plugins/comfyui`, `elevenlabs_tts` and `sosse`/`spotify` already
-  ship the same way. Discord, voice/audio, ComfyUI's native workflow/qwen3
+  ship the same way. Discord and voice/audio are now independently enabled:
+  the `discord`/`voice` features compile the channel ingress and the whole
+  transcription/synthesis layer in or out (with `serenity` optional and the
+  voice tests following their feature), so a core-only host's dependency tree
+  carries no `serenity`, `songbird`, `whisper-rs` or `vosk`. Their package
+  manifests and the channel ingress seam, ComfyUI's native workflow/qwen3
   pieces and GPU routing remain.
 - [ ] Add coding/learning/persona/workflow asset packs.
 
@@ -436,7 +441,9 @@ no VM/UI/media.
 - [ ] Remove now-unconditional heavy deps (`serenity`, `ratatui`/`crossterm`,
   `image`, audio, TLS) after their packages move out.
   Progress: `ratatui`/`crossterm`/`unicode-segmentation` left the kernel with
-  the TUI crate; `serenity`, `image`, audio and TLS follow their providers.
+  the TUI crate, and `serenity` is optional with `songbird`/`whisper-rs`/`vosk`:
+  `cargo tree --no-default-features -p praxis` lists none of them. `image`,
+  audio and TLS follow their providers.
 
 ### G. VM/dashboard loose ends
 
@@ -492,6 +499,9 @@ no VM/UI/media.
   hosts (§6D/§6F).
 * VM guest TCP *port allocation* for new guests is still fixed to the
   defaults; existing guests reuse their recorded endpoints.
+* A core-only host has no synthesis, transcription or Discord: `spawn_tts` is
+  a no-op there and `transcribe` reports that voice is not compiled in, rather
+  than guessing or silently doing nothing at a call site.
 * The engine package requires `role: "runtime"` **and** an operator grant; a
   package cannot promote itself.
 * **Test environment note:** on the small handoff box, compiling the lib test

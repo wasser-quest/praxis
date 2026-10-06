@@ -189,7 +189,18 @@ pub fn message_audio(db: &crate::db::Database, user: &str, id: i64) -> Outcome<(
     db.get_message_audio(user, id)?.ok_or(Failure::NotFound)
 }
 
+/// Transcribe with the session's configured STT engine. A core-only host has
+/// no speech recognition and says so instead of guessing.
+#[cfg(not(feature = "voice"))]
+pub async fn transcribe(_db: &crate::db::Database, _user: &str, audio: &[u8]) -> Outcome<Value> {
+    if audio.is_empty() {
+        return Err(Failure::BadRequest("No audio".into()));
+    }
+    Ok(json!({"error": "Voice transcription is not compiled into this host"}))
+}
+
 /// Transcribe with the session's configured STT engine.
+#[cfg(feature = "voice")]
 pub async fn transcribe(db: &crate::db::Database, user: &str, audio: &[u8]) -> Outcome<Value> {
     if audio.is_empty() {
         return Err(Failure::BadRequest("No audio".into()));
