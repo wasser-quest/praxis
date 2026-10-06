@@ -327,6 +327,11 @@ Remaining owners (39 tools total):
         must stay next to the dispatcher (or gain a general "run this resolved
 call" capability).
   - [ ] `packages/runtime_control/plugin.json` declaring all 12 over `builtin`.
+        Note: `tools::packages::replaceable()` deliberately excludes
+        `runtime_control` (like `file_ops`) because it drives host-owned
+        workflow semantics, so this must ship as a **privileged bundled
+        package**, not as a `"replaces"` plugin — the same treatment planned
+        for `file_ops` at the end of §C.
   - [ ] stop seeding the 12 from `db/tools.rs`; preserve enable/disable flags
         and every guard/tool-group identifier; never two owners.
   - [ ] core-only exclusion test.
