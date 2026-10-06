@@ -274,17 +274,25 @@ Extract, in roughly this order: `runtime_control`, `delegation`, `memory`,
 plus a host bridge (render/storage/delivery) where it touches core services.
 Then make `file_ops` a privileged bundled plugin.
 
-**Blocker found:** none of these owners has a separable implementation today.
-`runtime_control` alone dispatches to `db::load_context`,
-`action_contracts::run`, `tools::{discovery,tool_output,agent_control}` and
-`gateway::prompt`; `memory`/`rag`/`cron` own core tables; `skills` renders
-through the engine and reads the skills index. So the recipe's “implementation
-crate with no host internals” cannot be satisfied without first defining the
-**host bridge** trait surface (context read/write, navigation, check runner,
-scoped storage, delivery). That seam is a prerequisite PR; extraction is
-mechanical after it. `runtime_control` is still the right first owner because
-its 12 tools are pure wrappers over host-owned operations and nothing else in C
-depends on it.
+**Mechanism — not a new crate, and not a blocker.** §9 step 1's second option is
+the one that applies to these owners: “or the installed executable +
+`plugin.json` under `packages/`”, using the `builtin` handler from §3.
+`plan/PLUGINIZATION.md` is explicit that `runtime_control` “exposes
+`execute_decision`, discovery, context and navigation tools to the model **using
+host-owned operations**”, so it becomes a package whose `plugin.json` declares
+its tools with `builtin` handlers bound to a host-owned operation table. The
+operations stay in the kernel deliberately: “its absence removes those tools,
+not the runtime's ability to enforce guards”. The host bridge these owners are
+said to need is PR 1's native service invocation API v1 (host-issued identity,
+workspace, deadline, cancellation, scoped storage, declared secrets) — it
+already exists; `PluginRegistry::execute_tool_with_host(db, user, call, …)`
+already carries that context to the handler boundary.
+
+For `runtime_control` concretely: declare its 12 tools in
+`packages/runtime_control/plugin.json` over that operation table and stop
+seeding them from `db/tools.rs`'s default list. The migration must keep existing
+enable/disable flags and every identifier that SM/IR guards and tool groups
+reference, and must never expose both a builtin and a plugin owner.
 
 ### D. Providers, channels, media, assets (PR 6)
 

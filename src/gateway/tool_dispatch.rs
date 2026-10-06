@@ -311,28 +311,21 @@ async fn dispatch(
                     .unwrap_or_else(|error| format!("Error: {error}"))
             } // end else (shared mode)
         }
-        "get_context" => match db.load_context(user_id) {
-            Ok(ctx) => serde_json::to_string_pretty(&ctx)
-                .unwrap_or_else(|_| "Failed to serialize".to_string()),
-            Err(e) => format!("Error: {}", e),
-        },
-        "set_context" => {
-            let key = args["key"].as_str().unwrap_or("");
-            let value = args
-                .get("value")
-                .cloned()
-                .unwrap_or(serde_json::Value::Null);
-            match db.merge_context_from_agent(user_id, serde_json::json!({key: value})) {
-                Ok(_) => format!("Context key '{}' set", key),
-                Err(e) => format!("Error: {}", e),
-            }
-        }
-        "delete_context" => {
-            let key = args["key"].as_str().unwrap_or("");
-            match db.merge_context_from_agent(user_id, serde_json::json!({key: null})) {
-                Ok(_) => format!("Context key '{}' deleted", key),
-                Err(e) => format!("Error: {}", e),
-            }
+        "get_context" | "set_context" | "delete_context" => {
+            // Single implementation, shared with a package's `builtin` handler
+            // so result formats cannot drift between the two.
+            crate::tools::builtin_operations::execute(
+                &crate::tools::builtin_operations::BuiltinContext {
+                    db,
+                    plugins,
+                    user: user_id,
+                    call: &tc.id,
+                },
+                &tc.function.name,
+                &args,
+            )
+            .await
+            .unwrap_or_else(|error| format!("Error: {error}"))
         }
         "agent_next" | "agent_back" => crate::tools::agent_control::navigate_with_plugins(
             db,

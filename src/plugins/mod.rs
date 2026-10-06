@@ -676,6 +676,22 @@ impl PluginRegistry {
             anyhow::bail!("Capability cannot shadow a built-in tool");
         };
         let PluginHandler::Service(adapter) = &tool.handler else {
+            // `builtin` handlers run a host-owned operation under the identity
+            // this dispatcher was issued. The package supplies the tool; the
+            // kernel supplies the authority and the implementation.
+            if let PluginHandler::Builtin { name: operation } = &tool.handler {
+                return crate::tools::builtin_operations::execute(
+                    &crate::tools::builtin_operations::BuiltinContext {
+                        db,
+                        plugins: self,
+                        user,
+                        call,
+                    },
+                    operation,
+                    args,
+                )
+                .await;
+            }
             return self
                 .execute_tool_for_task(user, call, name, args, context, secrets)
                 .await;

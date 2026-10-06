@@ -1,5 +1,6 @@
 pub mod agent_control;
 pub mod apply_patch;
+pub mod builtin_operations;
 #[cfg(test)]
 mod patch_tests;
 pub mod discovery;
