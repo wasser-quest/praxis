@@ -75,6 +75,11 @@ pub async fn execute(
         // package only declares the tool (§6C).
         "delegate_task" => delegate(ctx, args).await,
         "list_delegations" => list_delegations(ctx),
+        // Scheduled jobs over the host-owned job store.
+        "cron_add" | "cron_delete" | "cron_list" | "cron_toggle" | "cron_run" => {
+            crate::tools::cron::run(ctx.db, ctx.user, name, args)
+                .unwrap_or_else(|error| format!("Error: {error}"))
+        }
         // Document ingestion and retrieval over the host-owned store.
         "rag_search" | "rag_ingest" | "rag_list" | "rag_delete" => {
             Box::pin(crate::tools::rag_ingest::run(ctx.db, ctx.user, name, args))

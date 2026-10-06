@@ -140,6 +140,7 @@ fn bundled_manifest(id: &str) -> Option<&'static str> {
         "delegation" => Some(include_str!("../../packages/delegation/plugin.json")),
         "memory" => Some(include_str!("../../packages/memory/plugin.json")),
         "rag" => Some(include_str!("../../packages/rag/plugin.json")),
+        "cron" => Some(include_str!("../../packages/cron/plugin.json")),
         _ => None,
     }
 }
@@ -434,6 +435,26 @@ mod tests {
         crate::gateway::action_contracts::bind(&user, "absent", &sm, dir.path()).unwrap();
         let error = crate::gateway::action_contracts::require(&user, "_complete").unwrap_err();
         assert!(error.to_string().contains("verified capabilities"), "{error}");
+    }
+
+    #[test]
+    fn bundled_declarations_match_the_kernel_definitions() {
+        // The manifest is the one source for these contracts; where a kernel
+        // definition still exists it must not drift from the declaration.
+        for definition in [
+            crate::gateway::decision_ir::definition(),
+            crate::gateway::action_contracts::definition(),
+            crate::tools::tool_output::definition(),
+        ] {
+            let declared = bundled_tool(&definition.name).expect("kernel definition is bundled");
+            assert_eq!(
+                declared.description.as_deref(),
+                definition.description.as_deref(),
+                "{}",
+                definition.name
+            );
+            assert_eq!(declared.parameters, definition.parameters, "{}", definition.name);
+        }
     }
 
     #[test]

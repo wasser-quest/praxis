@@ -301,36 +301,6 @@ pub(crate) fn get_default_tools() -> Vec<Tool> {
         // RAG Tools
         // Cron Tools
         Tool {
-            name: "cron_add".into(),
-            description: Some("Create a scheduled cron job that runs on a recurring schedule. The job will execute the given prompt as an agent task.".into()),
-            parameters: serde_json::json!({"type":"object","properties":{"name":{"type":"string","description":"Human-readable job name"},"schedule":{"type":"string","description":"Cron expression (6 fields: sec min hour day month weekday). Example: '0 0 9 * * *' for daily at 9am"},"prompt":{"type":"string","description":"The prompt/task to execute when the job fires"},"template":{"type":"string","description":"Template to use (default: agent.poml)","default":"agent.poml"},"timezone":{"type":"string","description":"Timezone for the schedule (default: UTC)","default":"UTC"},"description":{"type":"string","description":"Optional description of what this job does"},"enabled":{"type":"boolean","description":"Whether the job is active (default: true)","default":true}},"required":["name","schedule","prompt"]}),
-            is_enabled: true,
-        },
-        Tool {
-            name: "cron_delete".into(),
-            description: Some("Delete a cron job by ID.".into()),
-            parameters: serde_json::json!({"type":"object","properties":{"job_id":{"type":"string","description":"The cron job ID to delete"}},"required":["job_id"]}),
-            is_enabled: true,
-        },
-        Tool {
-            name: "cron_list".into(),
-            description: Some("List all cron jobs for the current user.".into()),
-            parameters: serde_json::json!({"type":"object","properties":{}}),
-            is_enabled: true,
-        },
-        Tool {
-            name: "cron_toggle".into(),
-            description: Some("Enable or disable a cron job.".into()),
-            parameters: serde_json::json!({"type":"object","properties":{"job_id":{"type":"string","description":"The cron job ID"},"enabled":{"type":"boolean","description":"true to enable, false to disable"}},"required":["job_id","enabled"]}),
-            is_enabled: true,
-        },
-        Tool {
-            name: "cron_run".into(),
-            description: Some("Manually trigger a cron job to run immediately, regardless of its schedule.".into()),
-            parameters: serde_json::json!({"type":"object","properties":{"job_id":{"type":"string","description":"The cron job ID to run now"}},"required":["job_id"]}),
-            is_enabled: true,
-        },
-        Tool {
             name: "understand_image".into(),
             description: Some("Load an image for visual analysis. The image is sent to the vision API - you WILL see and understand the image content in your next response. After calling this tool, describe what you see in the image. Use for screenshots, photos, or any visual content.".into()),
             parameters: serde_json::json!({"type":"object","properties":{"path":{"type":"string","description":"Path to the image file (supports PPM, PNG, JPEG)"},"prompt":{"type":"string","description":"What to look for in the image. E.g. 'What menu options are shown?' or 'Describe the installation step shown'."}},"required":["path","prompt"]}),

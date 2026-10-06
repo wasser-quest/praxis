@@ -1,0 +1,38 @@
+{
+  "name": "cron",
+  "description": "Scheduled jobs",
+  "version": "0.1.0",
+  "enabled": true,
+  "tools": [
+    {
+      "name": "cron_add",
+      "description": "Create a scheduled cron job that runs on a recurring schedule. The job will execute the given prompt as an agent task.",
+      "parameters": {"type":"object","properties":{"name":{"type":"string","description":"Human-readable job name"},"schedule":{"type":"string","description":"Cron expression (6 fields: sec min hour day month weekday). Example: '0 0 9 * * *' for daily at 9am"},"prompt":{"type":"string","description":"The prompt/task to execute when the job fires"},"template":{"type":"string","description":"Template to use (default: agent.poml)","default":"agent.poml"},"timezone":{"type":"string","description":"Timezone for the schedule (default: UTC)","default":"UTC"},"description":{"type":"string","description":"Optional description of what this job does"},"enabled":{"type":"boolean","description":"Whether the job is active (default: true)","default":true}},"required":["name","schedule","prompt"]},
+      "handler": {"type": "builtin", "name": "cron_add"}
+    },
+    {
+      "name": "cron_delete",
+      "description": "Delete a cron job by ID.",
+      "parameters": {"type":"object","properties":{"job_id":{"type":"string","description":"The cron job ID to delete"}},"required":["job_id"]},
+      "handler": {"type": "builtin", "name": "cron_delete"}
+    },
+    {
+      "name": "cron_list",
+      "description": "List all cron jobs for the current user.",
+      "parameters": {"type":"object","properties":{}},
+      "handler": {"type": "builtin", "name": "cron_list"}
+    },
+    {
+      "name": "cron_toggle",
+      "description": "Enable or disable a cron job.",
+      "parameters": {"type":"object","properties":{"job_id":{"type":"string","description":"The cron job ID"},"enabled":{"type":"boolean","description":"true to enable, false to disable"}},"required":["job_id","enabled"]},
+      "handler": {"type": "builtin", "name": "cron_toggle"}
+    },
+    {
+      "name": "cron_run",
+      "description": "Manually trigger a cron job to run immediately, regardless of its schedule.",
+      "parameters": {"type":"object","properties":{"job_id":{"type":"string","description":"The cron job ID to run now"}},"required":["job_id"]},
+      "handler": {"type": "builtin", "name": "cron_run"}
+    }
+  ]
+}
