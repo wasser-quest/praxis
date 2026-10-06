@@ -88,10 +88,10 @@ package implementation in-process. A configured worker failure never selects the
 native engine. Commands report failures through a nonzero exit status.
 
 Existing guests attach through their configured QMP endpoint after its name is
-checked. Missing guests are not started by status/screenshot/stop commands. Unix
-status discovers per-guest sockets in `DATA_DIR/vm`; TCP status currently checks
-the default `praxis-vm` endpoint. Per-guest TCP metadata/port allocation belongs to
-the remaining ownership/recovery work. Shutdown/force-stop acknowledge the QMP
+checked. Missing guests are not started by status/screenshot/stop commands.
+Status attaches through each guest's persisted metadata — per-guest Unix
+sockets or TCP ports — in either socket mode, with directory discovery as the
+fallback for guests that predate records. Shutdown/force-stop acknowledge the QMP
 request; they do not claim independently verified guest termination. Manual
 starts receive no credential grants, while read-only attachment leaves existing
 guest credentials untouched. CLI screenshots save PNG bytes; CD commands execute

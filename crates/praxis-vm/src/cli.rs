@@ -257,23 +257,29 @@ async fn execute(runtime: &VmRuntime, action: VmAction) -> anyhow::Result<()> {
             println!("{}", manager.request_shutdown(&name).await?);
         }
         VmAction::Status => {
-            // Unix endpoints are per guest. TCP discovery can only select the
-            // configured default endpoint until persisted guest metadata lands.
-            if runtime.settings().socket_mode == "tcp" {
-                let _ = manager
-                    .attach_existing(runtime.default_config("praxis-vm")?)
-                    .await?;
-            } else if let Ok(entries) = std::fs::read_dir(Path::new(data).join("vm")) {
-                for entry in entries {
-                    let entry = entry?;
-                    if !entry.file_type()?.is_dir() {
-                        continue;
-                    }
-                    let name = entry.file_name().to_string_lossy().into_owned();
-                    if crate::validate_vm_name(&name).is_ok() {
-                        manager
-                            .attach_existing(runtime.default_config(&name)?)
-                            .await?;
+            // Attach through each guest's persisted metadata: records carry
+            // the per-guest endpoints (Unix sockets or TCP ports) recorded at
+            // creation, claim or recovery, in either socket mode.
+            let mut seen = std::collections::HashSet::new();
+            for record in runtime.guests().records() {
+                seen.insert(record.name.clone());
+                let _ = manager.attach_existing(record.config).await;
+            }
+            // Directory discovery covers guests that predate records; only
+            // Unix mode derives their per-guest sockets without one.
+            if runtime.settings().socket_mode != "tcp" {
+                if let Ok(entries) = std::fs::read_dir(Path::new(data).join("vm")) {
+                    for entry in entries {
+                        let entry = entry?;
+                        if !entry.file_type()?.is_dir() {
+                            continue;
+                        }
+                        let name = entry.file_name().to_string_lossy().into_owned();
+                        if !seen.contains(&name) && crate::validate_vm_name(&name).is_ok() {
+                            manager
+                                .attach_existing(runtime.default_config(&name)?)
+                                .await?;
+                        }
                     }
                 }
             }
