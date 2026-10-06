@@ -651,7 +651,13 @@ async fn features(State(s): State<Arc<ApiState>>) -> Json<Value> {
         descriptors.push(endpoint.info.descriptor);
     }
     descriptors.sort_by(|a, b| a.id.cmp(&b.id));
-    Json(json!({ "features": descriptors, "routes": routes }))
+    Json(json!({
+        "features": descriptors,
+        "routes": routes,
+        // Registered slots so a client can explain absent features instead of
+        // hiding them. Read-only: nothing here starts a feature service.
+        "slots": crate::runtime::feature_slots::feature_slots(&s.plugins),
+    }))
 }
 
 /// `/host/v1/features/<owner>/<service path>`: the service path must be in

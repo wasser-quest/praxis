@@ -235,6 +235,19 @@ Separate executable. Fetches signed repository indexes, resolves a setup
 keep/backup/overwrite and an ownership lock, delegates plugin installs to the
 Praxis CLI, and writes a MOTD of required changes. The kernel does not link it.
 
+### 5.8 Feature navigation slots
+
+A feature that can contribute a dashboard page has a **registered slot**
+(`runtime::feature_slots`). A slot is only a title plus a hint: it grants no
+authority and never starts a service. The extension list reports every slot as
+`present` or `hint`ed, covering three sources — a live web binding, an installed
+package whose service is not ready (hint names the service), and a first-party
+feature that is not installed (hint says how to install it). The dashboard then
+keeps the navigation entry instead of hiding the feature and shows the hint
+panel; no page, script or stylesheet is fetched for an absent slot. So “absent”
+means *explained*, never *silently missing*, and drawing the UI never boots a
+VM/media service.
+
 ## 6. What needs to be done (prioritized)
 
 ### A. Finish the kernel seam — done
@@ -261,6 +274,18 @@ Extract, in roughly this order: `runtime_control`, `delegation`, `memory`,
 plus a host bridge (render/storage/delivery) where it touches core services.
 Then make `file_ops` a privileged bundled plugin.
 
+**Blocker found:** none of these owners has a separable implementation today.
+`runtime_control` alone dispatches to `db::load_context`,
+`action_contracts::run`, `tools::{discovery,tool_output,agent_control}` and
+`gateway::prompt`; `memory`/`rag`/`cron` own core tables; `skills` renders
+through the engine and reads the skills index. So the recipe's “implementation
+crate with no host internals” cannot be satisfied without first defining the
+**host bridge** trait surface (context read/write, navigation, check runner,
+scoped storage, delivery). That seam is a prerequisite PR; extraction is
+mechanical after it. `runtime_control` is still the right first owner because
+its 12 tools are pure wrappers over host-owned operations and nothing else in C
+depends on it.
+
 ### D. Providers, channels, media, assets (PR 6)
 
 Move providers behind common streaming/usage/error interfaces; move Discord,
@@ -280,8 +305,14 @@ assembled from packages; remove now-unconditional heavy deps (`serenity`,
 
 ### G. VM/dashboard loose ends
 
-VM upgrade/drain/lifecycle policy for active guests; dashboard navigation slots
-for absent features; remove the builtin dashboard after a release.
+Dashboard navigation slots for absent features are implemented: the host
+reports registered `runtime::feature_slots` (live, installed-but-unready and
+first-party installable features) with `present`/`hint`, and the dashboard
+renders an absent feature as an install/enable hint panel that loads no page
+and executes no package code. Listing never starts a feature service.
+
+Still open: VM upgrade/drain/lifecycle policy for active guests, and removing
+the builtin dashboard after a release.
 
 ## 7. Known limitations and caveats
 
@@ -302,8 +333,12 @@ for absent features; remove the builtin dashboard after a release.
   package cannot promote itself.
 * **Test environment note:** on the small handoff box, compiling the lib test
   with full debug info was OOM-killed (`SIGKILL`); verification used
-  `CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS=1`. Two
-  ComfyUI tests are timing-flaky under parallel load and pass in isolation.
+  `CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS=1`. On a
+  memory-tight builder the *link* of that single large test binary can be
+  OOM-killed too (it needs more RAM than a ~2 GiB budget); free memory and
+  retry, or set `PRAXIS_LOW_MEMORY_LINK=1` to link through BFD in low-memory
+  mode (see `build.rs`). Two ComfyUI tests are timing-flaky under parallel load
+  and pass in isolation.
 * Hooks and installed executables are operator-trusted code, not sandboxed.
 
 ## 8. Verification commands

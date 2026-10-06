@@ -80,7 +80,13 @@ async fn list(State(state): State<Arc<DashboardState>>, request: Request) -> Res
         })
         .collect();
     descriptors.sort_by(|a, b| a.id.cmp(&b.id));
-    Json(serde_json::json!({"extensions":descriptors})).into_response()
+    Json(serde_json::json!({
+        "extensions": descriptors,
+        // Registered feature slots, including those with no live contribution.
+        // Listing them is read-only and never starts a feature service.
+        "slots": crate::runtime::feature_slots::feature_slots(&state.plugins),
+    }))
+    .into_response()
 }
 
 async fn forward(State(proxy): State<Proxy>, request: Request) -> Response {

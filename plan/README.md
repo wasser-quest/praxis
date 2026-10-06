@@ -244,8 +244,12 @@ clipboard) remains an operator smoke check.
   `packages/dashboard`, `scripts/install-dashboard-package.sh`): ships the
   frontend assets and serves the whole UI on Host API v1; verified end to end
   against a `--no-default-features` core.
-- [ ] Navigation slots for absent features; remove the built-in dashboard
-  feature after one release.
+- [x] Navigation slots for absent features: the host reports registered
+  `runtime::feature_slots` (live, installed-but-unready and installable) with
+  `present`/`hint`, and the dashboard keeps the entry and shows the hint instead
+  of hiding it. An absent slot loads no page and executes no package code, and
+  listing slots never starts a feature service.
+- [ ] Remove the built-in dashboard feature after one release.
 
 ## PR 5 progress — tool packages
 

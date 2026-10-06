@@ -4,6 +4,7 @@ pub mod engine;
 pub mod engine_bridge;
 pub mod events;
 pub mod features;
+pub mod feature_slots;
 pub mod process_service;
 pub mod retention;
 pub mod services;

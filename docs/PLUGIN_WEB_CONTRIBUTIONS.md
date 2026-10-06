@@ -89,6 +89,13 @@ transport, drain and forced-disconnect behavior as the VM. One owner per
 namespace; a descriptor mismatch, a missing control or a bad handshake fails
 startup closed, and install/enable never starts the worker.
 
+When a feature is not currently bound, it is **not hidden**: the host reports it
+as a registered feature slot (`runtime::feature_slots`) with `present: false`
+and a hint, and the dashboard keeps the navigation entry showing how to obtain
+the page. An absent slot contributes no page/script/style and loads nothing from
+the package, so drawing the navigation never starts a VM, media or any other
+feature service just to render UI.
+
 Guest operations preserve
 the existing global administrator policy; per-user guest ownership is a remaining
 PR 3 milestone.

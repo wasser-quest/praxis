@@ -39,5 +39,31 @@ context.PraxisDashboard.configure({apiGet:async path=>({ok:true,json:async()=>({
     assert.equal(nav.children.length,0,'no package means no page');
     assert(!fs.readFileSync('static/index.html','utf8').includes('id="tab-vm"'));
     assert(!fs.readFileSync('static/app.js','utf8').includes('function loadVM('));
+    // An absent feature keeps its navigation slot and explains installation.
+    let slots=[{id:'vm',title:'Virtual Machines',present:false,hint:'Install the VM package'}];
+    const base=scripts;
+    const noPage=async()=>{ throw new Error('an absent feature must not load a page'); };
+    context.PraxisDashboard.reset();
+    context.PraxisDashboard.configure({apiGet:async()=>({ok:true,json:async()=>({extensions:[],slots}),text:noPage}),showTab(){}});
+    await context.PraxisDashboard.load();
+    assert.equal(nav.children.length,1,'an absent feature keeps its navigation slot');
+    assert.equal(nav.children[0].textContent,'Virtual Machines');
+    assert.equal(content.children[0].textContent,'Install the VM package','the slot explains installation');
+    assert.equal(scripts,base,'an absent feature must not execute package code');
+    await context.PraxisDashboard.show('vm');
+    assert.equal(scripts,base,'an absent feature has no page to load');
+    // A live contribution replaces its placeholder instead of duplicating it.
+    slots=[{id:'vm',title:'Virtual Machines',present:true}];
+    context.PraxisDashboard.configure({apiGet:async()=>({ok:true,json:async()=>({extensions:[valid],slots}),text:async()=>'<h2>Package VM</h2>'}),showTab(){}});
+    await context.PraxisDashboard.load();
+    assert.equal(nav.children.length,1,'the placeholder is replaced, not duplicated');
+    assert.equal(nav.children[0].textContent,'Virtual machines');
+    assert.equal(content.children.length,1);
+    // Going away again brings the placeholder back.
+    context.PraxisDashboard.configure({apiGet:async()=>({ok:true,json:async()=>({extensions:[],slots:[{id:'vm',title:'Virtual Machines',present:false,hint:'Install the VM package'}]}),text:noPage}),showTab(){}});
+    await context.PraxisDashboard.load();
+    assert.equal(nav.children.length,1,'the placeholder returns when the feature goes away');
+    assert.equal(nav.children[0].textContent,'Virtual Machines');
+    context.PraxisDashboard.reset();
     console.log('Dashboard extension lifecycle and namespace tests passed');
 })().catch(error=>{ console.error(error);process.exitCode=1; });

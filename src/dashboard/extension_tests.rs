@@ -136,6 +136,14 @@ async fn core_proxy_authenticates_before_io_and_strips_public_credentials() {
     assert_eq!(list["extensions"][0]["id"], "vm");
     assert!(!list.to_string().contains("private-host-fixture"));
     assert!(!list.to_string().contains("port"));
+    // A live binding marks its registered slot present and needs no hint.
+    let slots = list["slots"].as_array().cloned().unwrap_or_default();
+    let vm = slots
+        .iter()
+        .find(|slot| slot["id"] == "vm")
+        .expect("registered vm slot");
+    assert_eq!(vm["present"], true);
+    assert!(vm.get("hint").is_none(), "{vm}");
     worker.abort();
     host.abort();
 }
@@ -192,6 +200,26 @@ async fn assets_are_public_read_only_and_dead_or_disabled_binding_fails_closed()
             .status(),
         503
     );
+    // A disabled binding loses its page but keeps the slot, explaining how to
+    // get it back. Listing slots must not revive the binding.
+    let list: Value = client
+        .get(format!("{url}/api/dashboard/extensions"))
+        .bearer_auth("public-dashboard-key")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(list["extensions"].as_array().is_some_and(|items| items.is_empty()));
+    let slots = list["slots"].as_array().cloned().unwrap_or_default();
+    let vm = slots
+        .iter()
+        .find(|slot| slot["id"] == "vm")
+        .expect("registered vm slot");
+    assert_eq!(vm["present"], false);
+    assert!(vm["hint"].as_str().is_some_and(|hint| !hint.is_empty()));
+    assert!(!list.to_string().contains("private-host-fixture"));
     host.abort();
 }
 
