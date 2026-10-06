@@ -755,8 +755,22 @@ async fn run_services(
     if enable_discord && !minimal {
         let discord_db = db.clone();
         let discord_secrets = secrets.clone();
+        let discord_root = std::path::PathBuf::from(&config.root_dir);
         tokio::spawn(async move {
-            if let Err(e) = praxis::discord::start_with_secrets(discord_db, discord_secrets).await {
+            // Scoped credentials: the channel receives only what it declares.
+            let credentials = praxis::discord::host::DiscordCredentials {
+                bot_token: discord_secrets.discord_bot_token.clone(),
+                application_id: None,
+                elevenlabs_api_key: discord_secrets.elevenlabs_api_key.clone(),
+            };
+            let host = match praxis::channels::KernelChannelHost::new(discord_db, discord_root) {
+                Ok(host) => std::sync::Arc::new(host),
+                Err(error) => {
+                    tracing::error!("Discord channel host unavailable: {}", error);
+                    return;
+                }
+            };
+            if let Err(e) = praxis::discord::start_with_host(host, credentials).await {
                 tracing::error!("Discord error: {}", e);
             }
         });

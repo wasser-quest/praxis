@@ -12,6 +12,8 @@ pub mod services;
 pub mod host_api;
 pub mod db;
 #[cfg(feature = "discord")]
+pub mod channels;
+#[cfg(feature = "discord")]
 pub mod discord;
 pub mod event_channel;
 pub mod gateway;

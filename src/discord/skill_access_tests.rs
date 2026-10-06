@@ -3,8 +3,9 @@ use super::*;
 #[test]
 fn skill_command_denies_all_unpaired_operations_before_reading_skills() {
     let directory = tempfile::tempdir().unwrap();
-    let db = Database::new(&directory.path().join("db")).unwrap();
+    let db = crate::db::Database::new(&directory.path().join("db")).unwrap();
     crate::db::tools::init_default_tools(&db).unwrap();
+    let host = crate::channels::KernelChannelHost::new(db.clone(), directory.path().to_path_buf()).unwrap();
     db.create_pairing("alice", "discord-alice", None).unwrap();
     let mut owner = db.load_context("alice").unwrap();
     owner.settings.active_skill = Some("keep-this".into());
@@ -17,7 +18,7 @@ fn skill_command_denies_all_unpaired_operations_before_reading_skills() {
         for argument in ["", "list", "off", "test", "unknown"] {
             for guild in [None, Some("guild")] {
                 let error = apply_skill_command_from_dir(
-                    &db, discord_id, guild, "channel", argument, &broken,
+                    &host, discord_id, guild, "channel", argument, &broken,
                 )
                 .unwrap_err()
                 .to_string();
@@ -37,8 +38,9 @@ fn skill_command_denies_all_unpaired_operations_before_reading_skills() {
 #[test]
 fn skill_command_rechecks_pairing_revocation_and_channel_permissions() {
     let directory = tempfile::tempdir().unwrap();
-    let db = Database::new(&directory.path().join("db")).unwrap();
+    let db = crate::db::Database::new(&directory.path().join("db")).unwrap();
     crate::db::tools::init_default_tools(&db).unwrap();
+    let host = crate::channels::KernelChannelHost::new(db.clone(), directory.path().to_path_buf()).unwrap();
     db.create_pairing("alice", "discord-alice", None).unwrap();
     let broken = directory.path().join("not-a-skill-directory");
     std::fs::write(&broken, "not a directory").unwrap();
@@ -49,11 +51,11 @@ fn skill_command_rechecks_pairing_revocation_and_channel_permissions() {
     db.save_context(&owner).unwrap();
     for (guild, channel) in [(None, "denied"), (Some("denied"), "allowed")] {
         let error =
-            apply_skill_command_from_dir(&db, "discord-alice", guild, channel, "list", &broken)
+            apply_skill_command_from_dir(&host, "discord-alice", guild, channel, "list", &broken)
                 .unwrap_err();
         assert!(error.to_string().contains("not allowed"));
     }
-    apply_skill_command_from_dir(&db, "discord-alice", None, "allowed", "off", &broken).unwrap();
+    apply_skill_command_from_dir(&host, "discord-alice", None, "allowed", "off", &broken).unwrap();
     assert!(db
         .load_context("alice")
         .unwrap()
@@ -65,7 +67,7 @@ fn skill_command_rechecks_pairing_revocation_and_channel_permissions() {
         .unwrap();
     for arg in ["list", "off", "test"] {
         assert!(
-            apply_skill_command_from_dir(&db, "discord-alice", None, "allowed", arg, &broken)
+            apply_skill_command_from_dir(&host, "discord-alice", None, "allowed", arg, &broken)
                 .unwrap_err()
                 .to_string()
                 .contains("Please pair first")

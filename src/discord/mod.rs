@@ -1,10 +1,10 @@
 pub mod commands;
+pub mod host;
 pub mod handler;
 pub mod ws_client;
 
 pub use ws_client::{IncomingMessage, OutgoingMessage, WsClient};
 
-use crate::db::Database;
 use crate::discord::handler::DiscordHandler;
 use anyhow::Context;
 use once_cell::sync::OnceCell;
@@ -70,23 +70,23 @@ pub fn get_songbird_manager() -> Option<&'static Arc<songbird::Songbird>> {
 // ── Discord Bot ──────────────────────────────────────────────────────────────
 
 pub struct DiscordBot {
-    pub db: Database,
+    pub host: Arc<dyn host::ChannelHost>,
     pub ws_client: Arc<Mutex<WsClient>>,
-    pub secrets: crate::db::secrets::Secrets,
+    pub credentials: host::DiscordCredentials,
 }
 
 impl DiscordBot {
     pub async fn new(
-        db: Database,
+        host: Arc<dyn host::ChannelHost>,
         gateway_url: Option<&str>,
-        secrets: crate::db::secrets::Secrets,
+        credentials: host::DiscordCredentials,
     ) -> anyhow::Result<Self> {
         let url = gateway_url.unwrap_or(DEFAULT_GATEWAY_URL);
         let ws_client = WsClient::connect(url).await?;
         Ok(Self {
-            db,
+            host,
             ws_client: Arc::new(Mutex::new(ws_client)),
-            secrets,
+            credentials,
         })
     }
 
@@ -110,9 +110,9 @@ impl DiscordBot {
     pub async fn start_with_token(self, token: &str, application_id: u64) -> anyhow::Result<()> {
         let _voice_state = init_discord_voice_state();
         let handler = DiscordHandler::new(
-            self.db.clone(),
+            self.host.clone(),
             self.ws_client.clone(),
-            self.secrets.clone(),
+            self.credentials.clone(),
         );
 
         let mut client_builder = Client::builder(
@@ -143,10 +143,10 @@ impl DiscordBot {
         let mut client = client_builder.await?;
 
         // Spawn event listener for file uploads, feedback, voice TTS
-        let db = self.db.clone();
+        let host = self.host.clone();
         let http = client.http.clone();
         tokio::spawn(async move {
-            listen_for_events(db, http).await;
+            listen_for_events(host, http).await;
         });
 
         if let Err(e) = commands::setup_commands(&client.http).await {
@@ -160,17 +160,10 @@ impl DiscordBot {
 }
 
 /// Listen for events from the event channel and handle them
-async fn listen_for_events(db: Database, http: Arc<serenity::http::Http>) {
-    // Wait a bit for event channel to be initialized
+async fn listen_for_events(host: Arc<dyn host::ChannelHost>, http: Arc<serenity::http::Http>) {
+    // Wait a bit for the host event feed to be initialized
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-
-    let event_tx = match crate::event_channel::get_event_tx() {
-        Some(tx) => tx,
-        None => {
-            tracing::debug!("No event channel, event listener not started");
-            return;
-        }
-    };
+    let mut rx = host.events();
 
     // Initialize TTS playback channel and spawn dedicated playback task
     let (tts_tx, mut tts_rx) = tokio::sync::mpsc::unbounded_channel::<(String, Vec<u8>)>();
@@ -181,10 +174,9 @@ async fn listen_for_events(db: Database, http: Arc<serenity::http::Http>) {
         }
     });
 
-    let mut rx = event_tx.subscribe();
     loop {
         match rx.recv().await {
-            Ok(crate::event_channel::GatewayEvent::FileUpload {
+            Ok(host::ChannelEvent::FileUpload {
                 user_id,
                 file_name,
                 file_path,
@@ -204,7 +196,7 @@ async fn listen_for_events(db: Database, http: Arc<serenity::http::Http>) {
 
                 let send_to = if target_channel_id > 0 {
                     serenity::model::id::ChannelId::new(target_channel_id)
-                } else if let Ok(Some(pairing)) = db.get_pairing_by_internal_user(&user_id) {
+                } else if let Ok(Some(pairing)) = host.pairing_by_user(&user_id) {
                     let discord_user_id = pairing.discord_user_id.parse::<u64>().unwrap_or(0);
                     if discord_user_id > 0 {
                         let user_id_obj = serenity::model::id::UserId::new(discord_user_id);
@@ -248,9 +240,9 @@ async fn listen_for_events(db: Database, http: Arc<serenity::http::Http>) {
                     }
                 }
             }
-            Ok(crate::event_channel::GatewayEvent::AgentFeedback { user_id, message }) => {
+            Ok(host::ChannelEvent::AgentFeedback { user_id, message }) => {
                 tracing::info!("Agent feedback for user {}", user_id);
-                if let Ok(Some(pairing)) = db.get_pairing_by_internal_user(&user_id) {
+                if let Ok(Some(pairing)) = host.pairing_by_user(&user_id) {
                     let discord_user_id = pairing.discord_user_id.parse::<u64>().unwrap_or(0);
                     if discord_user_id > 0 {
                         let user_id_obj = serenity::model::id::UserId::new(discord_user_id);
@@ -266,7 +258,7 @@ async fn listen_for_events(db: Database, http: Arc<serenity::http::Http>) {
                     }
                 }
             }
-            Ok(crate::event_channel::GatewayEvent::ChannelMessage {
+            Ok(host::ChannelEvent::ChannelMessage {
                 user_id: _,
                 channel_id,
                 message,
@@ -277,7 +269,7 @@ async fn listen_for_events(db: Database, http: Arc<serenity::http::Http>) {
                     let _ = channel.say(&http, &message).await;
                 }
             }
-            Ok(crate::event_channel::GatewayEvent::ChannelEmbed {
+            Ok(host::ChannelEvent::ChannelEmbed {
                 user_id: _,
                 channel_id,
                 embed,
@@ -286,32 +278,36 @@ async fn listen_for_events(db: Database, http: Arc<serenity::http::Http>) {
                 if channel_idparsed > 0 {
                     let channel = serenity::model::id::ChannelId::new(channel_idparsed);
                     let mut e = serenity::builder::CreateEmbed::new();
-                    if let Some(ref title) = embed.title {
+                    if let Some(title) = embed["title"].as_str() {
                         e = e.title(title);
                     }
-                    if let Some(ref description) = embed.description {
+                    if let Some(description) = embed["description"].as_str() {
                         e = e.description(description);
                     }
-                    if let Some(ref url) = embed.url {
+                    if let Some(url) = embed["url"].as_str() {
                         e = e.url(url);
                     }
-                    if let Some(color) = embed.color {
-                        e = e.color(color);
+                    if let Some(color) = embed["color"].as_u64() {
+                        e = e.color(color as u32);
                     }
-                    if let Some(ref footer) = embed.footer {
+                    if let Some(footer) = embed["footer"].as_str() {
                         e = e.footer(serenity::builder::CreateEmbedFooter::new(footer));
                     }
-                    if let Some(ref author) = embed.author {
+                    if let Some(author) = embed["author"].as_str() {
                         e = e.author(serenity::builder::CreateEmbedAuthor::new(author));
                     }
-                    if let Some(ref thumbnail) = embed.thumbnail {
+                    if let Some(thumbnail) = embed["thumbnail"].as_str() {
                         e = e.thumbnail(thumbnail);
                     }
-                    if let Some(ref image) = embed.image {
+                    if let Some(image) = embed["image"].as_str() {
                         e = e.image(image);
                     }
-                    for field in &embed.fields {
-                        e = e.field(&field.name, &field.value, field.inline);
+                    for field in embed["fields"].as_array().into_iter().flatten() {
+                        e = e.field(
+                            field["name"].as_str().unwrap_or_default(),
+                            field["value"].as_str().unwrap_or_default(),
+                            field["inline"].as_bool().unwrap_or(false),
+                        );
                     }
                     let msg = serenity::builder::CreateMessage::new().embed(e);
                     if let Err(e) = channel.send_message(&http, msg).await {
@@ -319,7 +315,7 @@ async fn listen_for_events(db: Database, http: Arc<serenity::http::Http>) {
                     }
                 }
             }
-            Ok(crate::event_channel::GatewayEvent::VoiceTts {
+            Ok(host::ChannelEvent::VoiceTts {
                 user_id,
                 audio_data,
             }) => {
@@ -405,22 +401,20 @@ async fn play_tts_audio(_user_id: String, _audio_data: Vec<u8>) {
     tracing::debug!("TTS playback skipped - songbird not enabled");
 }
 
-pub async fn start(db: Database) -> anyhow::Result<()> {
-    let secrets = crate::db::secrets::get_secrets();
-    start_with_secrets(db, secrets).await
-}
-
-pub async fn start_with_secrets(
-    db: Database,
-    secrets: crate::db::secrets::Secrets,
+/// Start the channel against a host. Credentials are scoped: the caller
+/// passes only what this channel declares.
+pub async fn start_with_host(
+    host: Arc<dyn host::ChannelHost>,
+    credentials: host::DiscordCredentials,
 ) -> anyhow::Result<()> {
     let gateway_url = std::env::var("GATEWAY_WS_URL")
         .map(|s| s.into())
         .unwrap_or_else(|_| DEFAULT_GATEWAY_URL.to_string());
 
-    let token = secrets
-        .discord_bot_token
+    let token = credentials
+        .bot_token
         .clone()
+        .filter(|token| !token.trim().is_empty())
         .or_else(|| std::env::var("DISCORD_BOT_TOKEN").ok())
         .context("DISCORD_BOT_TOKEN not set. Run 'praxis onboard --interactive' to configure.")?;
 
@@ -429,7 +423,7 @@ pub async fn start_with_secrets(
         .parse::<u64>()
         .context("DISCORD_APPLICATION_ID must be a number")?;
 
-    let bot = DiscordBot::new(db, Some(&gateway_url), secrets).await?;
+    let bot = DiscordBot::new(host, Some(&gateway_url), credentials).await?;
     tracing::info!("Discord bot connecting...");
     bot.start_with_token(&token, application_id).await
 }

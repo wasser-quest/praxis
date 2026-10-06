@@ -4,7 +4,7 @@ use std::path::Path;
 use std::io::Read;
 
 mod index;
-pub use index::{lookup_skill, SkillIndex};
+pub use index::{lookup_skill, SkillIndex, SkillSummary};
 pub mod discovery;
 
 pub fn validate_name(name: &str) -> anyhow::Result<()> {

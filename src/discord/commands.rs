@@ -1,4 +1,5 @@
-use crate::db::Database;
+use super::host::{ChannelHost, ContextJson};
+use std::sync::Arc;
 use serenity::model::application::CommandInteraction;
 use serenity::prelude::*;
 use std::collections::HashMap;
@@ -200,9 +201,15 @@ pub async fn setup_commands(http: &serenity::http::Http) -> anyhow::Result<()> {
 
 /// Same allow-list semantics for messages and skill interactions; DMs have no
 /// guild restriction but still obey the channel allow-list.
-pub fn channel_allowed(settings: &crate::db::contexts::ContextSettings, guild: Option<&str>, channel: &str) -> bool {
-    let allowed = |values: &[String], id: &str| values.iter().any(|v| v == "*" || v == id);
-    guild.map_or(true, |guild| allowed(&settings.allowed_guilds, guild)) && allowed(&settings.allowed_channels, channel)
+pub fn channel_allowed(settings: &serde_json::Value, guild: Option<&str>, channel: &str) -> bool {
+    fn allowed(values: &serde_json::Value, id: &str) -> bool {
+        values.as_array().is_some_and(|list| {
+            list.iter()
+                .any(|value| value.as_str().is_some_and(|value| value == "*" || value == id))
+        })
+    }
+    guild.map_or(true, |guild| allowed(&settings["allowed_guilds"], guild))
+        && allowed(&settings["allowed_channels"], channel)
 }
 
 #[cfg(test)]
@@ -210,113 +217,160 @@ pub fn channel_allowed(settings: &crate::db::contexts::ContextSettings, guild: O
 mod skill_access_tests;
 
 fn skill_command_context(
-    db: &Database,
+    host: &dyn ChannelHost,
     discord_user_id: &str,
     guild: Option<&str>,
     channel: &str,
-) -> anyhow::Result<crate::db::contexts::Context> {
-    let pairing = db.get_pairing_by_discord(discord_user_id)?
+) -> anyhow::Result<ContextJson> {
+    let pairing = host
+        .pairing_by_discord(discord_user_id)?
         .ok_or_else(|| anyhow::anyhow!("Please pair first with /pair"))?;
-    let context = db.load_context(&pairing.user_id)?;
-    anyhow::ensure!(channel_allowed(&context.settings, guild, channel), "This channel or guild is not allowed");
+    let context = host.load_context(&pairing.user_id)?;
+    anyhow::ensure!(
+        channel_allowed(&context["settings"], guild, channel),
+        "This channel or guild is not allowed"
+    );
     Ok(context)
 }
 
 /// Authorize before filesystem access, including list/off/unknown arguments.
 /// A pending pairing code or an internal context ID is not a completed pairing.
 fn apply_skill_command_from_dir(
-    db: &Database,
+    host: &dyn ChannelHost,
     discord_user_id: &str,
     guild: Option<&str>,
     channel: &str,
     argument: &str,
     directory: &std::path::Path,
 ) -> anyhow::Result<String> {
-    skill_command_context(db, discord_user_id, guild, channel)?;
+    skill_command_context(host, discord_user_id, guild, channel)?;
     let name = argument.trim();
     let off = name.eq_ignore_ascii_case("off");
     let list = name.is_empty() || name.eq_ignore_ascii_case("list") || name.starts_with("list ");
     if list || name.starts_with("search ") {
-        let mut index = crate::skills::SkillIndex::open(&db.data_dir(), directory)?;
-        index.ensure_indexed()?;
         let result = if let Some(query) = name.strip_prefix("search ") {
-            index.search(query, 8, true)?
-        } else { index.browse(name.strip_prefix("list ").unwrap_or(""), 8, true)? };
+            host.skill_search(directory, query)?
+        } else {
+            host.skill_browse(directory, name.strip_prefix("list ").unwrap_or(""))?
+        };
         // Recheck after index/filesystem access, before any metadata disclosure.
-        let ctx = skill_command_context(db, discord_user_id, guild, channel)?;
-        let lines = result.skills.iter().map(|s| format!("{}{}{}{} — {}",
-            s.name,
-            s.version.as_ref().map(|v| format!(" v{v}")).unwrap_or_default(),
-            if s.skill_hidden { " [hidden]" } else { "" },
-            if s.user_only { " [user-only]" } else { "" },
-            crate::util::truncate_chars(&s.description, 90))).collect::<Vec<_>>().join("\n");
-        let more = result.next_after.map(|cursor| format!("\nNext page: /skill skillname:list {cursor}")).unwrap_or_default();
-        return Ok(format!("Active skill: {}\nAvailable skills:\n{}{}\nUse /skill skillname:NAME, off, or search KEYWORDS.", ctx.settings.active_skill.as_deref().unwrap_or("off"), if lines.is_empty() { "(none)" } else { &lines }, more));
+        let ctx = skill_command_context(host, discord_user_id, guild, channel)?;
+        let lines = result
+            .skills
+            .iter()
+            .map(|s| {
+                format!(
+                    "{}{}{}{} — {}",
+                    s.name,
+                    s.version.as_ref().map(|v| format!(" v{v}")).unwrap_or_default(),
+                    if s.skill_hidden { " [hidden]" } else { "" },
+                    if s.user_only { " [user-only]" } else { "" },
+                    truncate_chars(&s.description, 90)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let more = result
+            .next_after
+            .as_deref()
+            .map(|cursor| format!("\nNext page: /skill skillname:list {cursor}"))
+            .unwrap_or_default();
+        return Ok(format!(
+            "Active skill: {}\nAvailable skills:\n{}{}\nUse /skill skillname:NAME, off, or search KEYWORDS.",
+            ctx["settings"]["active_skill"].as_str().unwrap_or("off"),
+            if lines.is_empty() { "(none)" } else { &lines },
+            more
+        ));
     }
     // off needs neither a readable skill directory nor an enabled loader.
     if !off {
-        crate::skills::lookup_skill(db, directory, name)?;
-        anyhow::ensure!(crate::db::tools::tool_enabled(db, "use_skill")?, "use_skill is disabled");
+        host.skill_exists(directory, name)?;
+        anyhow::ensure!(host.tool_enabled("use_skill")?, "use_skill is disabled");
     }
-    let mut ctx = skill_command_context(db, discord_user_id, guild, channel)?;
-    ctx.settings.active_skill = if off { None } else { Some(name.to_string()) };
-    db.save_context(&ctx)?;
-    Ok(if off { "Active skill disabled.".to_string() } else {
+    let mut ctx = skill_command_context(host, discord_user_id, guild, channel)?;
+    let user = ctx["user_id"].as_str().unwrap_or_default().to_string();
+    ctx["settings"]["active_skill"] =
+        if off { serde_json::Value::Null } else { serde_json::json!(name) };
+    host.save_context(&user, &ctx)?;
+    Ok(if off {
+        "Active skill disabled.".to_string()
+    } else {
         format!("Skill '{name}' is active for your messages. This loads instructions; it does not execute actions or change tool permissions.")
     })
 }
 
+/// Bounded display text; the channel never forwards raw host output.
+fn truncate_chars(value: &str, max: usize) -> String {
+    let mut text: String = value.chars().take(max).collect();
+    if value.chars().count() > max {
+        text.push('…');
+    }
+    text
+}
+
 pub fn apply_skill_command(
-    db: &Database,
+    host: &dyn ChannelHost,
     discord_user_id: &str,
     guild: Option<&str>,
     channel: &str,
     argument: &str,
-    registry: &crate::skills::SkillRegistry,
 ) -> anyhow::Result<String> {
-    let mut ctx = skill_command_context(db, discord_user_id, guild, channel)?;
+    let mut ctx = skill_command_context(host, discord_user_id, guild, channel)?;
+    let user = ctx["user_id"].as_str().unwrap_or_default().to_string();
     let name = argument.trim();
     if name.is_empty() || name.eq_ignore_ascii_case("list") {
-        let skills = registry.list().iter().map(|s| format!("{} — {}", s.name, s.description)).collect::<Vec<_>>().join("\n");
-        return Ok(format!("Active skill: {}\nAvailable skills:\n{}\nUse /skill skillname:NAME or /skill skillname:off.", ctx.settings.active_skill.as_deref().unwrap_or("off"), if skills.is_empty() { "(none)" } else { &skills }));
+        let skills = host
+            .registered_skills()
+            .iter()
+            .map(|s| format!("{} — {}", s.name, s.description))
+            .collect::<Vec<_>>()
+            .join("\n");
+        return Ok(format!(
+            "Active skill: {}\nAvailable skills:\n{}\nUse /skill skillname:NAME or /skill skillname:off.",
+            ctx["settings"]["active_skill"].as_str().unwrap_or("off"),
+            if skills.is_empty() { "(none)" } else { &skills }
+        ));
     }
     if name.eq_ignore_ascii_case("off") {
-        ctx.settings.active_skill = None;
+        ctx["settings"]["active_skill"] = serde_json::Value::Null;
     } else {
-        anyhow::ensure!(registry.get(name).is_some(), "Unknown skill '{name}'. Use /skill to list registered skills");
-        anyhow::ensure!(crate::db::tools::tool_enabled(db, "use_skill")?, "use_skill is disabled");
-        ctx.settings.active_skill = Some(name.to_string());
+        anyhow::ensure!(
+            host.registered_skill(name),
+            "Unknown skill '{name}'. Use /skill to list registered skills"
+        );
+        anyhow::ensure!(host.tool_enabled("use_skill")?, "use_skill is disabled");
+        ctx["settings"]["active_skill"] = serde_json::json!(name);
     }
-    db.save_context(&ctx)?;
-    Ok(match ctx.settings.active_skill {
+    host.save_context(&user, &ctx)?;
+    Ok(match ctx["settings"]["active_skill"].as_str() {
         Some(name) => format!("Skill '{name}' is active for your messages. This loads instructions; it does not execute actions or change tool permissions."),
         None => "Active skill disabled.".to_string(),
     })
 }
 
-pub async fn handle_skill_command(db: &Database, ctx: &Context, command: &CommandInteraction) -> anyhow::Result<()> {
+pub async fn handle_skill_command(host: &Arc<dyn ChannelHost>, ctx: &Context, command: &CommandInteraction) -> anyhow::Result<()> {
     // A first index build may take longer than Discord's interaction deadline.
     // Defer ephemerally without disclosing metadata, then authorize inside the worker.
     command.create_response(&ctx.http, serenity::builder::CreateInteractionResponse::Defer(
         serenity::builder::CreateInteractionResponseMessage::new().ephemeral(true)
     )).await?;
-    let db = db.clone();
+    let host = host.clone();
     let user = command.user.id.to_string();
     let guild = command.guild_id.map(|g| g.to_string());
     let channel = command.channel_id.to_string();
     let argument = command.data.options.iter().find(|o| o.name == "skillname").and_then(|o| o.value.as_str()).unwrap_or("list").to_string();
     let result = tokio::task::spawn_blocking(move || {
-        apply_skill_command_from_dir(&db, &user, guild.as_deref(), &channel, &argument, std::path::Path::new("skills"))
+        apply_skill_command_from_dir(host.as_ref(), &user, guild.as_deref(), &channel, &argument, std::path::Path::new("skills"))
     }).await?;
     let response = match result { Ok(text) => text, Err(error) => format!("Error: {error}") };
     command.edit_response(&ctx.http, serenity::builder::EditInteractionResponse::new()
-        .content(crate::util::truncate_chars(&response, 1900))
+        .content(truncate_chars(&response, 1900))
     ).await?;
     Ok(())
 }
 
 pub async fn handle_pair_command(
-    db: &Database,
+    host: &dyn ChannelHost,
     ctx: &Context,
     command: &CommandInteraction,
 ) -> anyhow::Result<()> {
@@ -340,7 +394,7 @@ pub async fn handle_pair_command(
 
     let code = generate_pairing_code();
     let expires_at = (chrono::Utc::now() + chrono::Duration::minutes(10)).to_rfc3339();
-    db.create_pending_pairing(&code, &discord_user_id, &expires_at)?;
+    host.create_pending_pairing(&code, &discord_user_id, &expires_at)?;
 
     let dm_channel = match command.user.create_dm_channel(&ctx.http).await {
         Ok(ch) => ch,
@@ -418,33 +472,33 @@ mod discord_tests {
     #[test]
     fn backend_skill_activation_is_paired_scoped_and_permission_checked() {
         let dir = tempfile::tempdir().unwrap();
-        let db = Database::new(&dir.path().join("db")).unwrap();
+        let db = crate::db::Database::new(&dir.path().join("db")).unwrap();
         crate::db::tools::init_default_tools(&db).unwrap();
         let skills = dir.path().join("skills/test");
         std::fs::create_dir_all(&skills).unwrap();
         std::fs::write(skills.join("skill.json"), r#"{"name":"test","description":"Test","required_parameters":["code"]}"#).unwrap();
         std::fs::write(skills.join("skill.poml"), "<poml><p>test</p></poml>").unwrap();
-        let mut registry = crate::skills::SkillRegistry::new();
-        registry.load_from_dir(&dir.path().join("skills")).unwrap();
-        assert!(apply_skill_command(&db, "discord-a", None, "channel", "test", &registry).is_err());
+        // The host indexes its skill catalog at startup, after the fixtures.
+        let host = crate::channels::KernelChannelHost::new(db.clone(), dir.path().to_path_buf()).unwrap();
+        assert!(apply_skill_command(&host, "discord-a", None, "channel", "test").is_err());
         db.create_pairing("alice", "discord-a", None).unwrap();
         db.create_pairing("bob", "discord-b", None).unwrap();
-        assert!(apply_skill_command(&db, "discord-a", None, "channel", "list", &registry).unwrap().contains("test"));
-        apply_skill_command(&db, "discord-a", None, "channel", "test", &registry).unwrap();
+        assert!(apply_skill_command(&host, "discord-a", None, "channel", "list").unwrap().contains("test"));
+        apply_skill_command(&host, "discord-a", None, "channel", "test").unwrap();
         assert_eq!(db.load_context("alice").unwrap().settings.active_skill.as_deref(), Some("test"));
         assert!(db.load_context("bob").unwrap().settings.active_skill.is_none());
-        assert!(apply_skill_command(&db, "discord-a", None, "channel", "unknown", &registry).is_err());
+        assert!(apply_skill_command(&host, "discord-a", None, "channel", "unknown").is_err());
         crate::db::tools::set_plugin_tool_enabled(&db, "use_skill", false).unwrap();
-        assert!(apply_skill_command(&db, "discord-a", None, "channel", "test", &registry).is_err());
-        apply_skill_command(&db, "discord-a", None, "channel", "off", &registry).unwrap();
+        assert!(apply_skill_command(&host, "discord-a", None, "channel", "test").is_err());
+        apply_skill_command(&host, "discord-a", None, "channel", "off").unwrap();
         let mut ctx = db.load_context("alice").unwrap();
         ctx.settings.allowed_channels = vec!["private".into()];
         db.save_context(&ctx).unwrap();
-        assert!(apply_skill_command(&db, "discord-a", None, "channel", "list", &registry).is_err());
+        assert!(apply_skill_command(&host, "discord-a", None, "channel", "list").is_err());
         assert!(db.load_context("alice").unwrap().settings.active_skill.is_none());
         ctx.settings.allowed_guilds = vec!["guild-1".into()];
-        assert!(!channel_allowed(&ctx.settings, Some("guild-2"), "private"));
-        assert!(channel_allowed(&ctx.settings, Some("guild-1"), "private"));
+        assert!(!channel_allowed(&serde_json::to_value(&ctx.settings).unwrap_or_default(), Some("guild-2"), "private"));
+        assert!(channel_allowed(&serde_json::to_value(&ctx.settings).unwrap_or_default(), Some("guild-1"), "private"));
     }
 
     #[test]

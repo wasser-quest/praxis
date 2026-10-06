@@ -1,14 +1,14 @@
 use std::sync::OnceLock;
 use tokio::sync::broadcast;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct EmbedField {
     pub name: String,
     pub value: String,
     pub inline: bool,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct DiscordEmbed {
     pub title: Option<String>,
     pub description: Option<String>,

@@ -1,4 +1,4 @@
-use crate::db::Database;
+use super::host::{ChannelHost, DiscordCredentials, MirroredMessage};
 use crate::discord::ws_client::{IncomingMessage, OutgoingMessage, WsClient};
 use serenity::async_trait;
 use serenity::model::application::Interaction;
@@ -42,45 +42,45 @@ fn generate_silent_wav(duration_ms: u32) -> Vec<u8> {
 }
 
 pub struct DiscordHandler {
-    pub db: Database,
+    pub host: Arc<dyn ChannelHost>,
     pub ws_client: Arc<Mutex<WsClient>>,
     pub request_lock: Arc<Mutex<()>>,
     pub voice_muted: Arc<Mutex<bool>>,
     pub voice_deafened: Arc<Mutex<bool>>,
-    pub secrets: crate::db::secrets::Secrets,
+    pub credentials: DiscordCredentials,
     pub voice_handler: Option<Arc<crate::voice::handler::VoiceHandler>>,
 }
 
 impl DiscordHandler {
     pub fn new(
-        db: Database,
+        host: Arc<dyn ChannelHost>,
         ws_client: Arc<Mutex<WsClient>>,
-        secrets: crate::db::secrets::Secrets,
+        credentials: DiscordCredentials,
     ) -> Self {
         Self {
-            db,
+            host,
             ws_client,
             request_lock: Arc::new(Mutex::new(())),
             voice_muted: Arc::new(Mutex::new(false)),
             voice_deafened: Arc::new(Mutex::new(true)),
-            secrets,
+            credentials,
             voice_handler: None,
         }
     }
 
     async fn check_channel_allowed(&self, msg: &Message) -> bool {
         let discord_user_id = msg.author.id.to_string();
-        let pairing = match self.db.get_pairing_by_discord(&discord_user_id) {
+        let pairing = match self.host.pairing_by_discord(&discord_user_id) {
             Ok(Some(p)) => p,
             _ => return false,
         };
 
-        match self.db.load_context(&pairing.user_id) {
+        match self.host.load_context(&pairing.user_id) {
             Ok(ctx) => {
                 let guild_id = msg.guild_id.map(|g| g.to_string());
                 let channel_id = msg.channel_id.to_string();
 
-                crate::discord::commands::channel_allowed(&ctx.settings, guild_id.as_deref(), &channel_id)
+                crate::discord::commands::channel_allowed(&ctx["settings"], guild_id.as_deref(), &channel_id)
             }
             Err(_) => false,
         }
@@ -133,8 +133,8 @@ impl EventHandler for DiscordHandler {
                 "/stop" => {
                     // Stop the active agent loop
                     let discord_user_id = msg.author.id.to_string();
-                    if let Ok(Some(pairing)) = self.db.get_pairing_by_discord(&discord_user_id) {
-                        crate::gateway::agent_loop::stop_agent_loop(&pairing.user_id).await;
+                    if let Ok(Some(pairing)) = self.host.pairing_by_discord(&discord_user_id) {
+                        self.host.stop_agent(&pairing.user_id).await;
                         let _ = msg.reply(&ctx.http, "Agent stopped.").await;
                     } else {
                         let _ = msg.reply(&ctx.http, "No active agent to stop.").await;
@@ -144,8 +144,8 @@ impl EventHandler for DiscordHandler {
                 "/last" | "/last-response" => {
                     // Let the LLM do one more response and then stop
                     let discord_user_id = msg.author.id.to_string();
-                    if let Ok(Some(pairing)) = self.db.get_pairing_by_discord(&discord_user_id) {
-                        if let Some(sender) = crate::gateway::agent_loop::get_user_input_sender(&pairing.user_id).await {
+                    if let Ok(Some(pairing)) = self.host.pairing_by_discord(&discord_user_id) {
+                        if let Some(sender) = self.host.question_sender(&pairing.user_id).await {
                             // Send a special stop signal
                             let _ = sender.send("__LAST_RESPONSE__".to_string());
                             let _ = msg.reply(&ctx.http, "Agent will respond one last time then stop.").await;
@@ -164,7 +164,7 @@ impl EventHandler for DiscordHandler {
         let channel_id = msg.channel_id.to_string();
         let is_question_response = if !msg.content.is_empty() {
             // Don't hold the lock while calling handle_message_reply
-            crate::tools::discord_interactive::handle_message_reply(
+            self.host.interaction_reply(
                 &channel_id,
                 &msg.content,
                 &msg.author.id.to_string(),
@@ -199,7 +199,7 @@ impl EventHandler for DiscordHandler {
 
         let discord_user_id = msg.author.id.to_string();
 
-        let pairing = match self.db.get_pairing_by_discord(&discord_user_id) {
+        let pairing = match self.host.pairing_by_discord(&discord_user_id) {
             Ok(Some(p)) => p,
             _ => {
                 tracing::warn!("User {} is not paired, ignoring message", discord_user_id);
@@ -229,23 +229,24 @@ impl EventHandler for DiscordHandler {
                 "author": author_name,
                 "content": content_clone,
             });
-            crate::runtime::events::send(
+            self.host.dashboard_event(
                 &uid,
                 "discord_message",
                 &payload.to_string(),
             );
             // Persist for the dashboard chat history (role discord_user).
             if !content_clone.trim().is_empty() {
-                let db = self.db.clone();
-                let stored = crate::db::messages::Message::discord_mirror(
-                    content_clone,
-                    "user",
-                    &author_name,
-                    &channel_id_str,
-                    if is_dm { "dm" } else { "guild" },
-                );
+                let host = self.host.clone();
+                let mirror = MirroredMessage {
+                    user_id: uid.clone(),
+                    content: content_clone.clone(),
+                    direction: "user",
+                    author: author_name.clone(),
+                    channel_id: channel_id_str.clone(),
+                    channel_kind: if is_dm { "dm" } else { "guild" },
+                };
                 tokio::spawn(async move {
-                    if let Err(e) = db.add_message(&uid, &stored) {
+                    if let Err(e) = host.mirror_message(mirror) {
                         tracing::warn!("Failed to persist Discord mirror message: {}", e);
                     }
                 });
@@ -254,7 +255,7 @@ impl EventHandler for DiscordHandler {
 
         // Attachment writes are opt-in; failure to load policy is fail-closed.
         let mut attachment_context = String::new();
-        let download = self.db.load_context(&pairing.user_id).is_ok_and(|ctx| ctx.settings.download);
+        let download = self.host.load_context(&pairing.user_id).is_ok_and(|ctx| ctx["settings"]["download"].as_bool().unwrap_or(false));
         if !msg.attachments.is_empty() && !download {
             attachment_context.push_str("\n[Attachments not downloaded: enable settings.download to allow saving Discord attachments.]");
         }
@@ -323,7 +324,7 @@ impl EventHandler for DiscordHandler {
         }
 
         // Check if there's an active agent loop for this user - inject message if so
-        if let Some(sender) = crate::gateway::agent_loop::get_user_input_sender(&pairing.user_id).await {
+        if let Some(sender) = self.host.question_sender(&pairing.user_id).await {
             tracing::info!("Injecting Discord message into active agent loop for user {}", pairing.user_id);
             let mut inject_content = msg.content.clone();
             if !attachment_context.is_empty() {
@@ -398,23 +399,23 @@ impl EventHandler for DiscordHandler {
                             "author": "bot",
                             "content": trimmed,
                         });
-                        crate::runtime::events::send(
+                        self.host.dashboard_event(
                             &mirror_uid,
                             "discord_message",
                             &bot_meta.to_string(),
                         );
                         // Persist for the dashboard chat history (role discord_bot).
-                        let db = self.db.clone();
-                        let stored = crate::db::messages::Message::discord_mirror(
-                            trimmed.to_string(),
-                            "bot",
-                            "bot",
-                            &mirror_channel,
-                            mirror_kind,
-                        );
-                        let mirror_uid2 = mirror_uid.clone();
+                        let host = self.host.clone();
+                        let mirror = MirroredMessage {
+                            user_id: mirror_uid.clone(),
+                            content: trimmed.to_string(),
+                            direction: "bot",
+                            author: "bot".to_string(),
+                            channel_id: mirror_channel.clone(),
+                            channel_kind: mirror_kind,
+                        };
                         tokio::spawn(async move {
-                            if let Err(e) = db.add_message(&mirror_uid2, &stored) {
+                            if let Err(e) = host.mirror_message(mirror) {
                                 tracing::warn!("Failed to persist Discord mirror bot reply: {}", e);
                             }
                         });
@@ -477,16 +478,16 @@ impl EventHandler for DiscordHandler {
         if let Interaction::Command(command) = interaction {
             match command.data.name.as_str() {
                 "skill" => {
-                    if let Err(error) = crate::discord::commands::handle_skill_command(&self.db, &ctx, &command).await {
+                    if let Err(error) = crate::discord::commands::handle_skill_command(&self.host, &ctx, &command).await {
                         tracing::error!(%error, "Skill command response failed");
                     }
                 }
                 "show_thinking" => {
                     let enabled = command.data.options.iter().find(|o| o.name == "enabled")
                         .and_then(|o| o.value.as_bool());
-                    let reply = match (self.db.get_pairing_by_discord(&command.user.id.to_string()), enabled) {
+                    let reply = match (self.host.pairing_by_discord(&command.user.id.to_string()), enabled) {
                         (Ok(Some(pairing)), Some(enabled)) => {
-                            match self.db.merge_context(&pairing.user_id, serde_json::json!({"settings.show_thinking":enabled})) {
+                            match self.host.merge_context(&pairing.user_id, serde_json::json!({"settings.show_thinking":enabled})) {
                                 Ok(_) => format!("Thinking display: {}", if enabled { "on" } else { "off" }),
                                 Err(_) => "Could not save thinking visibility.".into(),
                             }
@@ -505,15 +506,14 @@ impl EventHandler for DiscordHandler {
                         .and_then(|o| o.value.as_str())
                         .unwrap_or("auto")
                         .to_ascii_lowercase();
-                    let reply = match self.db.get_pairing_by_discord(&discord_user_id) {
+                    let reply = match self.host.pairing_by_discord(&discord_user_id) {
                         Ok(Some(pairing)) => {
                             let valid = matches!(mode.as_str(), "on" | "off" | "auto" | "low" | "medium" | "high" | "xhigh");
                             if !valid {
                                 "Invalid mode. Use off, low, medium, high, xhigh, on, or auto.".to_string()
                             } else {
-                                match crate::context_cmd::parse(&format!("/context set settings.thinking_mode={mode}")) {
-                                    Ok(op) => {
-                                        let result = crate::context_cmd::apply(&self.db, &pairing.user_id, &op);
+                                match self.host.context_command(&pairing.user_id, &format!("/context set settings.thinking_mode={mode}")) {
+                                    Ok(result) => {
                                         if result.starts_with("✓") {
                                             let suffix = if mode == "auto" { " (provider default)" } else { "" };
                                             format!("🧠 Thinking mode set to **{mode}**{suffix}")
@@ -539,7 +539,7 @@ impl EventHandler for DiscordHandler {
                 }
                 "pair" => {
                     if let Err(e) =
-                        crate::discord::commands::handle_pair_command(&self.db, &ctx, &command)
+                        crate::discord::commands::handle_pair_command(self.host.as_ref(), &ctx, &command)
                             .await
                     {
                         tracing::error!("Pair command error: {}", e);
@@ -603,12 +603,12 @@ impl EventHandler for DiscordHandler {
                 }
                 "tts" => {
                     let discord_user_id = command.user.id.to_string();
-                    if let Ok(Some(pairing)) = self.db.get_pairing_by_discord(&discord_user_id) {
+                    if let Ok(Some(pairing)) = self.host.pairing_by_discord(&discord_user_id) {
                         let user_id = &pairing.user_id;
-                        if let Ok(mut db_ctx) = self.db.load_context(user_id) {
-                            db_ctx.settings.use_tts = !db_ctx.settings.use_tts;
-                            let new_state = db_ctx.settings.use_tts;
-                            if let Err(e) = self.db.save_context(&db_ctx) {
+                        if let Ok(mut db_ctx) = self.host.load_context(user_id) {
+                            let new_state = !db_ctx["settings"]["use_tts"].as_bool().unwrap_or(false);
+                            db_ctx["settings"]["use_tts"] = serde_json::json!(new_state);
+                            if let Err(e) = self.host.save_context(user_id, &db_ctx) {
                                 tracing::error!("Failed to save TTS state: {}", e);
                             } else {
                                 let msg = if new_state {
@@ -645,7 +645,7 @@ impl EventHandler for DiscordHandler {
                     // the same parser as the TUI and web chat so syntax is
                     // identical across all three frontends.
                     let discord_user_id = command.user.id.to_string();
-                    let pairing = match self.db.get_pairing_by_discord(&discord_user_id) {
+                    let pairing = match self.host.pairing_by_discord(&discord_user_id) {
                         Ok(Some(p)) => p,
                         _ => {
                             let _ = command
@@ -670,8 +670,8 @@ impl EventHandler for DiscordHandler {
                         .unwrap_or("show")
                         .to_string();
 
-                    let response = match crate::context_cmd::parse(&format!("/context {arg}")) {
-                        Ok(op) => crate::context_cmd::apply(&self.db, &pairing.user_id, &op),
+                    let response = match self.host.context_command(&pairing.user_id, &format!("/context {arg}")) {
+                        Ok(response) => response,
                         Err(e) => format!("error: {e}\n\nExamples:\n  set custom_data.mode=chat\n  set settings.max_llm_turns=20\n  get settings.voice_tts_enabled\n  show settings"),
                     };
 
@@ -755,13 +755,13 @@ impl EventHandler for DiscordHandler {
                                     // Check context for deafened and voice_enabled settings
                                     let discord_user_id = command.user.id.to_string();
                                     let (should_deafen, voice_listening) =
-                                        match self.db.get_pairing_by_discord(&discord_user_id) {
+                                        match self.host.pairing_by_discord(&discord_user_id) {
                                             Ok(Some(pairing)) => {
-                                                match self.db.load_context(&pairing.user_id) {
+                                                match self.host.load_context(&pairing.user_id) {
                                                     Ok(ctx) => (
-                                                        ctx.settings.voice_deafened,
-                                                        ctx.settings.voice_enabled
-                                                            && ctx.settings.use_stt,
+                                                        ctx["settings"]["voice_deafened"].as_bool().unwrap_or(true),
+                                                        ctx["settings"]["voice_enabled"].as_bool().unwrap_or(false)
+                                                            && ctx["settings"]["use_stt"].as_bool().unwrap_or(false),
                                                     ),
                                                     Err(_) => (true, false),
                                                 }
@@ -787,7 +787,7 @@ impl EventHandler for DiscordHandler {
 
                                     // Set allowed Discord user IDs (only paired users)
                                     let mut allowed_ids = vec![fallback_discord_id];
-                                    if let Ok(all_pairings) = self.db.list_all_pairings() {
+                                    if let Ok(all_pairings) = self.host.list_pairings() {
                                         for p in &all_pairings {
                                             if let Ok(did) = p.discord_user_id.parse::<u64>() {
                                                 allowed_ids.push(did);
@@ -801,7 +801,7 @@ impl EventHandler for DiscordHandler {
                                         .db
                                         .get_pairing_by_discord(&fallback_discord_id.to_string())
                                     {
-                                        if let Ok(ctx) = self.db.load_context(&pairing.user_id) {
+                                        if let Ok(ctx) = self.host.load_context(&pairing.user_id) {
                                             voice_handler
                                                 .set_auto_pause(
                                                     ctx.settings.voice_auto_pause_enabled,
@@ -868,7 +868,7 @@ impl EventHandler for DiscordHandler {
                                     let db = self.db.clone();
                                     let ws_client = self.ws_client.clone();
                                     let req_lock = self.request_lock.clone();
-                                    let secrets = self.secrets.clone();
+                                    let secrets = self.credentials.clone();
                                     let voice_muted = self.voice_muted.clone();
                                     let http = ctx.http.clone();
                                     tokio::spawn(async move {
@@ -912,7 +912,7 @@ impl EventHandler for DiscordHandler {
                                                 continue;
                                             }
 
-                                            let api_key = secrets.elevenlabs_api_key.clone();
+                                            let api_key = self.credentials.elevenlabs_api_key.clone();
                                             let model_path = match stt_type.as_str() {
                                                 "vosk" => {
                                                     ctx.settings.voice_vosk_model_path.clone()
@@ -1169,7 +1169,7 @@ impl EventHandler for DiscordHandler {
                 }
                 "compact" => {
                     let discord_user_id = command.user.id.to_string();
-                    let pairing = match self.db.get_pairing_by_discord(&discord_user_id) {
+                    let pairing = match self.host.pairing_by_discord(&discord_user_id) {
                         Ok(Some(p)) => p,
                         _ => {
                             let _ = command
@@ -1233,8 +1233,8 @@ impl EventHandler for DiscordHandler {
                 }
                 "stop" => {
                     let discord_user_id = command.user.id.to_string();
-                    if let Ok(Some(pairing)) = self.db.get_pairing_by_discord(&discord_user_id) {
-                        crate::gateway::agent_loop::stop_agent_loop(&pairing.user_id).await;
+                    if let Ok(Some(pairing)) = self.host.pairing_by_discord(&discord_user_id) {
+                        self.host.stop_agent(&pairing.user_id).await;
                         let _ = command
                             .create_response(
                                 &ctx.http,
@@ -1258,9 +1258,9 @@ impl EventHandler for DiscordHandler {
                 }
                 "clear" => {
                     let discord_user_id = command.user.id.to_string();
-                    if let Ok(Some(pairing)) = self.db.get_pairing_by_discord(&discord_user_id) {
-                        crate::gateway::agent_loop::stop_agent_loop(&pairing.user_id).await;
-                        if let Err(e) = self.db.clear_messages(&pairing.user_id) {
+                    if let Ok(Some(pairing)) = self.host.pairing_by_discord(&discord_user_id) {
+                        self.host.stop_agent(&pairing.user_id).await;
+                        if let Err(e) = self.host.clear_messages(&pairing.user_id) {
                             tracing::error!("Failed to clear messages for user {}: {}", pairing.user_id, e);
                             let _ = command
                                 .create_response(
@@ -1297,7 +1297,7 @@ impl EventHandler for DiscordHandler {
                 }
                 "session" => {
                     let discord_user_id = command.user.id.to_string();
-                    let pairing = match self.db.get_pairing_by_discord(&discord_user_id) {
+                    let pairing = match self.host.pairing_by_discord(&discord_user_id) {
                         Ok(Some(p)) => p,
                         _ => {
                             let _ = command
@@ -1328,7 +1328,7 @@ impl EventHandler for DiscordHandler {
 
                     let response = match action {
                         "list" => {
-                            match self.db.list_sessions(user_id) {
+                            match self.host.list_sessions(user_id) {
                                 Ok(sessions) => {
                                     if sessions.is_empty() {
                                         "No sessions found. Use `/session action:create name:my-session` to create one.".to_string()
@@ -1349,11 +1349,11 @@ impl EventHandler for DiscordHandler {
                             } else {
                                 name.clone()
                             };
-                            let _ = self.db.create_session(user_id, &sid, Some(&sid));
+                            let _ = self.host.create_session(user_id, &sid, Some(&sid));
                             // Switch into it immediately
-                            if let Ok(mut ctx) = self.db.load_context(user_id) {
-                                ctx.session_id = sid.clone();
-                                let _ = self.db.save_context(&ctx);
+                            if let Ok(mut ctx) = self.host.load_context(user_id) {
+                                ctx["session_id"] = serde_json::json!(sid);
+                                let _ = self.host.save_context(user_id, &ctx);
                             }
                             format!("Created and switched to session `{}`.", sid)
                         }
@@ -1361,9 +1361,9 @@ impl EventHandler for DiscordHandler {
                             if name.is_empty() {
                                 "Please provide a session name to switch to.".to_string()
                             } else {
-                                if let Ok(mut ctx) = self.db.load_context(user_id) {
-                                    ctx.session_id = name.clone();
-                                    if let Err(e) = self.db.save_context(&ctx) {
+                                if let Ok(mut ctx) = self.host.load_context(user_id) {
+                                    ctx["session_id"] = serde_json::json!(name);
+                                    if let Err(e) = self.host.save_context(user_id, &ctx) {
                                         format!("Failed to switch session: {}", e)
                                     } else {
                                         format!("Switched to session `{}`.", name)
@@ -1381,7 +1381,7 @@ impl EventHandler for DiscordHandler {
                                 if parts.len() < 2 {
                                     "Usage: `/session action:rename name:old-session new-name`.".to_string()
                                 } else {
-                                    let _ = self.db.rename_session(user_id, parts[0], parts[1]);
+                                    let _ = self.host.rename_session(user_id, parts[0], parts[1]);
                                     format!("Renamed session `{}` to `{}`.", parts[0], parts[1])
                                 }
                             }
@@ -1390,11 +1390,11 @@ impl EventHandler for DiscordHandler {
                             if name.is_empty() {
                                 "Please provide a session name to delete.".to_string()
                             } else {
-                                let _ = self.db.delete_session(user_id, &name);
+                                let _ = self.host.delete_session(user_id, &name);
                                 // Reset to default if the deleted session was active
-                                if let Ok(ctx) = self.db.load_context(user_id) {
-                                    if ctx.session_id == name {
-                                        let _ = self.db.merge_context(user_id, serde_json::json!({"session_id": ""}));
+                                if let Ok(ctx) = self.host.load_context(user_id) {
+                                    if ctx["session_id"].as_str() == Some(name.as_str()) {
+                                        let _ = self.host.merge_context(user_id, serde_json::json!({"session_id": ""}));
                                     }
                                 }
                                 format!("Deleted session `{}` and its messages.", name)
@@ -1402,8 +1402,8 @@ impl EventHandler for DiscordHandler {
                         }
                         "clear" => {
                             let sid = if name.is_empty() {
-                                if let Ok(ctx) = self.db.load_context(user_id) {
-                                    ctx.session_id.clone()
+                                if let Ok(ctx) = self.host.load_context(user_id) {
+                                    ctx["session_id"].as_str().unwrap_or_default().to_string()
                                 } else {
                                     String::new()
                                 }
@@ -1411,10 +1411,10 @@ impl EventHandler for DiscordHandler {
                                 name.clone()
                             };
                             if sid.is_empty() || sid == "default" {
-                                let _ = self.db.clear_messages(user_id);
+                                let _ = self.host.clear_messages(user_id);
                                 "Cleared messages for the default session.".to_string()
                             } else {
-                                let _ = self.db.clear_session_messages(user_id, &sid);
+                                let _ = self.host.clear_session_messages(user_id, &sid);
                                 format!("Cleared messages for session `{}`.", sid)
                             }
                         }
@@ -1444,7 +1444,7 @@ impl EventHandler for DiscordHandler {
             .into_owned();
         let user_id = reaction.user_id.map(|u| u.to_string()).unwrap_or_default();
 
-        crate::tools::discord_interactive::handle_reaction(&channel_id, &emoji, &user_id).await;
+        self.host.interaction_reaction(&channel_id, &emoji, &user_id).await;
     }
 }
 
