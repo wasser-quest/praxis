@@ -1,0 +1,32 @@
+{
+  "name": "rag",
+  "description": "Document ingestion and retrieval",
+  "version": "0.1.0",
+  "enabled": true,
+  "tools": [
+    {
+      "name": "rag_search",
+      "description": "Search knowledge base for relevant information. Returns the most similar document chunks.",
+      "parameters": {"type":"object","properties":{"query":{"type":"string","description":"Search query"},"limit":{"type":"integer","description":"Max results (default 5)","default":5}},"required":["query"]},
+      "handler": {"type": "builtin", "name": "rag_search"}
+    },
+    {
+      "name": "rag_ingest",
+      "description": "Add a document to the knowledge base. Chunks the text and computes embeddings for later retrieval.",
+      "parameters": {"type":"object","properties":{"filename":{"type":"string","description":"Document filename"},"content":{"type":"string","description":"Document content"},"file_type":{"type":"string","description":"File type (e.g., 'txt', 'md', 'pdf')","default":"txt"}},"required":["filename","content"]},
+      "handler": {"type": "builtin", "name": "rag_ingest"}
+    },
+    {
+      "name": "rag_list",
+      "description": "List all documents in the knowledge base.",
+      "parameters": {"type":"object","properties":{}},
+      "handler": {"type": "builtin", "name": "rag_list"}
+    },
+    {
+      "name": "rag_delete",
+      "description": "Delete a document from the knowledge base by ID.",
+      "parameters": {"type":"object","properties":{"document_id":{"type":"string","description":"Document ID to delete"}},"required":["document_id"]},
+      "handler": {"type": "builtin", "name": "rag_delete"}
+    }
+  ]
+}

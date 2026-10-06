@@ -438,66 +438,6 @@ async fn dispatch_at_depth(
                         Err(e) => format!("Error: {}", e),
                     }
                 }
-                "rag_search" => {
-                    let query = args["query"].as_str().unwrap_or("");
-                    let limit = args["limit"].as_u64().unwrap_or(5) as usize;
-                    match crate::tools::vector::vector_search(db, user_id, query, limit).await {
-                        Ok(results) => {
-                            if results.is_empty() {
-                                "No relevant documents found.".to_string()
-                            } else {
-                                let mut output = String::new();
-                                for (i, chunk) in results.iter().enumerate() {
-                                    output.push_str(&format!(
-                                        "--- Result {} (similarity: {:.3}) ---\n{}\n\n",
-                                        i + 1,
-                                        chunk.similarity,
-                                        chunk.content
-                                    ));
-                                }
-                                output
-                            }
-                        }
-                        Err(e) => format!("Error: {}", e),
-                    }
-                }
-                "rag_ingest" => {
-                    let filename = args["filename"].as_str().unwrap_or("untitled");
-                    let content = args["content"].as_str().unwrap_or("");
-                    let file_type = args["file_type"].as_str().unwrap_or("txt");
-                    match crate::tools::vector::ingest_with_embeddings(
-                        db, user_id, filename, content, file_type,
-                    )
-                    .await
-                    {
-                        Ok(doc_id) => format!("Document ingested successfully. ID: {}", doc_id),
-                        Err(e) => format!("Error: {}", e),
-                    }
-                }
-                "rag_list" => match crate::tools::rag_ingest::list_documents(db, user_id).await {
-                    Ok(docs) => {
-                        if docs.is_empty() {
-                            "No documents in knowledge base.".to_string()
-                        } else {
-                            let mut output = String::from("Documents in knowledge base:\n");
-                            for doc in &docs {
-                                output.push_str(&format!(
-                                    "- {} ({}) - {} chunks - ID: {}\n",
-                                    doc["filename"], doc["file_type"], doc["chunk_count"], doc["id"]
-                                ));
-                            }
-                            output
-                        }
-                    }
-                    Err(e) => format!("Error: {}", e),
-                },
-                "rag_delete" => {
-                    let document_id = args["document_id"].as_str().unwrap_or("");
-                    match crate::tools::rag_ingest::delete_document(db, user_id, document_id).await {
-                        Ok(_) => format!("Document {} deleted.", document_id),
-                        Err(e) => format!("Error: {}", e),
-                    }
-                }
                 #[cfg(feature = "vision")]
                 "understand_image" => {
                     let result = crate::tools::understand_image::run(&args).await;

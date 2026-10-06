@@ -159,3 +159,73 @@ mod rag_tests {
         assert!(docs.is_empty());
     }
 }
+
+/// The whole knowledge-base namespace: one implementation shared by the
+/// package's `builtin` handlers and any internal caller. Result formats are
+/// the historical ones.
+pub async fn run(
+    db: &crate::db::Database,
+    user: &str,
+    name: &str,
+    args: &serde_json::Value,
+) -> anyhow::Result<String> {
+    Ok(match name {
+        "rag_search" => {
+            let query = args["query"].as_str().unwrap_or("");
+            let limit = args["limit"].as_u64().unwrap_or(5) as usize;
+            match crate::tools::vector::vector_search(db, user, query, limit).await {
+                Ok(results) => {
+                    if results.is_empty() {
+                        "No relevant documents found.".to_string()
+                    } else {
+                        let mut output = String::new();
+                        for (i, chunk) in results.iter().enumerate() {
+                            output.push_str(&format!(
+                                "--- Result {} (similarity: {:.3}) ---\n{}\n\n",
+                                i + 1,
+                                chunk.similarity,
+                                chunk.content
+                            ));
+                        }
+                        output
+                    }
+                }
+                Err(error) => format!("Error: {}", error),
+            }
+        }
+        "rag_ingest" => {
+            let filename = args["filename"].as_str().unwrap_or("untitled");
+            let content = args["content"].as_str().unwrap_or("");
+            let file_type = args["file_type"].as_str().unwrap_or("txt");
+            match crate::tools::vector::ingest_with_embeddings(db, user, filename, content, file_type).await {
+                Ok(doc_id) => format!("Document ingested successfully. ID: {}", doc_id),
+                Err(error) => format!("Error: {}", error),
+            }
+        }
+        "rag_list" => match list_documents(db, user).await {
+            Ok(docs) => {
+                if docs.is_empty() {
+                    "No documents in knowledge base.".to_string()
+                } else {
+                    let mut output = String::from("Documents in knowledge base:\n");
+                    for doc in &docs {
+                        output.push_str(&format!(
+                            "- {} ({}) - {} chunks - ID: {}\n",
+                            doc["filename"], doc["file_type"], doc["chunk_count"], doc["id"]
+                        ));
+                    }
+                    output
+                }
+            }
+            Err(error) => format!("Error: {}", error),
+        },
+        "rag_delete" => {
+            let document_id = args["document_id"].as_str().unwrap_or("");
+            match delete_document(db, user, document_id).await {
+                Ok(_) => format!("Document {} deleted.", document_id),
+                Err(error) => format!("Error: {}", error),
+            }
+        }
+        other => anyhow::bail!("Unknown knowledge-base operation: {other}"),
+    })
+}

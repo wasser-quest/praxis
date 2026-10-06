@@ -299,30 +299,6 @@ pub(crate) fn get_default_tools() -> Vec<Tool> {
             is_enabled: true,
         },
         // RAG Tools
-        Tool {
-            name: "rag_search".into(),
-            description: Some("Search knowledge base for relevant information. Returns the most similar document chunks.".into()),
-            parameters: serde_json::json!({"type":"object","properties":{"query":{"type":"string","description":"Search query"},"limit":{"type":"integer","description":"Max results (default 5)","default":5}},"required":["query"]}),
-            is_enabled: true,
-        },
-        Tool {
-            name: "rag_ingest".into(),
-            description: Some("Add a document to the knowledge base. Chunks the text and computes embeddings for later retrieval.".into()),
-            parameters: serde_json::json!({"type":"object","properties":{"filename":{"type":"string","description":"Document filename"},"content":{"type":"string","description":"Document content"},"file_type":{"type":"string","description":"File type (e.g., 'txt', 'md', 'pdf')","default":"txt"}},"required":["filename","content"]}),
-            is_enabled: true,
-        },
-        Tool {
-            name: "rag_list".into(),
-            description: Some("List all documents in the knowledge base.".into()),
-            parameters: serde_json::json!({"type":"object","properties":{}}),
-            is_enabled: true,
-        },
-        Tool {
-            name: "rag_delete".into(),
-            description: Some("Delete a document from the knowledge base by ID.".into()),
-            parameters: serde_json::json!({"type":"object","properties":{"document_id":{"type":"string","description":"Document ID to delete"}},"required":["document_id"]}),
-            is_enabled: true,
-        },
         // Cron Tools
         Tool {
             name: "cron_add".into(),

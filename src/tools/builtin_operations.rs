@@ -75,6 +75,12 @@ pub async fn execute(
         // package only declares the tool (§6C).
         "delegate_task" => delegate(ctx, args).await,
         "list_delegations" => list_delegations(ctx),
+        // Document ingestion and retrieval over the host-owned store.
+        "rag_search" | "rag_ingest" | "rag_list" | "rag_delete" => {
+            Box::pin(crate::tools::rag_ingest::run(ctx.db, ctx.user, name, args))
+                .await
+                .unwrap_or_else(|error| format!("Error: {error}"))
+        }
         // Memory profiles, facts, preferences and topics over host-owned
         // storage; one implementation for every declaring package.
         "memory_profile_create" | "memory_profile_load" | "memory_profile_list"
