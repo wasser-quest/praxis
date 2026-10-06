@@ -666,18 +666,6 @@ pub(crate) fn get_default_tools() -> Vec<Tool> {
             is_enabled: false,
         },
         Tool {
-            name: "send_screenshot".into(),
-            description: Some("Take a VM screenshot and send it to the chat UI. If channel_id is 'web' or omitted, sends to the web dashboard chat. Otherwise sends to the specified Discord channel. Caption is optional.".into()),
-            parameters: serde_json::json!({"type":"object","properties":{"channel_id":{"type":"string","description":"Channel ID. Use 'web' or omit for web chat, otherwise a Discord channel ID."},"caption":{"type":"string","description":"Optional caption for the screenshot"},"vm_name":{"type":"string","default":"praxis-vm"}},"required":[]}),
-            is_enabled: true,
-        },
-        Tool {
-            name: "ask_questions".into(),
-            description: Some("Ask the user questions via Discord. Each question needs 'label' (short key for the answer), 'question' (the text to ask), and optionally 'suggestions' (array of plain strings like [\"yes\", \"no\", \"maybe\"] shown as emoji buttons). Do NOT use 'options' or objects - use 'suggestions' with simple strings only. If 'channel_id' is omitted, questions are sent to the channel where the request originated.".into()),
-            parameters: serde_json::json!({"type":"object","properties":{"channel_id":{"type":"string","description":"Discord channel ID. If omitted, sends to the channel where the request originated."},"questions":{"type":"array","items":{"type":"object","properties":{"label":{"type":"string","description":"Short key for answer, e.g. 'color', 'choice'"},"question":{"type":"string","description":"The question text to ask"},"suggestions":{"type":"array","items":{"type":"string"},"description":"Quick reply options as plain strings, e.g. [\"red\", \"blue\", \"green\"]"}},"required":["label","question"]},"description":"Array of questions to ask"},"timeout_secs":{"type":"integer","default":120,"description":"Timeout per question in seconds"}},"required":["questions"]}),
-            is_enabled: true,
-        },
-        Tool {
             name: "search_skills".into(),
             description: Some("Search the persistent skill metadata index using a few keywords. Returns at most 20 names, short descriptions, required_parameters and activation flags, never instructions. Hidden skills are excluded. A user_only result needs human selection via /skill or authenticated context controls. Refine the query rather than enumerating the catalog. Follow the POML discovery policy.".into()),
             parameters: serde_json::json!({"type":"object","properties":{"query":{"type":"string","maxLength":512,"description":"Literal word-prefix search over names/descriptions. Empty lists a bounded first page."},"limit":{"type":"integer","minimum":1,"maximum":20,"default":5}},"required":["query"],"additionalProperties":false}),

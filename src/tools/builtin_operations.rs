@@ -83,6 +83,18 @@ pub async fn execute(
             crate::tools::cron::run(ctx.db, ctx.user, name, args)
                 .unwrap_or_else(|error| format!("Error: {error}"))
         }
+        // Questions and screenshots routed to the user's interface.
+        "send_screenshot" | "ask_questions" => {
+            Box::pin(crate::tools::interaction::run(
+                ctx.db,
+                ctx.plugins,
+                ctx.user,
+                name,
+                args,
+            ))
+            .await
+            .unwrap_or_else(|error| format!("Error: {error}"))
+        }
         // Discord delivery over the host's authenticated channel bindings.
         "discord_upload_file" | "discord_send_message" | "discord_send_embed" => {
             Box::pin(crate::tools::discord_tools::run(

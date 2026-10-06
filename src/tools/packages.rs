@@ -142,6 +142,7 @@ fn bundled_manifest(id: &str) -> Option<&'static str> {
         "rag" => Some(include_str!("../../packages/rag/plugin.json")),
         "cron" => Some(include_str!("../../packages/cron/plugin.json")),
         "discord" => Some(include_str!("../../packages/discord/plugin.json")),
+        "interaction" => Some(include_str!("../../packages/interaction/plugin.json")),
         _ => None,
     }
 }

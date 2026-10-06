@@ -5,6 +5,7 @@ pub mod builtin_operations;
 mod patch_tests;
 pub mod discord_tools;
 pub mod discovery;
+pub mod interaction;
 pub mod memory;
 pub mod context_tools;
 pub mod discord_interactive;
