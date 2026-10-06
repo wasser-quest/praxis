@@ -1,4 +1,5 @@
 use anyhow::Result;
+use praxis_provider_api::{ErrorKind, ProviderError};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
@@ -23,28 +24,6 @@ impl EmbeddingProvider {
         }
     }
 
-    pub async fn embed(&self, text: &str) -> Result<Vec<f32>> {
-        match self.config.provider.as_str() {
-            "openai" => self.embed_openai(text).await,
-            "ollama" => self.embed_ollama(text).await,
-            _ => anyhow::bail!("Unsupported embedding provider: {}", self.config.provider),
-        }
-    }
-
-    pub async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
-        match self.config.provider.as_str() {
-            "openai" => self.embed_batch_openai(texts).await,
-            "ollama" => {
-                // Ollama doesn't support batch embedding, so we do them one by one
-                let mut results = Vec::new();
-                for text in texts {
-                    results.push(self.embed_ollama(text).await?);
-                }
-                Ok(results)
-            }
-            _ => anyhow::bail!("Unsupported embedding provider: {}", self.config.provider),
-        }
-    }
 
     async fn embed_openai(&self, text: &str) -> Result<Vec<f32>> {
         let url = format!("{}/embeddings", self.config.base_url);
@@ -180,4 +159,46 @@ pub fn create_embedding_provider() -> Result<EmbeddingProvider> {
         base_url,
         api_key,
     }))
+}
+
+/// The common embedding interface (`praxis-provider-api`). Batched calls fall
+/// back to one-by-one inside the adapter where the wire API has no batch.
+#[async_trait::async_trait]
+impl praxis_provider_api::EmbeddingProvider for EmbeddingProvider {
+    fn name(&self) -> &str {
+        &self.config.provider
+    }
+
+    async fn embed(&self, text: &str) -> Result<Vec<f32>, ProviderError> {
+        Ok(match self.config.provider.as_str() {
+            "openai" => self.embed_openai(text).await?,
+            "ollama" => self.embed_ollama(text).await?,
+            _ => {
+                return Err(ProviderError::with_cause(
+                    ErrorKind::Unsupported,
+                    "unsupported embedding provider",
+                ))
+            }
+        })
+    }
+
+    async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, ProviderError> {
+        Ok(match self.config.provider.as_str() {
+            "openai" => self.embed_batch_openai(texts).await?,
+            "ollama" => {
+                // Ollama has no batch embedding endpoint: one by one.
+                let mut results = Vec::new();
+                for text in texts {
+                    results.push(self.embed_ollama(text).await?);
+                }
+                results
+            }
+            _ => {
+                return Err(ProviderError::with_cause(
+                    ErrorKind::Unsupported,
+                    "unsupported embedding provider",
+                ))
+            }
+        })
+    }
 }

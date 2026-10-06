@@ -1,5 +1,6 @@
 use super::provider::*;
 use async_trait::async_trait;
+use crate::gateway::llm::error::ProviderError;
 
 /// llama.cpp server provider.
 ///
@@ -256,7 +257,7 @@ impl LlamaCppProvider {
 
 #[async_trait]
 impl LLMProvider for LlamaCppProvider {
-    async fn chat_stream_events(&self, request: ChatRequest, on_delta: &(dyn Fn(StreamDelta) + Send + Sync)) -> anyhow::Result<ChatResponse> {
+    async fn chat_stream_events(&self, request: ChatRequest, on_delta: &(dyn Fn(StreamDelta) + Send + Sync)) -> Result<ChatResponse, ProviderError> {
         let (mut body, omitted) = self.fit_body(self.request_body(request)).await?;
         if omitted { on_delta(StreamDelta::TemplateOmitted); }
         body["stream"] = serde_json::json!(true);
@@ -265,7 +266,7 @@ impl LLMProvider for LlamaCppProvider {
         stream::receive(response, on_delta).await
     }
 
-    async fn chat(&self, request: ChatRequest) -> anyhow::Result<ChatResponse> {
+    async fn chat(&self, request: ChatRequest) -> Result<ChatResponse, ProviderError> {
         let (body, omitted) = self.fit_body(self.request_body(request)).await?;
         let resp = self.post_body(&body).send().await.map_err(super::error::ProviderError::from_reqwest)?;
         let data = super::http::json(resp).await?;
@@ -305,6 +306,33 @@ impl LLMProvider for LlamaCppProvider {
             finish_reason: choice["finish_reason"].as_str().map(|s| s.to_string()),
             usage: Usage::openai(&data["usage"]),
         })
+    }
+
+    async fn list_models(&self) -> Result<Vec<super::provider::ModelInfo>, ProviderError> {
+        let url = format!("{}/v1/models", self.base_url);
+        let mut req = self.client.get(&url);
+        if let Some(ref key) = self.api_key {
+            if !key.trim().is_empty() {
+                req = req.header("Authorization", format!("Bearer {}", key));
+            }
+        }
+        let resp = req.send().await.map_err(ProviderError::from_reqwest)?;
+        let resp = super::http::checked(resp).await?;
+        let data: serde_json::Value = resp.json().await?;
+        let mut models: Vec<super::provider::ModelInfo> = data["data"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|model| {
+                let id = model["id"].as_str().filter(|id| !id.is_empty())?;
+                Some(super::provider::ModelInfo {
+                    id: id.to_string(),
+                    label: model["id"].as_str().map(str::to_string),
+                })
+            })
+            .collect();
+        models.sort_by(|a, b| a.id.cmp(&b.id));
+        Ok(models)
     }
 
     fn name(&self) -> &str {

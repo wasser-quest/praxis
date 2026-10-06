@@ -1,0 +1,15 @@
+[package]
+name = "praxis-provider-api"
+version = "1.0.3"
+edition = "2021"
+description = "Common Praxis provider interfaces: streaming chat, usage, model listings, embeddings and typed errors"
+
+# Model providers implement these interfaces. Everything policy-shaped —
+# budgets, rate limits, backoff, compaction and fallback — stays host-owned;
+# an adapter reports what happened and never retries on its own.
+[dependencies]
+anyhow = "1"
+async-trait = "0.1"
+reqwest = { version = "0.12.28", default-features = false, features = ["rustls-tls", "json", "stream"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

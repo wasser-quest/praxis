@@ -11,8 +11,17 @@ pub fn routes() -> Router<GatewayState> {
         .route("/v1/context/:user", axum::routing::get(context).delete(delete))
         .route("/v1/context/:user/fork", axum::routing::post(fork))
         .route("/v1/context/exec", axum::routing::post(exec))
+        .route("/v1/models", axum::routing::get(models))
         .route("/v1/providers", axum::routing::get(providers))
         .route("/v1/providers/login", axum::routing::post(login))
+}
+/// Models the selected provider can serve. Listing never selects a provider.
+async fn models(State(s): State<GatewayState>, axum::extract::Query(query): axum::extract::Query<std::collections::HashMap<String, String>>) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let provider = query.get("provider").map(String::as_str);
+    match s.llm.get().list_models(provider).await {
+        Ok(models) => Ok(Json(json!({"provider": provider.unwrap_or(&s.config.use_provider), "models": models}))),
+        Err(error) => Err((StatusCode::BAD_REQUEST, Json(json!({"error": error.to_string()})))),
+    }
 }
 async fn providers(State(s): State<GatewayState>) -> Json<Value> {
     let statuses = super::providers::statuses(&s);

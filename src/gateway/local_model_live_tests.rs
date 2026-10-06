@@ -27,6 +27,8 @@ struct ObservedProvider {
     routing_trace: Option<Arc<state_machine_live_tests::RoutingTrace>>,
 }
 
+use crate::gateway::llm::error::{ErrorKind, ProviderError};
+
 #[async_trait::async_trait]
 impl LLMProvider for ObservedProvider {
     fn name(&self) -> &str {
@@ -35,19 +37,19 @@ impl LLMProvider for ObservedProvider {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
-    async fn chat(&self, request: ChatRequest) -> anyhow::Result<ChatResponse> {
+    async fn chat(&self, request: ChatRequest) -> Result<ChatResponse, ProviderError> {
         self.observe(request, None).await
     }
     async fn chat_stream_events(&self, request: ChatRequest,
         on_delta: &(dyn Fn(crate::gateway::llm::provider::StreamDelta) + Send + Sync),
-    ) -> anyhow::Result<ChatResponse> {
+    ) -> Result<ChatResponse, ProviderError> {
         self.observe(request, Some(on_delta)).await
     }
 }
 impl ObservedProvider {
     async fn observe(&self, request: ChatRequest,
         on_delta: Option<&(dyn Fn(crate::gateway::llm::provider::StreamDelta) + Send + Sync)>,
-    ) -> anyhow::Result<ChatResponse> {
+    ) -> Result<ChatResponse, ProviderError> {
         let n = self.calls.fetch_add(1, Ordering::SeqCst);
         if let Some(trace) = &self.routing_trace {
             trace.drain(n)?;
@@ -111,7 +113,10 @@ impl ObservedProvider {
             };
             if !safe {
                 std::fs::write(prefix.with_extension("guard.json"),serde_json::to_vec_pretty(&json!({"blocked_tool":call.function.name,"arguments":args,"reason":"outside audited fixture policy"}))?)?;
-                anyhow::bail!("Live-test guard blocked tool: {}", call.function.name);
+                return Err(ProviderError::with_cause(
+                    ErrorKind::InvalidRequest,
+                    "live-test guard blocked a tool outside the audited fixture policy",
+                ));
             }
         }
         eprintln!(

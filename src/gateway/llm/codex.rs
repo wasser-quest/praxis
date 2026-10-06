@@ -10,6 +10,7 @@ use super::provider::*;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex, Weak};
+use crate::gateway::llm::error::ProviderError;
 
 #[path = "codex_stream.rs"]
 mod stream;
@@ -310,7 +311,7 @@ impl CodexProvider {
         body
     }
 
-    async fn send(&self, body: &serde_json::Value, on_delta: &(dyn Fn(StreamDelta) + Send + Sync)) -> anyhow::Result<ChatResponse> {
+    async fn send(&self, body: &serde_json::Value, on_delta: &(dyn Fn(StreamDelta) + Send + Sync)) -> Result<ChatResponse, ProviderError> {
         let attempt = self.send_attempt(body, on_delta).await?;
         if attempt.continuation.is_some() {
             return Err(super::error::ProviderError::with_cause(
@@ -321,7 +322,7 @@ impl CodexProvider {
         Ok(attempt.response)
     }
 
-    async fn send_attempt(&self, body: &serde_json::Value, on_delta: &(dyn Fn(StreamDelta) + Send + Sync)) -> anyhow::Result<ChatAttempt> {
+    async fn send_attempt(&self, body: &serde_json::Value, on_delta: &(dyn Fn(StreamDelta) + Send + Sync)) -> Result<ChatAttempt, ProviderError> {
         let mut auth = self.auth();
         if jwt_expired(&auth.access_token) {
             auth = self.refresh(&auth).await?;
@@ -353,17 +354,17 @@ impl CodexProvider {
 
 #[async_trait]
 impl LLMProvider for CodexProvider {
-    async fn chat(&self, request: ChatRequest) -> anyhow::Result<ChatResponse> {
+    async fn chat(&self, request: ChatRequest) -> Result<ChatResponse, ProviderError> {
         self.send(&self.build_body(&request), &|_| {}).await
     }
 
-    async fn chat_stream(&self, request: ChatRequest, on_token: &(dyn Fn(String) + Send + Sync)) -> anyhow::Result<ChatResponse> {
+    async fn chat_stream(&self, request: ChatRequest, on_token: &(dyn Fn(String) + Send + Sync)) -> Result<ChatResponse, ProviderError> {
         self.send(&self.build_body(&request), &|delta| {
             if let StreamDelta::Text { text } = delta { on_token(text); }
         }).await
     }
 
-    async fn chat_stream_events(&self, request: ChatRequest, on_delta: &(dyn Fn(StreamDelta) + Send + Sync)) -> anyhow::Result<ChatResponse> {
+    async fn chat_stream_events(&self, request: ChatRequest, on_delta: &(dyn Fn(StreamDelta) + Send + Sync)) -> Result<ChatResponse, ProviderError> {
         self.send(&self.build_body(&request), on_delta).await
     }
 
@@ -372,7 +373,7 @@ impl LLMProvider for CodexProvider {
         request: ChatRequest,
         continuation: Option<&ProviderContinuation>,
         on_delta: Option<&(dyn Fn(StreamDelta) + Send + Sync)>,
-    ) -> anyhow::Result<ChatAttempt> {
+    ) -> Result<ChatAttempt, ProviderError> {
         let mut body = self.build_body(&request);
         let mut previous = match continuation {
             Some(ProviderContinuation::Codex { input }) => input.clone(),

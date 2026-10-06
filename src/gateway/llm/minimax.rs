@@ -1,6 +1,7 @@
 use super::provider::*;
 use crate::config::ApiMode;
 use async_trait::async_trait;
+use crate::gateway::llm::error::ProviderError;
 
 pub struct MiniMaxProvider {
     api_key: String,
@@ -24,7 +25,7 @@ impl MiniMaxProvider {
 
 #[async_trait]
 impl LLMProvider for MiniMaxProvider {
-    async fn chat(&self, request: ChatRequest) -> anyhow::Result<ChatResponse> {
+    async fn chat(&self, request: ChatRequest) -> Result<ChatResponse, ProviderError> {
         match self.api_mode {
             ApiMode::Anthropic => self.chat_anthropic(request).await,
             ApiMode::OpenAI => self.chat_openai(request).await,
@@ -41,7 +42,7 @@ impl LLMProvider for MiniMaxProvider {
 }
 
 impl MiniMaxProvider {
-    async fn chat_openai(&self, request: ChatRequest) -> anyhow::Result<ChatResponse> {
+    async fn chat_openai(&self, request: ChatRequest) -> Result<ChatResponse, ProviderError> {
         let url = format!("{}/text/chatcompletion_v2", self.base_url);
 
         let mut messages: Vec<serde_json::Value> = Vec::new();
@@ -135,7 +136,7 @@ impl MiniMaxProvider {
         })
     }
 
-    async fn chat_anthropic(&self, request: ChatRequest) -> anyhow::Result<ChatResponse> {
+    async fn chat_anthropic(&self, request: ChatRequest) -> Result<ChatResponse, ProviderError> {
         let url = format!("{}/v1/messages", self.base_url);
 
         let (system_prompt, messages) =

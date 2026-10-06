@@ -1,5 +1,6 @@
 use super::provider::*;
 use async_trait::async_trait;
+use crate::gateway::llm::error::ProviderError;
 
 /// pgpu free router provider. Talks to the OpenAI-compatible endpoint at
 /// `/free/v1/chat/completions` on the pgpu dashboard port. This bypasses the
@@ -26,7 +27,7 @@ impl FreeRouterProvider {
 
 #[async_trait]
 impl LLMProvider for FreeRouterProvider {
-    async fn chat(&self, request: ChatRequest) -> anyhow::Result<ChatResponse> {
+    async fn chat(&self, request: ChatRequest) -> Result<ChatResponse, ProviderError> {
         let mut body = serde_json::json!({
             "model": request.model.as_deref().unwrap_or(&self.model),
             "messages": request.messages,

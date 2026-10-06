@@ -298,6 +298,7 @@ struct ScriptedProvider {
     steps: Mutex<VecDeque<Step>>,
     requests: Arc<Mutex<Vec<ChatRequest>>>,
 }
+
 #[async_trait::async_trait]
 impl LLMProvider for ScriptedProvider {
     fn name(&self) -> &str {
@@ -306,7 +307,7 @@ impl LLMProvider for ScriptedProvider {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
-    async fn chat(&self, request: ChatRequest) -> anyhow::Result<ChatResponse> {
+    async fn chat(&self, request: ChatRequest) -> Result<ChatResponse, ProviderError> {
         self.requests.lock().unwrap().push(request.clone());
         match self
             .steps

@@ -31,7 +31,7 @@ impl OllamaProvider {
         &self,
         request: ChatRequest,
         on_token: impl Fn(String),
-    ) -> anyhow::Result<ChatResponse> {
+    ) -> Result<ChatResponse, ProviderError> {
         let url = format!("{}/api/chat", self.base_url);
         let messages = build_ollama_messages(&request);
         let model = request.model.as_deref().unwrap_or(&self.model);
@@ -102,11 +102,11 @@ impl OllamaProvider {
 
 #[async_trait]
 impl LLMProvider for OllamaProvider {
-    async fn chat_stream(&self, request: ChatRequest, on_token: &(dyn Fn(String) + Send + Sync)) -> anyhow::Result<ChatResponse> {
+    async fn chat_stream(&self, request: ChatRequest, on_token: &(dyn Fn(String) + Send + Sync)) -> Result<ChatResponse, ProviderError> {
         self.chat_streaming(request, on_token).await
     }
 
-    async fn chat(&self, request: ChatRequest) -> anyhow::Result<ChatResponse> {
+    async fn chat(&self, request: ChatRequest) -> Result<ChatResponse, ProviderError> {
         let url = format!("{}/api/chat", self.base_url);
 
         let messages = build_ollama_messages(&request);
@@ -137,6 +137,33 @@ impl LLMProvider for OllamaProvider {
         let resp = req.send().await.map_err(ProviderError::from_reqwest)?;
         let data = super::http::json(resp).await?;
         parse_ollama_response(&data)
+    }
+
+    async fn list_models(&self) -> Result<Vec<super::provider::ModelInfo>, ProviderError> {
+        let url = format!("{}/api/tags", self.base_url);
+        let mut req = self.client.get(&url);
+        if let Some(ref key) = self.api_key {
+            if !key.is_empty() {
+                req = req.header("Authorization", format!("Bearer {}", key));
+            }
+        }
+        let resp = req.send().await.map_err(ProviderError::from_reqwest)?;
+        let resp = super::http::checked(resp).await?;
+        let data: serde_json::Value = resp.json().await?;
+        let mut models: Vec<super::provider::ModelInfo> = data["models"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|model| {
+                let id = model["name"].as_str().filter(|id| !id.is_empty())?;
+                Some(super::provider::ModelInfo {
+                    id: id.to_string(),
+                    label: Some(id.to_string()),
+                })
+            })
+            .collect();
+        models.sort_by(|a, b| a.id.cmp(&b.id));
+        Ok(models)
     }
 
     fn name(&self) -> &str {
@@ -320,7 +347,7 @@ impl OllamaStreamState {
     }
 }
 
-fn parse_ollama_response(data: &serde_json::Value) -> anyhow::Result<ChatResponse> {
+fn parse_ollama_response(data: &serde_json::Value) -> Result<ChatResponse, ProviderError> {
     let message = &data["message"];
     let content = message["content"].as_str().map(|s| s.to_string());
     let tool_calls = parse_tool_calls_from_message(message);

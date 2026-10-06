@@ -145,6 +145,7 @@ pub async fn chat(
 
 #[cfg(test)]
 mod tests {
+    use crate::gateway::llm::error::ProviderError;
     use super::*;
     #[test]
     fn execution_telemetry_uses_real_compaction_threshold_and_requires_older_turns() {
@@ -181,14 +182,14 @@ mod tests {
     struct TracedProvider;
     #[async_trait::async_trait]
     impl super::super::llm::provider::LLMProvider for TracedProvider {
-        async fn chat(&self, _: ChatRequest) -> anyhow::Result<ChatResponse> {
+        async fn chat(&self, _: ChatRequest) -> Result<ChatResponse, ProviderError> {
             unreachable!("trace fixture uses streaming")
         }
         async fn chat_stream(
             &self,
             request: ChatRequest,
             delta: &(dyn Fn(String) + Send + Sync),
-        ) -> anyhow::Result<ChatResponse> {
+        ) -> Result<ChatResponse, ProviderError> {
             assert_eq!(
                 request.messages[0].content.as_deref(),
                 Some("Actual system instructions")
@@ -270,7 +271,7 @@ mod tests {
     struct CutoffProvider(std::sync::atomic::AtomicUsize);
     #[async_trait::async_trait]
     impl super::super::llm::provider::LLMProvider for CutoffProvider {
-        async fn chat(&self, request: ChatRequest) -> anyhow::Result<ChatResponse> {
+        async fn chat(&self, request: ChatRequest) -> Result<ChatResponse, ProviderError> {
             let first = self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed) == 0;
             assert_eq!(request.max_tokens, Some(if first { 16 } else { 32 }));
             Ok(ChatResponse {

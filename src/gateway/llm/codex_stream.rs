@@ -339,7 +339,7 @@ fn output_index(value: &Value) -> Result<usize, ProviderError> {
 pub(super) async fn receive(
     mut response: reqwest::Response,
     on_delta: &(dyn Fn(StreamDelta) + Send + Sync),
-) -> anyhow::Result<ChatAttempt> {
+) -> Result<ChatAttempt, ProviderError> {
     let headers = response.headers().clone();
     let status = response.status().as_u16();
     let mut acc = Accumulator::default();

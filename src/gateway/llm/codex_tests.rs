@@ -94,7 +94,7 @@ async fn codex_requires_terminal_success_and_valid_json() {
         let server = MockServer::start().await;
         stream(&server, text).await;
         let err = provider(&server).chat(request()).await.expect_err("must not return an incomplete answer or tool call");
-        assert_eq!(ProviderError::from_anyhow(&err).kind, kind);
+        assert_eq!(err.kind, kind);
     }
 }
 
@@ -118,7 +118,7 @@ async fn codex_completed_tools_must_have_valid_arguments_names_and_unique_ids() 
             "response":{"status":"completed", "output":output}});
         stream(&server, &format!("data: {event}\n\n")).await;
         let error = provider(&server).chat(request()).await.expect_err("invalid calls must never become executable");
-        assert_eq!(ProviderError::from_anyhow(&error).kind, ErrorKind::InvalidResponse);
+        assert_eq!(error.kind, ErrorKind::InvalidResponse);
     }
 }
 
@@ -249,7 +249,7 @@ async fn codex_refresh_rejection_requires_fresh_login_without_echoing_secrets() 
             .set_body_json(serde_json::json!({"error":{"message":"PRIVATE TOKEN", "code":"invalid_grant"}})))
             .expect(1).mount(&server).await;
         let error = provider(&server).chat(request()).await.unwrap_err();
-        let typed = ProviderError::from_anyhow(&error);
+        let typed = &error;
         assert_eq!(typed.kind, ErrorKind::Authentication);
         assert!(typed.cause.unwrap().contains("/login codex --device-auth"));
         assert!(!format!("{error:?}").contains("PRIVATE"));
@@ -262,7 +262,7 @@ async fn codex_stream_errors_are_typed_and_do_not_echo_server_messages() {
     stream(&server, "data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"code\":\"rate_limit_exceeded\",\"message\":\"SECRET PROMPT\"}}}\n\n").await;
     let err = provider(&server).chat(request()).await.unwrap_err();
     assert_eq!(
-        ProviderError::from_anyhow(&err).kind,
+        err.kind,
         ErrorKind::RateLimited
     );
     assert!(!format!("{err:?}").contains("SECRET"));
@@ -281,7 +281,7 @@ async fn codex_rate_limit_reset_headers_reach_router() {
         )
         .mount(&server)
         .await;
-    let err = ProviderError::from_anyhow(&provider(&server).chat(request()).await.unwrap_err());
+    let err = provider(&server).chat(request()).await.unwrap_err();
     assert_eq!(err.kind, ErrorKind::RateLimited);
     assert_eq!(err.retry_after, Some(std::time::Duration::from_secs(42)));
 }

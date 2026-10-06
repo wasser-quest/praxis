@@ -23,7 +23,7 @@ impl LLMProvider for ToolProvider {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
-    async fn chat(&self, request: ChatRequest) -> anyhow::Result<ChatResponse> {
+    async fn chat(&self, request: ChatRequest) -> Result<ChatResponse, ProviderError> {
         assert_eq!(request.max_tokens, Some(12_345), "configured output allowance lost");
         let turn = self.calls.fetch_add(1, Ordering::SeqCst);
         if turn > 0 {

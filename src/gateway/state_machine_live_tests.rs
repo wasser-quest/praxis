@@ -296,7 +296,7 @@ async fn state_experiment_offline_router_uses_confirmed_file_evidence() -> anyho
         fn as_any(&self) -> &dyn std::any::Any {
             self
         }
-        async fn chat(&self, _: ChatRequest) -> anyhow::Result<ChatResponse> {
+        async fn chat(&self, _: ChatRequest) -> Result<ChatResponse, ProviderError> {
             let first = self.calls.fetch_add(1, Ordering::SeqCst) == 0;
             Ok(ChatResponse {
                 reasoning_content: None,

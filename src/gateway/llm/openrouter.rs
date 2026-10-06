@@ -1,5 +1,6 @@
 use super::provider::*;
 use async_trait::async_trait;
+use crate::gateway::llm::error::ProviderError;
 
 pub struct OpenRouterProvider {
     api_key: String,
@@ -21,7 +22,7 @@ impl OpenRouterProvider {
 
 #[async_trait]
 impl LLMProvider for OpenRouterProvider {
-    async fn chat(&self, request: ChatRequest) -> anyhow::Result<ChatResponse> {
+    async fn chat(&self, request: ChatRequest) -> Result<ChatResponse, ProviderError> {
         let url = format!("{}/chat/completions", self.base_url);
 
         let model = request.model.as_deref().unwrap_or(&self.model);

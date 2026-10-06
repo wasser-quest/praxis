@@ -45,7 +45,7 @@ impl Scripted {
         request: ChatRequest,
         stream: bool,
         token: &(dyn Fn(String) + Send + Sync),
-    ) -> anyhow::Result<ChatResponse> {
+    ) -> Result<ChatResponse, ProviderError> {
         self.calls
             .lock()
             .unwrap()
@@ -85,14 +85,14 @@ impl LLMProvider for Scripted {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
-    async fn chat(&self, request: ChatRequest) -> anyhow::Result<ChatResponse> {
+    async fn chat(&self, request: ChatRequest) -> Result<ChatResponse, ProviderError> {
         self.run(request, false, &|_| {}).await
     }
     async fn chat_stream(
         &self,
         request: ChatRequest,
         token: &(dyn Fn(String) + Send + Sync),
-    ) -> anyhow::Result<ChatResponse> {
+    ) -> Result<ChatResponse, ProviderError> {
         self.run(request, true, token).await
     }
 }
@@ -695,8 +695,8 @@ async fn usage_metrics_continuation_must_not_present_partial_sum_as_complete() {
     impl LLMProvider for Continued {
         fn name(&self) -> &str { "usage-fixture" }
         fn as_any(&self) -> &dyn std::any::Any { self }
-        async fn chat(&self, _: ChatRequest) -> anyhow::Result<ChatResponse> { unreachable!() }
-        async fn chat_attempt(&self, _: ChatRequest, _: Option<&ProviderContinuation>, _: Option<&(dyn Fn(StreamDelta)+Send+Sync)>) -> anyhow::Result<ChatAttempt> {
+        async fn chat(&self, _: ChatRequest) -> Result<ChatResponse, ProviderError> { unreachable!() }
+        async fn chat_attempt(&self, _: ChatRequest, _: Option<&ProviderContinuation>, _: Option<&(dyn Fn(StreamDelta)+Send+Sync)>) -> Result<ChatAttempt, ProviderError> {
             let index = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             let first = index + 1 < self.samples.len();
             let mut response = reply();

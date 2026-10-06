@@ -20,6 +20,7 @@ struct TestProvider {
     calls: Arc<AtomicUsize>,
     started: Arc<tokio::sync::Notify>,
 }
+
 #[async_trait::async_trait]
 impl LLMProvider for TestProvider {
     fn name(&self) -> &str {
@@ -28,7 +29,7 @@ impl LLMProvider for TestProvider {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
-    async fn chat(&self, _: ChatRequest) -> anyhow::Result<ChatResponse> {
+    async fn chat(&self, _: ChatRequest) -> Result<ChatResponse, ProviderError> {
         let attempt = self.calls.fetch_add(1, Ordering::SeqCst);
         self.started.notify_one();
         if self.wait {

@@ -1,5 +1,6 @@
 use super::provider::*;
 use async_trait::async_trait;
+use crate::gateway::llm::error::ProviderError;
 
 pub struct OpenAIProvider {
     api_key: String,
@@ -21,7 +22,7 @@ impl OpenAIProvider {
 
 #[async_trait]
 impl LLMProvider for OpenAIProvider {
-    async fn chat(&self, request: ChatRequest) -> anyhow::Result<ChatResponse> {
+    async fn chat(&self, request: ChatRequest) -> Result<ChatResponse, ProviderError> {
         let url = format!("{}/chat/completions", self.base_url);
 
         let model = request.model.as_deref().unwrap_or(&self.model);
@@ -127,6 +128,31 @@ impl LLMProvider for OpenAIProvider {
             finish_reason: choice["finish_reason"].as_str().map(|s| s.to_string()),
             usage: Usage::openai(&data["usage"]),
         })
+    }
+
+    async fn list_models(&self) -> Result<Vec<super::provider::ModelInfo>, ProviderError> {
+        let url = format!("{}/v1/models", self.base_url);
+        let mut req = self.client.get(&url);
+        if !self.api_key.trim().is_empty() {
+            req = req.header("Authorization", format!("Bearer {}", self.api_key));
+        }
+        let resp = req.send().await.map_err(ProviderError::from_reqwest)?;
+        let resp = super::http::checked(resp).await?;
+        let data: serde_json::Value = resp.json().await?;
+        let mut models: Vec<super::provider::ModelInfo> = data["data"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|model| {
+                let id = model["id"].as_str().filter(|id| !id.is_empty())?;
+                Some(super::provider::ModelInfo {
+                    id: id.to_string(),
+                    label: model["id"].as_str().map(str::to_string),
+                })
+            })
+            .collect();
+        models.sort_by(|a, b| a.id.cmp(&b.id));
+        Ok(models)
     }
 
     fn name(&self) -> &str {

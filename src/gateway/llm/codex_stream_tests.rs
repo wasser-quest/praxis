@@ -2,6 +2,7 @@ use super::*;
 use serde_json::json;
 use std::sync::Mutex;
 use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
+use crate::gateway::llm::error::ProviderError;
 
 fn event(value: Value) -> crate::sse::Event {
     crate::sse::Event {
@@ -259,7 +260,7 @@ async fn codex_done_item_fallback_validates_the_entire_tool_batch() {
             completed(json!([])),
         ]), "text/event-stream").await;
         let error = receive(response, &|_| {}).await.unwrap_err();
-        assert_eq!(error.downcast_ref::<ProviderError>().unwrap().kind, ErrorKind::InvalidResponse);
+        assert_eq!(error.kind, ErrorKind::InvalidResponse);
         assert!(error.to_string().contains(diagnostic), "{error}");
         assert!(error.to_string().contains("req_test-123"));
         assert!(!format!("{error:?}").contains("SECRET"));
@@ -287,7 +288,7 @@ async fn codex_stream_failures_keep_exhausted_rate_windows_and_diagnostics() {
         .await;
     let response = http::client().get(server.uri()).send().await.unwrap();
     let error = receive(response, &|_| {}).await.unwrap_err();
-    let error = error.downcast_ref::<ProviderError>().unwrap();
+    let error = &error;
     assert_eq!(error.kind, ErrorKind::RateLimited);
     assert_eq!(error.retry_after, Some(std::time::Duration::from_secs(90)));
     assert_eq!(error.request_id.as_deref(), Some("req_rate-window"));
@@ -424,7 +425,7 @@ async fn codex_eof_never_commits_partial_text_or_tools_and_retains_request_id() 
     ] {
         let (_server, response) = serve(wire(&values), "text/event-stream").await;
         let error = receive(response, &|_| {}).await.unwrap_err();
-        let error = error.downcast_ref::<ProviderError>().unwrap();
+        let error = &error;
         assert_eq!(error.kind, ErrorKind::Interrupted);
         assert_eq!(error.request_id.as_deref(), Some("req_test-123"));
         assert!(error.to_string().contains("before response.completed"));

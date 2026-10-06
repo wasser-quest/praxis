@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use praxis_provider_api::EmbeddingProvider as _;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VectorChunk {

@@ -1,5 +1,6 @@
 use super::{provider::*, LLMRouter};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use crate::gateway::llm::error::ProviderError;
 
 struct ToolLoopProvider {
     turn: AtomicUsize,
@@ -14,7 +15,7 @@ impl LLMProvider for ToolLoopProvider {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
-    async fn chat(&self, _: ChatRequest) -> anyhow::Result<ChatResponse> {
+    async fn chat(&self, _: ChatRequest) -> Result<ChatResponse, ProviderError> {
         let first = self.turn.fetch_add(1, Ordering::SeqCst) == 0;
         Ok(ChatResponse {
     reasoning_content: None,

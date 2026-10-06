@@ -58,6 +58,25 @@ impl LLMRouter {
         Ok(())
     }
 
+    /// Models a configured provider can serve — the common provider interface
+    /// (`praxis-provider-api`). Policy stays here: a listing never enables,
+    /// disables or selects a provider for inference.
+    pub async fn list_models(
+        &self,
+        provider: Option<&str>,
+    ) -> Result<Vec<super::provider::ModelInfo>, super::error::ProviderError> {
+        use super::error::{ErrorKind, ProviderError};
+        let name = provider.unwrap_or(self.default_provider.as_str());
+        self.providers
+            .iter()
+            .find(|candidate| candidate.name() == name)
+            .ok_or_else(|| {
+                ProviderError::with_cause(ErrorKind::Configuration, "provider is not configured")
+            })?
+            .list_models()
+            .await
+    }
+
     /// Configured first-attempt bound for application task requests, including
     /// every tool continuation. Explicit low-level requests/summaries keep their
     /// own max_tokens; retries still obey the separate growth ceiling.
@@ -306,7 +325,7 @@ impl LLMRouter {
                             validate_response(attempt.response).map(|response| ChatAttempt { response, continuation: None })
                         }
                     },
-                    Ok(Err(error)) => Err(ProviderError::from_anyhow(&error)),
+                    Ok(Err(error)) => Err(error),
                     Err(mut error) => {
                         if error.kind == ErrorKind::Deadline && attempt_deadline < deadline {
                             error.kind = ErrorKind::Timeout;

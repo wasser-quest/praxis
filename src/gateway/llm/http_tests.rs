@@ -1,4 +1,5 @@
 //! Real local HTTP contracts for the actual adapters, not just mock traits.
+use praxis_provider_api::EmbeddingProvider as _;
 use super::{provider::*, resilience::ResilienceConfig, LLMRouter};
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
@@ -697,4 +698,37 @@ async fn usage_metrics_failed_retry_is_not_added_to_validated_reply() {
             serde_json::json!({"prompt_tokens":7,"completion_tokens":5,"total_tokens":12}));
         crate::runtime::events::remove("usage-retry-fixture");
     }
+}
+
+#[tokio::test]
+async fn model_listing_uses_the_common_provider_interface() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/tags"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "models": [{"name": "qwen3:8b"}, {"name": "nomic-embed-text"}]
+        })))
+        .mount(&server)
+        .await;
+    let provider = super::ollama::OllamaProvider::new(server.uri(), "qwen3:8b".into(), None);
+    let models = praxis_provider_api::ChatProvider::list_models(&provider)
+        .await
+        .unwrap();
+    assert_eq!(
+        models.iter().map(|model| model.id.as_str()).collect::<Vec<_>>(),
+        ["nomic-embed-text", "qwen3:8b"]
+    );
+    assert_eq!(models[1].label.as_deref(), Some("qwen3:8b"));
+
+    // A provider that cannot enumerate says so instead of inventing an empty
+    // catalog.
+    let unsupported = super::openrouter::OpenRouterProvider::new(
+        "sk-test".into(),
+        "openrouter/auto".into(),
+        "https://openrouter.invalid".into(),
+    );
+    let error = praxis_provider_api::ChatProvider::list_models(&unsupported)
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind, praxis_provider_api::ErrorKind::Unsupported);
 }

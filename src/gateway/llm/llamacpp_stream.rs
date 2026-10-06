@@ -49,7 +49,7 @@ impl Accumulator {
         if self.bytes > 8 * 1024 * 1024 { return Err(ProviderError::new(ErrorKind::OutputLimit).into()); }
         Ok(())
     }
-    fn finish(self) -> anyhow::Result<ChatResponse> {
+    fn finish(self) -> Result<ChatResponse, ProviderError> {
         if self.finish.is_none() { return Err(ProviderError::new(ErrorKind::Interrupted).into()); }
         Ok(ChatResponse {
             content: (!self.content.is_empty()).then_some(self.content),
@@ -60,7 +60,7 @@ impl Accumulator {
     }
 }
 
-pub(super) async fn receive(response: reqwest::Response, on_delta: &(dyn Fn(StreamDelta) + Send + Sync)) -> anyhow::Result<ChatResponse> {
+pub(super) async fn receive(response: reqwest::Response, on_delta: &(dyn Fn(StreamDelta) + Send + Sync)) -> Result<ChatResponse, ProviderError> {
     let mut response = http::checked(response).await?;
     let mut decoder = crate::sse::Decoder::default();
     let mut acc = Accumulator::default();

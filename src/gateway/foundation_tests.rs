@@ -348,7 +348,7 @@ impl llm::provider::LLMProvider for ReadyProvider {
     async fn chat(
         &self,
         _: llm::provider::ChatRequest,
-    ) -> anyhow::Result<llm::provider::ChatResponse> {
+    ) -> Result<llm::provider::ChatResponse, llm::error::ProviderError> {
         self.0.fetch_add(1, Ordering::SeqCst);
         Ok(llm::provider::ChatResponse {
             content: Some("hello".into()),

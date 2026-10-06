@@ -1,5 +1,6 @@
 use super::provider::*;
 use async_trait::async_trait;
+use crate::gateway::llm::error::ProviderError;
 
 pub struct AnthropicProvider {
     api_key: String,
@@ -21,7 +22,7 @@ impl AnthropicProvider {
 
 #[async_trait]
 impl LLMProvider for AnthropicProvider {
-    async fn chat(&self, request: ChatRequest) -> anyhow::Result<ChatResponse> {
+    async fn chat(&self, request: ChatRequest) -> Result<ChatResponse, ProviderError> {
         let url = format!("{}/v1/messages", self.base_url);
 
         let (system_prompt, messages) = build_anthropic_messages(&request.messages);
@@ -236,7 +237,7 @@ pub fn build_anthropic_tools(tools: &[ToolDefinition]) -> Vec<serde_json::Value>
         .collect()
 }
 
-pub fn parse_anthropic_response(data: &serde_json::Value) -> anyhow::Result<ChatResponse> {
+pub fn parse_anthropic_response(data: &serde_json::Value) -> Result<ChatResponse, ProviderError> {
     let mut text_content = String::new();
     let mut tool_calls: Vec<ToolCall> = Vec::new();
 
