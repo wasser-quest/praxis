@@ -1,0 +1,41 @@
+{
+  "name": "minimax_image",
+  "description": "Generate and analyze images through the MiniMax image and vision APIs",
+  "version": "1.0.0",
+  "enabled": true,
+  "context": {"minimax_image_model": "", "minimax_vision_model": ""},
+  "secrets": ["minimax_api_key"],
+  "tools": [
+    {
+      "name": "minimax_image_generate",
+      "description": "Generate an image from a text prompt through MiniMax only when the user requests image generation. Paid call: no automatic retries or provider fallback. Returns a saved image path and dashboard download URL (or the provider URL when the model returns one), never base64.",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "prompt": {"type": "string", "minLength": 1, "maxLength": 12000, "description": "Description of the requested image, composition, style, text and constraints"},
+          "model": {"type": "string", "minLength": 1, "maxLength": 256, "description": "MiniMax image model id. Overrides context/environment default (image-01)."},
+          "width": {"type": "integer", "minimum": 128, "maximum": 4096, "default": 1024, "description": "Image width in pixels"},
+          "height": {"type": "integer", "minimum": 128, "maximum": 4096, "default": 1024, "description": "Image height in pixels"}
+        },
+        "required": ["prompt"]
+      },
+      "handler": {"type": "script", "path": "image_generate.py", "interpreter": "python3"}
+    },
+    {
+      "name": "minimax_image_analyze",
+      "description": "Describe or answer a question about an image through MiniMax vision. Accepts an HTTPS URL or a base64 data URI; local paths are not supported. Never invents analysis for unreadable images.",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "image_url": {"type": "string", "minLength": 1, "maxLength": 4000000, "description": "HTTPS image URL or data:image/...;base64 data URI"},
+          "question": {"type": "string", "minLength": 1, "maxLength": 4000, "default": "Describe this image in detail", "description": "What to analyze about the image"},
+          "model": {"type": "string", "minLength": 1, "maxLength": 256, "description": "MiniMax vision model id. Overrides context/environment default (MiniMax-VL-01)."}
+        },
+        "required": ["image_url"]
+      },
+      "handler": {"type": "script", "path": "image_analyze.py", "interpreter": "python3"}
+    }
+  ]
+}

@@ -692,6 +692,7 @@ Plugin manifest (`plugin.json`):
 
 - `plugins/elevenlabs_tts/`: `elevenlabs_tts` generates downloadable MP3 speech.
 - `plugins/openrouter_image/`: `openrouter_image_generate` generates PNG/JPEG/WebP via OpenRouter's dedicated Image API.
+- `plugins/minimax_image/`: `minimax_image_generate` and `minimax_image_analyze` generate and analyze images via the MiniMax image and vision APIs.
 
 Both are standalone Python 3 plugins with encrypted-secret/environment support and local file output. They make paid API calls only when invoked, without automatic retries. See [setup, parameters and offline tests](docs/MEDIA_PLUGINS.md).
 

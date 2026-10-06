@@ -5,7 +5,6 @@ mod source_contract_tests;
 pub mod contracts;
 pub mod lifecycle;
 pub mod migrations;
-pub mod minimax_image;
 pub mod trust;
 mod executable;
 
@@ -902,7 +901,11 @@ impl PluginRegistry {
             PluginHandler::Verification(_) | PluginHandler::SourceEdit(_) => {
                 anyhow::bail!("Native verification requires an action contract")
             }
-            PluginHandler::Builtin { name } => minimax_image::execute_builtin(name, args).await,
+            // `builtin` handlers are host-owned operations; without a
+            // host-issued call context they fail closed.
+            PluginHandler::Builtin { name } => {
+                anyhow::bail!("Builtin handler '{name}' requires a host-issued call context")
+            }
             PluginHandler::Http { url, method } => execute_http_tool(url, method, args).await,
             PluginHandler::Script { path, interpreter } => {
                 let scoped: HashMap<String, String> = plugin.secrets.iter().filter_map(|key| {

@@ -112,28 +112,31 @@ async fn media_plugin_registry_delivers_only_the_selected_plugins_declared_secre
 #[test]
 fn media_plugin_manifests_register_unique_tools_and_context_defaults() {
     let registry = load_all_plugins(&Path::new(env!("CARGO_MANIFEST_DIR")).join("plugins"));
-    for (plugin, tool) in [
-        ("elevenlabs_tts", "elevenlabs_tts"),
-        ("openrouter_image", "openrouter_image_generate"),
+    for (plugin_name, tools) in [
+        ("elevenlabs_tts", vec!["elevenlabs_tts"]),
+        ("openrouter_image", vec!["openrouter_image_generate"]),
+        ("minimax_image", vec!["minimax_image_generate", "minimax_image_analyze"]),
     ] {
-        let plugin = registry.get(plugin).expect("shipped plugin must load");
+        let plugin = registry.get(plugin_name).expect("shipped plugin must load");
         assert!(plugin.enabled);
-        assert_eq!(plugin.tools.len(), 1);
-        assert_eq!(plugin.tools[0].name, tool);
-        assert_eq!(
-            registry
-                .tool_definitions()
-                .iter()
-                .filter(|t| t.function.name == tool)
-                .count(),
-            1
-        );
-        match &plugin.tools[0].handler {
-            PluginHandler::Script { path, interpreter } => {
-                assert!(Path::new(path).is_file());
-                assert_eq!(interpreter, "python3");
+        assert_eq!(plugin.tools.len(), tools.len());
+        for (tool, name) in plugin.tools.iter().zip(&tools) {
+            assert_eq!(tool.name, *name);
+            assert_eq!(
+                registry
+                    .tool_definitions()
+                    .iter()
+                    .filter(|t| t.function.name == *name)
+                    .count(),
+                1
+            );
+            match &tool.handler {
+                PluginHandler::Script { path, interpreter } => {
+                    assert!(Path::new(path).is_file());
+                    assert_eq!(interpreter, "python3");
+                }
+                _ => panic!("media plugins must be installable standalone scripts"),
             }
-            _ => panic!("media plugins must be installable standalone scripts"),
         }
     }
     assert!(registry
@@ -142,4 +145,7 @@ fn media_plugin_manifests_register_unique_tools_and_context_defaults() {
     assert!(registry
         .context_defaults()
         .contains_key("openrouter_image_model"));
+    assert!(registry
+        .context_defaults()
+        .contains_key("minimax_image_model"));
 }

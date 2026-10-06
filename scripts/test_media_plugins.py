@@ -28,6 +28,15 @@ MP3 = b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"synthetic-audio"
 PLUGINS = {
     "elevenlabs_tts": ("elevenlabs_api_key", "ELEVENLABS_API_BASE", {"text": "Grüße 日本語", "voice_id": "test-voice"}),
     "openrouter_image": ("openrouter_api_key", "OPENROUTER_IMAGE_API_BASE", {"prompt": "A red panda"}),
+    "minimax_image": ("minimax_api_key", "MINIMAX_BASE_URL", {"prompt": "A red panda"}),
+}
+
+# Entry scripts and timeout settings the generic contracts exercise per plugin.
+SCRIPTS = {"minimax_image": "image_generate.py"}
+TIMEOUTS = {
+    "elevenlabs_tts": "ELEVENLABS_TTS_TIMEOUT_SECONDS",
+    "openrouter_image": "OPENROUTER_IMAGE_TIMEOUT_SECONDS",
+    "minimax_image": "MINIMAX_TIMEOUT_SECONDS",
 }
 
 
@@ -90,7 +99,7 @@ class MediaPlugins(unittest.TestCase):
                "PLUGIN_ARGS": json.dumps(defaults if args is None else args), "PLUGIN_CONTEXT": json.dumps(context or {}),
                "PLUGIN_SECRETS": json.dumps({key: SECRET} if secrets is None else secrets), "DATA_DIR": str(self.root), base_env: url}
         env.update(extra or {})
-        result = subprocess.run([sys.executable, str(script or ROOT / "plugins" / name / "generate.py")],
+        result = subprocess.run([sys.executable, str(script or ROOT / "plugins" / name / SCRIPTS.get(name, "generate.py"))],
                                 env=env, cwd=self.root, capture_output=True, text=True, timeout=8)
         self.assertNotIn(SECRET, result.stdout + result.stderr)
         self.assertNotIn(PRIVATE, result.stdout + result.stderr)
@@ -128,6 +137,8 @@ class MediaPlugins(unittest.TestCase):
                 self.assertNotIn("api_key", tool["parameters"]["properties"])
         self.assertEqual((ROOT / "plugins/elevenlabs_tts/media_common.py").read_bytes(),
                          (ROOT / "plugins/openrouter_image/media_common.py").read_bytes())
+        self.assertEqual((ROOT / "plugins/elevenlabs_tts/media_common.py").read_bytes(),
+                         (ROOT / "plugins/minimax_image/media_common.py").read_bytes())
 
     def test_elevenlabs_contract_unicode_voice_settings_and_unique_mp3(self):
         args = {"text": "Grüße 日本語", "voice_id": "test-voice", "model_id": "eleven_flash_v2_5",
@@ -238,7 +249,7 @@ class MediaPlugins(unittest.TestCase):
 
     def test_total_timeout_and_connection_failure(self):
         for name in PLUGINS:
-            key = "ELEVENLABS_TTS_TIMEOUT_SECONDS" if name == "elevenlabs_tts" else "OPENROUTER_IMAGE_TIMEOUT_SECONDS"
+            key = TIMEOUTS[name]
             with mock_api(delay=0.7) as (url, calls):
                 self.assert_failure(self.run_plugin(name, url, extra={key: "0.1"}), "timeout")
                 self.assertEqual(len(calls), 1)
@@ -314,7 +325,57 @@ class MediaPlugins(unittest.TestCase):
             shutil.copytree(ROOT / "plugins" / name, installed)
             data = MP3 if name == "elevenlabs_tts" else image_response((PNG, "image/png"))
             with mock_api(body=data) as (url, _):
-                self.assertEqual(self.run_plugin(name, url, script=installed / "generate.py")[0], 0)
+                self.assertEqual(self.run_plugin(name, url, script=installed / SCRIPTS.get(name, "generate.py"))[0], 0)
+
+
+    def test_minimax_image_generate_saves_bytes_and_reports_provider_urls(self):
+        png = b"\x89PNG\r\n\x1a\n" + b"payload"
+        script = ROOT / "plugins/minimax_image/image_generate.py"
+        with mock_api(body=json.dumps({"data": [{"b64_json": base64.b64encode(png).decode()}]}).encode()) as (url, calls):
+            status, output = self.run_plugin("minimax_image", url, script=script)
+        self.assertEqual(status, 0)
+        self.assertEqual(output["provider"], "minimax")
+        self.assertEqual(output["model"], "image-01")
+        self.assert_file(output["images"][0], png, ".png")
+        self.assertEqual(calls[0][0], "/v1/text/image")
+        self.assertEqual(calls[0][2]["width"], 1024)
+        self.assertEqual(calls[0][2]["height"], 1024)
+
+        # A provider URL is reported, never fetched or saved.
+        saved = set(self.root.rglob("*"))
+        with mock_api(body=json.dumps({"data": [{"url": "https://cdn.example/x.png"}]}).encode()) as (url, calls):
+            status, output = self.run_plugin("minimax_image", url, script=script)
+        self.assertEqual(status, 0)
+        self.assertEqual(output["image_url"], "https://cdn.example/x.png")
+        self.assertEqual(set(self.root.rglob("*")), saved)
+
+    def test_minimax_image_analyze_returns_analysis_and_rejects_local_paths(self):
+        script = ROOT / "plugins/minimax_image/image_analyze.py"
+        with mock_api(body=json.dumps({"choices": [{"message": {"content": "A red panda"}}]}).encode()) as (url, calls):
+            status, output = self.run_plugin(
+                "minimax_image", url,
+                args={"image_url": "https://example.invalid/a.png"}, script=script)
+        self.assertEqual(status, 0)
+        self.assertEqual(output["analysis"], "A red panda")
+        self.assertEqual(calls[0][0], "/v1/text/chatcompletion_v2")
+        self.assertEqual(calls[0][2]["model"], "MiniMax-VL-01")
+
+        status, output = self.run_plugin(
+            "minimax_image", "http://127.0.0.1:1",
+            args={"image_url": "/etc/passwd"}, script=script)
+        self.assert_failure((status, output), "invalid_arguments")
+
+        status, output = self.run_plugin(
+            "minimax_image", "http://127.0.0.1:1",
+            secrets={}, args={"image_url": "https://example.invalid/a.png"}, script=script)
+        self.assert_failure((status, output), "configuration")
+
+    def test_minimax_image_reports_provider_errors_without_retry(self):
+        script = ROOT / "plugins/minimax_image/image_generate.py"
+        with mock_api(body=json.dumps({"error": {"message": "quota"}}).encode()) as (url, _):
+            status, output = self.run_plugin("minimax_image", url, script=script)
+        self.assert_failure((status, output), "provider_error")
+        self.assertFalse(output["retry_safe"])
 
 
 if __name__ == "__main__":

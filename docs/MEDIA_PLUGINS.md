@@ -6,6 +6,7 @@ Zwei unabhängig installierbare Praxis-Ordner-Plugins, ohne zusätzliche Python-
 |---|---|---|
 | `plugins/elevenlabs_tts/` | `elevenlabs_tts` | MP3 (`mp3_44100_128`) |
 | `plugins/openrouter_image/` | `openrouter_image_generate` | PNG, JPEG oder WebP |
+| `plugins/minimax_image/` | `minimax_image_generate`, `minimax_image_analyze` | gespeichertes PNG/JPEG/WebP bzw. Bildanalyse (MiniMax, siehe [README](../plugins/minimax_image/README.md)) |
 
 ## Installation und Schlüssel
 
@@ -20,6 +21,7 @@ Aus dem Arbeitsverzeichnis der gewünschten Installation, nicht aus einem bereit
 Alternativ die jeweiligen **vollständigen Ordner** nach `$PLUGINS_DIR` (Standard `./plugins`) kopieren. `generate.py` und `media_common.py` müssen zusammenbleiben. Die Plugins sind laut Manifest aktiviert; `enabled: false` deaktiviert ihre Tools. Der Gateway lädt Plugins beim Start: Nach Installation/Änderung ist ein kontrollierter Neustart nötig. `repair-assets` installiert diese optionalen Plugins nicht automatisch.
 
 - ElevenLabs: `elevenlabs_api_key` im Secret-Speicher; alternativ `ELEVENLABS_API_KEY` in der Service-Umgebung.
+- MiniMax: `minimax_api_key` im Secret-Speicher; alternativ `MINIMAX_API_KEY`.
 - OpenRouter: `openrouter_api_key` im Secret-Speicher; alternativ `OPENROUTER_API_KEY`.
 - Das aktualisierte Gateway verwendet vorhandene native Schlüssel dieser Namen. Explizite **Custom Secrets** gleichen Namens haben Vorrang; leere Werte und `CHANGE_ME` überdecken keine vorhandenen nativen Schlüssel. Im Dashboard können die Schlüssel auch als Custom Secret angelegt werden. Änderungen ohne Master-Passwort bleiben nur im Speicher; zum dauerhaften Speichern die vorhandene verschlüsselte Secret-Verwaltung verwenden.
 - Das neue Gateway reicht über `PLUGIN_SECRETS` nur die im Manifest des ausgewählten Plugins deklarierten Schlüssel weiter. Ältere Binaries unterstützen diese native Schlüsselauflösung noch nicht: dort sind Custom Secrets oder die genannten Umgebungsvariablen erforderlich.

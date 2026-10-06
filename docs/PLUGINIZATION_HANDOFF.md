@@ -406,6 +406,12 @@ pinned against the kernel definitions they replaced where those still exist
   host-owned; a retry must not replay a committed tool action.
 - [ ] Move Discord, voice/audio, ComfyUI, GPU routing and image providers to
   independently enabled packages with scoped credentials and delivery adapters.
+  Progress: the image providers are packages (`plugins/minimax_image` joins
+  `openrouter_image` and `mimo_understand` as installable scripts with declared
+  secrets; the native MiniMax implementation and its builtin operations are
+  gone), and `plugins/comfyui`, `elevenlabs_tts` and `sosse`/`spotify` already
+  ship the same way. Discord, voice/audio, ComfyUI's native workflow/qwen3
+  pieces and GPU routing remain.
 - [ ] Add coding/learning/persona/workflow asset packs.
 
 Acceptance: provider-only chat, verified Rust and language teaching work with

@@ -148,10 +148,6 @@ pub async fn execute(
         // Graph/linear navigation keeps its historical error text (already
         // self-describing), unlike the signal tools above.
         "agent_next" | "agent_back" => Box::pin(navigate(ctx, name == "agent_back", args)).await,
-        // Media generation needs no host state, so it takes no context.
-        "image_generate" | "image_analyze" => {
-            Box::pin(crate::plugins::minimax_image::execute_builtin(name, args)).await?
-        }
         other => anyhow::bail!("Unknown host builtin operation: {other}"),
     }))
 }
