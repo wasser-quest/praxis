@@ -71,6 +71,10 @@ pub async fn execute(
         "agent_complete" => Box::pin(agent_signal(ctx, "Complete", Value::Null)).await,
         "agent_set_path" => Box::pin(agent_signal(ctx, "Path", args.clone())).await,
         "agent_feedback" => Box::pin(agent_signal(ctx, "Feedback", args.clone())).await,
+        // Sub-agent delegation: the child agent loop is host-owned, so the
+        // package only declares the tool (§6C).
+        "delegate_task" => delegate(ctx, args).await,
+        "list_delegations" => list_delegations(ctx),
         // Graph/linear navigation keeps its historical error text (already
         // self-describing), unlike the signal tools above.
         "agent_next" | "agent_back" => Box::pin(navigate(ctx, name == "agent_back", args)).await,
@@ -141,6 +145,33 @@ async fn navigate(ctx: &BuiltinContext<'_>, back: bool, args: &Value) -> String 
     )
     .await
     .unwrap_or_else(|error| error)
+}
+
+/// Needs GatewayState for the child agent loop; fetch it from the global
+/// gateway state accessor used by the message handler. Boxed to break the
+/// async recursion (loop -> tool -> child loop).
+async fn delegate(ctx: &BuiltinContext<'_>, args: &Value) -> String {
+    match crate::gateway::state_ref() {
+        Some(state) => {
+            let state = state.clone();
+            let user = ctx.user.to_string();
+            let args = args.clone();
+            Box::pin(async move {
+                crate::gateway::delegation::delegate_task(&state, &user, &args).await
+            })
+            .await
+        }
+        None => "Error: gateway state unavailable for delegation.".to_string(),
+    }
+}
+
+fn list_delegations(ctx: &BuiltinContext<'_>) -> String {
+    match crate::gateway::delegation::list_delegations(ctx.db, ctx.user) {
+        Ok(list) if list.is_empty() => "No delegations yet.".to_string(),
+        Ok(list) => serde_json::to_string_pretty(&list)
+            .unwrap_or_else(|_| format!("{} delegations", list.len())),
+        Err(error) => format!("Error: {}", error),
+    }
 }
 
 /// The whole context namespace, so the kernel's own authority checks keep

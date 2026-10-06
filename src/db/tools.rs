@@ -293,18 +293,6 @@ pub(crate) fn get_default_tools() -> Vec<Tool> {
             is_enabled: true,
         },
         Tool {
-            name: "delegate_task".into(),
-            description: Some("Delegate ONE self-contained subtask to a fresh child agent with its own forked context (inherits settings/memory snapshot). You continue working after it returns. Delegated tasks CANNOT delegate further (one level only). The child does NOT see your conversation; pass everything it needs in 'task'/'context'.".into()),
-            parameters: serde_json::json!({"type":"object","properties":{"task":{"type":"string","description":"Complete, self-contained task description"},"context":{"type":"string","description":"Optional extra context/data for the child"},"timeout_secs":{"type":"integer","description":"Max runtime (default 600, max 3600)"}},"required":["task"]}),
-            is_enabled: true,
-        },
-        Tool {
-            name: "list_delegations".into(),
-            description: Some("List your delegated tasks and their status/results.".into()),
-            parameters: serde_json::json!({"type":"object","properties":{}}),
-            is_enabled: true,
-        },
-        Tool {
             name: "write_file".into(),
             description: Some("Create or overwrite file. For a checked transactional write, pass expected_absent=true (create only) or expected_sha256 from inspect_file (replace only); without a precondition this is a raw write.".into()),
             parameters: serde_json::json!({"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"},"expected_absent":{"type":"boolean","description":"Require that the file does not exist (versioned checked write)"},"expected_sha256":{"type":"string","description":"Require this lowercase SHA-256 before replacing (from inspect_file)"}},"required":["path","content"]}),

@@ -249,29 +249,6 @@ async fn dispatch_at_depth(
                         }
                     }
                 },
-                "delegate_task" => {
-                    // Needs GatewayState for the child agent loop; fetch it from the
-                    // global gateway state accessor used by the message handler.
-                    // Boxed to break the async recursion (loop -> tool -> child loop).
-                    match crate::gateway::state_ref() {
-                        Some(state) => {
-                            let state = state.clone();
-                            let user_id = user_id.to_string();
-                            let args = args.clone();
-                            Box::pin(async move {
-                                crate::gateway::delegation::delegate_task(&state, &user_id, &args).await
-                            })
-                            .await
-                        }
-                        None => "Error: gateway state unavailable for delegation.".to_string(),
-                    }
-                }
-                "list_delegations" => match crate::gateway::delegation::list_delegations(db, user_id) {
-                    Ok(list) if list.is_empty() => "No delegations yet.".to_string(),
-                    Ok(list) => serde_json::to_string_pretty(&list)
-                        .unwrap_or_else(|_| format!("{} delegations", list.len())),
-                    Err(e) => format!("Error: {}", e),
-                },
                 "write_file" => {
                     if mode == DispatchMode::Agent && crate::runtime::vm::guest_backend(plugins) {
                         let path = args["path"].as_str().unwrap_or("");

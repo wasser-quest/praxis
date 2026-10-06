@@ -1,0 +1,20 @@
+{
+  "name": "delegation",
+  "description": "Sub-agent delegation",
+  "version": "0.1.0",
+  "enabled": true,
+  "tools": [
+    {
+      "name": "delegate_task",
+      "description": "Delegate ONE self-contained subtask to a fresh child agent with its own forked context (inherits settings/memory snapshot). You continue working after it returns. Delegated tasks CANNOT delegate further (one level only). The child does NOT see your conversation; pass everything it needs in 'task'/'context'.",
+      "parameters": {"type":"object","properties":{"task":{"type":"string","description":"Complete, self-contained task description"},"context":{"type":"string","description":"Optional extra context/data for the child"},"timeout_secs":{"type":"integer","description":"Max runtime (default 600, max 3600)"}},"required":["task"]},
+      "handler": {"type": "builtin", "name": "delegate_task"}
+    },
+    {
+      "name": "list_delegations",
+      "description": "List your delegated tasks and their status/results.",
+      "parameters": {"type":"object","properties":{}},
+      "handler": {"type": "builtin", "name": "list_delegations"}
+    }
+  ]
+}
