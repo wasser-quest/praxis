@@ -1,27 +1,38 @@
 #!/bin/sh
-# Build/install only the legacy file package, without linking it into Praxis.
+# Build the legacy file tools package and install it through the Praxis lifecycle.
+#
+# The build stages everything inside packages/legacy_file_ops/, so plugins and package
+# builds are one flow: after this runs (or after a plain 'cargo build -p praxis-legacy-file-ops'
+# plus placing the binary), 'praxis plugin install ./packages/legacy_file_ops' works
+# directly. This script does both steps: it runs the installer, then the same
+# 'praxis plugin install' you could run yourself.
 set -eu
-PRAXIS_SOURCE_ROOT=$(cd "$(dirname "$0")/.." && pwd)
-PRAXIS_PACKAGE_PLUGINS=${1:-${PLUGINS_DIR:-$PRAXIS_SOURCE_ROOT/plugins}}
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+PLUGINS_DIR=${1:-${PLUGINS_DIR:-$ROOT/plugins}}
+export PLUGINS_DIR
 PROFILE=${PROFILE:-release}
 case "$PROFILE" in release|debug) ;; *) echo "PROFILE must be release or debug" >&2; exit 1 ;; esac
-cd "$PRAXIS_SOURCE_ROOT"
+cd "$ROOT"
 if [ "$PROFILE" = release ]; then
   cargo build --locked --release -p praxis-legacy-file-ops
 else
   cargo build --locked -p praxis-legacy-file-ops
 fi
-PRAXIS_PACKAGE_TARGET="$PRAXIS_PACKAGE_PLUGINS/legacy_file_ops"
-if [ -e "$PRAXIS_PACKAGE_TARGET" ] || [ -L "$PRAXIS_PACKAGE_TARGET" ]; then
-  echo "Package already exists: $PRAXIS_PACKAGE_TARGET. Preserve customized files and upgrade its binary explicitly while Praxis is stopped." >&2
-  exit 1
+
+# Stage the package where its manifest expects the binary.
+STAGE=packages/legacy_file_ops
+mkdir -p "$STAGE/bin"
+install -m 755 "${CARGO_TARGET_DIR:-$ROOT/target}/$PROFILE/praxis-legacy-file-ops" "$STAGE/bin/praxis-legacy-file-ops"
+
+# Install through the kernel: manifest validation, PLUGIN_HOOKS policy and
+# praxis.lock.json records — exactly what a manual 'praxis plugin install' does.
+PRAXIS=${PRAXIS:-}
+if [ -z "$PRAXIS" ]; then
+  for candidate in "${CARGO_TARGET_DIR:-$ROOT/target}/$PROFILE/praxis" "$(command -v praxis 2>/dev/null || true)"; do
+    if [ -n "$candidate" ] && [ -x "$candidate" ]; then PRAXIS=$candidate; break; fi
+  done
 fi
-mkdir -p "$PRAXIS_PACKAGE_PLUGINS"
-PRAXIS_PACKAGE_STAGE=$(mktemp -d "$PRAXIS_PACKAGE_PLUGINS/.legacy_file_ops.XXXXXX")
-trap 'rm -rf "$PRAXIS_PACKAGE_STAGE"' EXIT HUP INT TERM
-mkdir -p "$PRAXIS_PACKAGE_STAGE/bin"
-install -m 755 "${CARGO_TARGET_DIR:-$PRAXIS_SOURCE_ROOT/target}/$PROFILE/praxis-legacy-file-ops" "$PRAXIS_PACKAGE_STAGE/bin/praxis-legacy-file-ops"
-cp packages/legacy_file_ops/plugin.json "$PRAXIS_PACKAGE_STAGE/plugin.json"
-mv -T "$PRAXIS_PACKAGE_STAGE" "$PRAXIS_PACKAGE_TARGET"
-trap - EXIT HUP INT TERM
-echo "Installed legacy_file_ops at $PRAXIS_PACKAGE_TARGET; restart Praxis to load it."
+if [ -n "$PRAXIS" ]; then
+  exec "$PRAXIS" plugin install "$STAGE"
+fi
+echo "Built $STAGE. Install it with: praxis plugin install $STAGE"

@@ -1,6 +1,6 @@
 [package]
 name = "praxis-channel-discord"
-version = "1.0.3"
+version = "1.1.0"
 edition = "2021"
 description = "Praxis Discord channel: pairing, commands, delivery adapters and voice glue over the ChannelHost seam"
 

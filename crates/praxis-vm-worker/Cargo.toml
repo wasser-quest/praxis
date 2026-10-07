@@ -1,6 +1,6 @@
 [package]
 name = "praxis-vm-worker"
-version = "0.1.0"
+version = "1.1.0"
 edition = "2021"
 license = "MIT"
 description = "Independently installed Praxis VM service"

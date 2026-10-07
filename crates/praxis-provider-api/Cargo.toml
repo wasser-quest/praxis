@@ -1,6 +1,6 @@
 [package]
 name = "praxis-provider-api"
-version = "1.0.3"
+version = "1.1.0"
 edition = "2021"
 description = "Common Praxis provider interfaces: streaming chat, usage, model listings, embeddings and typed errors"
 

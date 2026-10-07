@@ -3665,7 +3665,7 @@ dependencies = [
 
 [[package]]
 name = "praxis"
-version = "1.0.3"
+version = "1.1.0"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -3734,7 +3734,7 @@ dependencies = [
 
 [[package]]
 name = "praxis-channel-discord"
-version = "1.0.3"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3761,7 +3761,7 @@ dependencies = [
 
 [[package]]
 name = "praxis-comfyui"
-version = "1.0.3"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -3779,7 +3779,7 @@ dependencies = [
 
 [[package]]
 name = "praxis-dashboard"
-version = "0.1.0"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3800,7 +3800,7 @@ dependencies = [
 
 [[package]]
 name = "praxis-gpu-router"
-version = "1.0.3"
+version = "1.1.0"
 dependencies = [
  "once_cell",
  "reqwest",
@@ -3813,7 +3813,7 @@ dependencies = [
 
 [[package]]
 name = "praxis-legacy-file-ops"
-version = "0.1.0"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "praxis-plugin-api",
@@ -3824,7 +3824,7 @@ dependencies = [
 
 [[package]]
 name = "praxis-plugin-api"
-version = "0.1.0"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3838,7 +3838,7 @@ dependencies = [
 
 [[package]]
 name = "praxis-provider-api"
-version = "1.0.3"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3849,7 +3849,7 @@ dependencies = [
 
 [[package]]
 name = "praxis-shell"
-version = "0.1.0"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3866,7 +3866,7 @@ dependencies = [
 
 [[package]]
 name = "praxis-tui"
-version = "1.0.3"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "base64",
@@ -3891,7 +3891,7 @@ dependencies = [
 
 [[package]]
 name = "praxis-vision"
-version = "0.1.0"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "base64",
@@ -3903,7 +3903,7 @@ dependencies = [
 
 [[package]]
 name = "praxis-vm"
-version = "0.1.0"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "base64",
@@ -3920,7 +3920,7 @@ dependencies = [
 
 [[package]]
 name = "praxis-vm-web"
-version = "0.1.0"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -3938,7 +3938,7 @@ dependencies = [
 
 [[package]]
 name = "praxis-vm-worker"
-version = "0.1.0"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3954,7 +3954,7 @@ dependencies = [
 
 [[package]]
 name = "praxis-voice"
-version = "1.0.3"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6993,7 +6993,7 @@ dependencies = [
 
 [[package]]
 name = "xis"
-version = "0.1.0"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "base64",

@@ -15,7 +15,8 @@ Run agents on your own machine, with your chosen models and explicit workflows. 
 - **Web Dashboard**: Monitor users, messages, secrets, VM, cron jobs
 - **Tool Calling**: Shell, file ops, context, agent control, Discord
 - **QEMU VM**: Full Linux VM controlled by the LLM (keyboard, mouse, screenshots)
-- **Plugin System**: Install custom tools via plugin.json
+- **Everything is a package**: tools, providers, media, channels, frontends and asset packs install as packages; the kernel keeps authority, receipts and guards ([plugin lifecycle](docs/PLUGIN_LIFECYCLE.md))
+- **Setups with `xis`**: signed repositories install whole setups — plugins, workflows, personas and a config profile — with a plan first, an ownership lock and a change report ([xis](docs/XIS_PACKAGE_MANAGER.md))
 - **POML Templates**: Customizable system prompts and workflows
 - **Memory & Learning**: User-private [memory profiles](docs/MEMORY_PROFILES.md) per persona, with separate rare shared identity facts
 - **Encrypted Secrets**: AES-256-GCM encrypted at rest (enc2)
@@ -80,15 +81,72 @@ cargo build --release --locked --features compatibility
 # Gateway API: http://localhost:3537
 ```
 
+### Install what you need
+
+Everything is a package, and each kind has one obvious home:
+
+| What | How |
+| --- | --- |
+| **Terminal UI** | `./scripts/install-tui-package.sh` — then `praxis chat` finds it beside the kernel, on `PATH`, or where `PRAXIS_TUI_EXECUTABLE` points |
+| **Dashboard** | `./scripts/install-dashboard-package.sh` (or the compatibility preset) |
+| **Tool packages** | `./scripts/install-{shell,legacy-file-ops,vision}-package.sh` |
+| **Tool & media plugins** | `praxis plugin install ./plugins/<name>`, one at a time — or all at once: `praxis plugin install-default --preset examples/presets/shipped-plugins.json` |
+| **Asset packs** | `praxis plugin install ./packages/asset_coding` (likewise `asset_learning`, `asset_persona`, `asset_workflow`) |
+| **Whole setups** | `xis install repo/setup@version` |
+| **Kernel-bundled** | nothing to install: `file_ops`, `runtime_control`, `memory`, `rag`, `cron`, `discord`, `interaction`, `skills`, `workflow_authoring` (`praxis plugin builtins`) |
+
+Installing through `praxis plugin install` runs the lifecycle: manifest
+validation, `PLUGIN_HOOKS` policy (`allow|ask|deny`), `praxis.lock.json`
+records for `praxis plugin verify` — and it never enables tools or grants
+trust on its own. Everything lands in `PLUGINS_DIR`: one directory to list,
+verify and remove.
+
+### Setups with xis
+
+`xis` is a separate executable that links nothing of the kernel. You pin a
+repository and its ed25519 signing key (`xis repo add … --key ed25519:…`), it
+verifies the signed index and content-addressed artifacts, prints the whole
+plan before a byte is written, and applies it with `keep` (default), `--backup`
+or `--force`. `xis.lock.json` records what each setup owns, so upgrades and
+removals touch only owned, unedited files — a file you changed is reported and
+left alone.
+
+Plugin packages are delegated to `praxis plugin install`, so the kernel keeps
+its hooks policy, its lockfile and its trust store. What you must change
+afterwards lands in one change report (`praxis motd`, also shown on
+`praxis run`): required environment, applied settings, backups and the exact
+`praxis plugin trust …` commands. Secrets are never written and grants are
+never automatic.
+
+```bash
+xis repo add standard https://getpraxis.boo/repo --key-file standard.pub   # or --key ed25519:…
+xis search vim
+xis plan    standard/vim-states@1.2.0
+xis install standard/vim-states@1.2.0
+xis motd
+```
+
+Publishing one is the same shape from the other side: `xis keygen` writes the
+secret key and prints the public key, artifacts are JSON bundles named by
+their own SHA-256 under `artifacts/`, and `xis sign --key-file xis-repo.key
+index.json` writes `index.sig`. Host the three anywhere static and put the
+public key where operators can pin it — a public repository is just files plus
+a signature, and the key grants nobody download access. See
+[publishing a repository](docs/XIS_PACKAGE_MANAGER.md#publishing-a-repository).
+
 ### Keep the functionality from before pluginization
 
 Use the **`compatibility`** build and installation preset. It includes the optional
 native VM, legacy file and shell backends and installs the shipped tool plugins, their helper scripts,
 noVNC runtime files, dashboard assets, templates, workflows and skills. The normal
-build selects `compatibility` by default. Dashboard, legacy file and shell code are now
+build selects `compatibility` by default. Dashboard, legacy file and shell code are
 optional at build time; independently installed dashboard, VM, legacy file and
-shell packages can run with a core-only host. Providers, Discord and the remaining
-native tools are still compiled into Praxis at this stage.
+shell packages can run with a core-only host. Voice/audio, the ComfyUI media
+client and GPU routing are their own crates (`praxis-voice`, `praxis-comfyui`,
+`praxis-gpu-router`), the Discord channel is `praxis-channel-discord` behind
+its `ChannelHost` seam, and the common provider interfaces live in
+`praxis-provider-api`; a core-only dependency tree carries none of Serenity,
+songbird, hound, Vosk, Whisper, minimp3, symphonia, ratatui or crossterm.
 
 To keep legacy file code outside the host while retaining `read_file` and
 `edit_file`:
@@ -694,7 +752,7 @@ Plugin manifest (`plugin.json`):
 - `plugins/openrouter_image/`: `openrouter_image_generate` generates PNG/JPEG/WebP via OpenRouter's dedicated Image API.
 - `plugins/minimax_image/`: `minimax_image_generate` and `minimax_image_analyze` generate and analyze images via the MiniMax image and vision APIs.
 
-Both are standalone Python 3 plugins with encrypted-secret/environment support and local file output. They make paid API calls only when invoked, without automatic retries. See [setup, parameters and offline tests](docs/MEDIA_PLUGINS.md).
+All three are standalone Python 3 plugins with encrypted-secret/environment support and local file output. They make paid API calls only when invoked, without automatic retries. See [setup, parameters and offline tests](docs/MEDIA_PLUGINS.md).
 
 ### ComfyUI workflows
 

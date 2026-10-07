@@ -17,6 +17,7 @@ mod tests;
 
 use anyhow::{ensure, Context as _};
 use clap::{Parser, Subcommand};
+use std::os::unix::fs::OpenOptionsExt;
 use plan::{FileAction, Lock, Policy};
 use repo::{RepositoryStore, VerifiedIndex};
 use std::path::{Path, PathBuf};
@@ -88,6 +89,20 @@ enum Command {
         #[arg(long)]
         ack: bool,
     },
+    /// Generate a repository signing key (secret file + public key to publish)
+    Keygen {
+        /// Directory for xis-repo.key (default: the current directory)
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// Sign a repository index (writes index.sig beside it)
+    Sign {
+        /// The secret key file from `xis keygen` (never distributed)
+        #[arg(long, value_name = "FILE")]
+        key_file: PathBuf,
+        /// Path to index.json
+        index: PathBuf,
+    },
 }
 
 #[derive(Subcommand)]
@@ -96,8 +111,12 @@ enum RepoAction {
     Add {
         name: String,
         url: String,
+        /// The repository's public key: ed25519:<hex> (never secret)
         #[arg(long)]
         key: Option<String>,
+        /// ...or a file holding it (one key per file, # comments allowed)
+        #[arg(long, value_name = "FILE")]
+        key_file: Option<PathBuf>,
     },
     /// List pinned repositories
     List,
@@ -144,7 +163,15 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
     let (root, plugins_dir) = roots(&cli)?;
     match &cli.command {
         Command::Repo { action } => match action {
-            RepoAction::Add { name, url, key } => {
+            RepoAction::Add { name, url, key, key_file } => {
+                // The key identifies the publisher and is never secret: it may
+                // come inline or from a file, and only the operator's pin is
+                // trusted (a repository never vouches for itself).
+                let key = match (key, key_file) {
+                    (Some(key), _) => Some(repo::parse_public_key(key)?),
+                    (None, Some(path)) => Some(repo::read_public_key_file(path)?),
+                    (None, None) => None,
+                };
                 let mut store = RepositoryStore::load()?;
                 store.pin(name, url, key.as_deref())?;
                 store.save()?;
@@ -259,6 +286,37 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         }
         Command::Remove { name, keep_data } => {
             println!("{}", remove(name, *keep_data, &root, &plugins_dir)?);
+        }
+        Command::Keygen { out } => {
+            let directory = out.clone().unwrap_or_else(|| PathBuf::from("."));
+            std::fs::create_dir_all(&directory)?;
+            let secret_path = directory.join("xis-repo.key");
+            ensure!(
+                !secret_path.exists(),
+                "'{}' already exists; a signing key is never overwritten",
+                secret_path.display()
+            );
+            let (signing, public) = repo::generate_keypair()?;
+            {
+                use std::io::Write;
+                let mut file = std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .mode(0o600)
+                    .open(&secret_path)?;
+                writeln!(file, "ed25519-secret:{}", hex::encode(signing.to_bytes()))?;
+            }
+            println!("Public key (publish this; operators pin it with 'xis repo add --key-file'):\n  {public}");
+            println!("Secret key (signing only; never distribute):\n  {}", secret_path.display());
+        }
+        Command::Sign { key_file, index } => {
+            let signing = repo::read_secret_key_file(key_file)?;
+            let bytes = std::fs::read(index)
+                .with_context(|| format!("cannot read index '{}'", index.display()))?;
+            let signature = repo::sign_index(&bytes, &signing);
+            let signature_path = index.with_extension("sig");
+            std::fs::write(&signature_path, format!("{signature}\n"))?;
+            println!("Signed {} -> {}", index.display(), signature_path.display());
         }
         Command::Motd { ack } => {
             if *ack {

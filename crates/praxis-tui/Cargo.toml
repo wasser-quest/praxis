@@ -1,6 +1,6 @@
 [package]
 name = "praxis-tui"
-version = "1.0.3"
+version = "1.1.0"
 edition = "2021"
 description = "Praxis terminal UI — an unlinked frontend for a local or remote gateway"
 

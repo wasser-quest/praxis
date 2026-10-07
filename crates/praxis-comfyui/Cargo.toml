@@ -1,6 +1,6 @@
 [package]
 name = "praxis-comfyui"
-version = "1.0.3"
+version = "1.1.0"
 edition = "2021"
 description = "ComfyUI media client: workflow submission and Qwen3/XTTS synthesis with local WAV output"
 

@@ -355,3 +355,34 @@ fn plugin_delegation_runs_the_praxis_cli() {
     );
     assert!(result.is_err());
 }
+
+#[test]
+fn keys_can_come_from_files_and_signing_round_trips() {
+    let (signing, public) = repo::generate_keypair().unwrap();
+    assert!(public.starts_with("ed25519:"));
+    // A key file is how keys are handed around: never secret, comments allowed.
+    let directory = tempfile::tempdir().unwrap();
+    let key_file = directory.path().join("standard.pub");
+    std::fs::write(&key_file, format!("# standard repository\n{public}\n")).unwrap();
+    assert_eq!(repo::read_public_key_file(&key_file).unwrap(), public);
+    // Bare hex is accepted and normalized to the pinned form.
+    let bare = public.trim_start_matches("ed25519:");
+    assert_eq!(repo::parse_public_key(bare).unwrap(), public);
+    assert!(repo::parse_public_key("ed25519:zz").is_err());
+
+    // Signing round trip: the public key everyone may download verifies it.
+    let index = b"{\"schema\":1,\"name\":\"standard\"}";
+    let signature = repo::sign_index(index, &signing);
+    repo::verify_signature(index, &public, &signature).unwrap();
+    assert!(repo::verify_signature(b"{\"schema\":1}", &public, &signature).is_err());
+
+    // Secret keys live in their own file and are never overwritten or logged.
+    let secret = directory.path().join("xis-repo.key");
+    std::fs::write(&secret, format!("ed25519-secret:{}\n", hex::encode(signing.to_bytes()))).unwrap();
+    let loaded = repo::read_secret_key_file(&secret).unwrap();
+    assert_eq!(
+        format!("ed25519:{}", hex::encode(loaded.verifying_key().as_bytes())),
+        public
+    );
+    assert!(repo::read_secret_key_file(&key_file).is_err());
+}

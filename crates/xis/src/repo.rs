@@ -90,6 +90,70 @@ impl RepositoryStore {
     }
 }
 
+/// Normalize an operator-supplied public key (`ed25519:<hex>` or bare hex).
+pub fn parse_public_key(text: &str) -> anyhow::Result<String> {
+    let trimmed = text.trim();
+    let hex_key = trimmed.strip_prefix("ed25519:").unwrap_or(trimmed);
+    verify_key_shape(&format!("ed25519:{hex_key}"))?;
+    Ok(format!("ed25519:{hex_key}"))
+}
+
+/// Read a public key from a file: one key per file, `#` comments allowed.
+/// A file is how keys are handed around; the value is never secret.
+pub fn read_public_key_file(path: &Path) -> anyhow::Result<String> {
+    let text = std::fs::read_to_string(path)
+        .with_context(|| format!("cannot read key file '{}'", path.display()))?;
+    let line = text
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty() && !line.starts_with('#'))
+        .context("key file is empty")?;
+    parse_public_key(line)
+}
+
+/// Read a publisher's secret key (signing only, never distributed).
+pub fn read_secret_key_file(path: &Path) -> anyhow::Result<ed25519_dalek::SigningKey> {
+    let text = std::fs::read_to_string(path)
+        .with_context(|| format!("cannot read key file '{}'", path.display()))?;
+    let line = text
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty() && !line.starts_with('#'))
+        .context("key file is empty")?;
+    let hex_key = line
+        .strip_prefix("ed25519-secret:")
+        .unwrap_or(line);
+    ensure!(hex_key.len() == 64, "secret keys are 64 hex characters");
+    let bytes = hex::decode(hex_key).context("secret key is not hex")?;
+    Ok(ed25519_dalek::SigningKey::from_bytes(
+        bytes.as_slice().try_into().map_err(|_| anyhow::anyhow!("secret keys are 32 bytes"))?,
+    ))
+}
+
+/// Generate a repository signing key. The secret stays in its file (mode
+/// 0600); the public key is what operators pin.
+pub fn generate_keypair() -> anyhow::Result<(ed25519_dalek::SigningKey, String)> {
+    let mut seed = [0u8; 32];
+    getrandom_fill(&mut seed)?;
+    let signing = ed25519_dalek::SigningKey::from_bytes(&seed);
+    let public = format!("ed25519:{}", hex::encode(signing.verifying_key().as_bytes()));
+    Ok((signing, public))
+}
+
+fn getrandom_fill(bytes: &mut [u8]) -> anyhow::Result<()> {
+    // The OS entropy source; no key is ever derived from time or counters.
+    std::fs::File::open("/dev/urandom")
+        .and_then(|mut file| std::io::Read::read_exact(&mut file, bytes))
+        .context("cannot read the system entropy source")?;
+    Ok(())
+}
+
+/// Sign index bytes: the signature goes in `index.sig` beside `index.json`.
+pub fn sign_index(bytes: &[u8], signing: &ed25519_dalek::SigningKey) -> String {
+    use ed25519_dalek::Signer;
+    base64::Engine::encode(&base64::engine::general_purpose::STANDARD, signing.sign(bytes).to_bytes())
+}
+
 fn verify_key_shape(key: &str) -> anyhow::Result<()> {
     let hex_key = key
         .strip_prefix("ed25519:")

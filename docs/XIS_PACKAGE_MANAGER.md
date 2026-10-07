@@ -156,6 +156,53 @@ A "ComfyUI setup" is therefore: install the media package + a provider profile
 + templates/workflows + a MOTD that points at the model files and GPU notes. A
 "vim-like" setup is contexts/templates/skills + routing settings, no code.
 
+## Publishing a repository
+
+Anyone can host a repository: a static directory, an HTTP(S) site or a git
+repository. The shape is three things:
+
+```text
+repo/
+  index.json          the signed listing (see the format above)
+  index.sig           ed25519 signature of the exact index.json bytes
+  artifacts/<sha256>  one bundle per digest, named by its own hash
+```
+
+An artifact is a JSON **bundle** — `{"files":[{"path","mode","content_base64"}]}`
+— and `artifacts/<sha256>` is that file's SHA-256 (`sha256sum` is enough). The
+`sha256` field in the index names the same digest, so both `xis` and a reader
+can check the bytes without trusting the host.
+
+Authoring steps:
+
+```bash
+xis keygen --out .                             # writes xis-repo.key (0600) and prints the public key
+sha256sum bundles/vim-states.tar.json          # put each bundle in artifacts/<that digest>
+xis sign --key-file xis-repo.key index.json    # writes index.sig
+```
+
+Then publish `index.json`, `index.sig` and `artifacts/`, and put the **public**
+key where operators can read it (your README, a release page). Operators pin
+it themselves:
+
+```bash
+xis repo add standard https://your.host/repo --key-file standard.pub
+# (or --key ed25519:… — the same value inline)
+```
+
+### What the keys are, and what they are not
+
+* The **public key** identifies the publisher. It is not secret and it grants
+  no access: anyone may download a public repository's files. It exists so a
+  swap of keys is *visible* — `xis` verifies `index.sig` against the key the
+  **operator** pinned, and a repository can never vouch for itself.
+* The **secret key** (`xis-repo.key`, mode 0600) only signs the index. Keep it
+  on your publishing machine; never ship it in the repository.
+* A **public repository** is therefore just static files plus a signature.
+  Access control is a separate concern (web server auth, VPN, private hosting);
+  `xis` fetches plain URLs and carries no credentials, so private repositories
+  are outside this design for now.
+
 ## Security
 
 * Repositories and plugins are operator-trusted code, like today's installed

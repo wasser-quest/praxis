@@ -1,6 +1,6 @@
 [package]
 name = "praxis-gpu-router"
-version = "1.0.3"
+version = "1.1.0"
 edition = "2021"
 description = "pgpu GPU-router client: slot state, wake and hold headers for Praxis media/LLM providers"
 

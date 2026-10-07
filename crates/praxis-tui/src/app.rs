@@ -2013,7 +2013,7 @@ fn shell_words(input: &str) -> Vec<String> {
 /// Turn `/login …` / `/logout …` arguments into a gateway request.
 /// `Ok(None)` means "show status".
 fn parse_login_args(verb: &str, args: &[String]) -> Result<Option<serde_json::Value>, String> {
-    let usage = "Usage: /login | /login codex [--device-auth | --auth-json '<json>'] [model] | /login <openai|anthropic|openrouter|minimax|mimo> <api_key> [model] [api_base] | /login <ollama|llamacpp> [api_base] [model] | /logout <provider>";
+    let usage = "Usage: /login | /login codex [--device-auth | --auth-json '<json>' | --auth-file <path>] [model] | /login <openai|anthropic|openrouter|minimax|mimo> <api_key> [model] [api_base] | /login <ollama|llamacpp> [api_base] [model] | /logout <provider>";
     let Some(provider) = args.first() else {
         return if verb == "/logout" { Err(usage.into()) } else { Ok(None) };
     };
@@ -2030,6 +2030,14 @@ fn parse_login_args(verb: &str, args: &[String]) -> Result<Option<serde_json::Va
                 match arg.as_str() {
                     "--auth-json" if request.get("auth_json").is_none() => {
                         request["auth_json"] = serde_json::json!(args.next().ok_or(usage)?);
+                    }
+                    "--auth-file" if request.get("auth_json").is_none() => {
+                        // The path is read here, where the operator typed it,
+                        // and only the file's contents reach the gateway.
+                        let path = args.next().ok_or(usage)?;
+                        let text = std::fs::read_to_string(path)
+                            .map_err(|error| format!("Cannot read '{path}': {error}"))?;
+                        request["auth_json"] = serde_json::json!(text);
                     }
                     "--device-auth" if request.get("device_auth").is_none() => {
                         request["device_auth"] = serde_json::json!(true);
@@ -2087,9 +2095,23 @@ mod login_parse_tests {
         let r = parse_login_args("/login", &shell_words("codex --device-auth gpt-5-codex")).unwrap().unwrap();
         assert_eq!(r["device_auth"], true);
         assert_eq!(r["model"], "gpt-5-codex");
-        for args in ["codex --unknown", "codex --auth-json", "codex --device-auth --auth-json '{}'", "codex model1 model2"] {
+        for args in ["codex --unknown", "codex --auth-json", "codex --device-auth --auth-json '{}'", "codex --auth-json '{}' --auth-file x", "codex --auth-file", "codex model1 model2"] {
             assert!(parse_login_args("/login", &shell_words(args)).is_err());
         }
+        // A file path is read here; only its contents reach the gateway.
+        let directory = tempfile::tempdir().unwrap();
+        let auth = directory.path().join("auth.json");
+        std::fs::write(&auth, "{\"tokens\":{\"access_token\":\"tok\"}}").unwrap();
+        let r = parse_login_args(
+            "/login",
+            &shell_words(&format!("codex --auth-file {} gpt-5", auth.display())),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(r["auth_json"], "{\"tokens\":{\"access_token\":\"tok\"}}");
+        assert_eq!(r["model"], "gpt-5");
+        assert!(parse_login_args("/login", &shell_words("codex --auth-file /no/such/file")).is_err(), "unreadable file is refused");
+
         let r = parse_login_args("/logout", &shell_words("Codex")).unwrap().unwrap();
         assert_eq!(r["logout"], true);
         assert_eq!(r["provider"], "codex");

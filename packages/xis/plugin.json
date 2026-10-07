@@ -1,0 +1,7 @@
+{
+  "name": "xis",
+  "description": "Setup and package manager for Praxis distributions: signed repositories, setup bundles, plans and change reports (a separate executable that links nothing of the kernel)",
+  "version": "1.1.0",
+  "enabled": true,
+  "tools": []
+}
