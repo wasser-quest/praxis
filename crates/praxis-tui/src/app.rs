@@ -1120,14 +1120,22 @@ async fn run_loop<B: ratatui::backend::Backend>(
                 let remote = app.remote.clone();
                 let user = stream_user.clone(); let tx = stream_tx.clone();
                 history_task = Some(tokio::spawn(async move {
+                    // History polling stays well inside the gateway's rate
+                    // limit and backs off further on refusal instead of
+                    // hammering the same 429.
+                    let mut backoff = Duration::from_secs(5);
                     loop {
-                        if let Ok(messages) = remote.messages(&user).await {
-                            if let Ok(data) = serde_json::to_string(&messages) {
-                                if tx.send((user.clone(), "history".into(), data)).await.is_err() { break; }
+                        match remote.messages(&user).await {
+                            Ok(messages) => {
+                                backoff = Duration::from_secs(5);
+                                if let Ok(data) = serde_json::to_string(&messages) {
+                                    if tx.send((user.clone(), "history".into(), data)).await.is_err() { break; }
+                                }
                             }
+                            Err(_) => backoff = (backoff * 2).min(Duration::from_secs(60)),
                         }
                         if tx.is_closed() { break; }
-                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        tokio::time::sleep(backoff).await;
                     }
                 }));
             }

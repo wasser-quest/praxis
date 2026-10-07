@@ -270,7 +270,9 @@ pub async fn start_with_plugins(db: crate::db::Database, config: crate::config::
 
 /// The same authenticated routes serve configured and setup-only installations.
 pub fn routes(state: GatewayState) -> axum::Router {
-    let rate_limiter = Arc::new(rate_limiter::UserRateLimiter::new(60));
+    let rate_limiter = Arc::new(rate_limiter::UserRateLimiter::new(
+        rate_limiter::UserRateLimiter::per_minute_from_env(),
+    ));
 
     let app = axum::Router::new()
         .route("/health", axum::routing::get(http_handler::health_check))
@@ -312,7 +314,24 @@ async fn rate_limit_middleware(
 
     match limiter.check(&user_id) {
         Ok(()) => Ok(next.run(req).await),
-        Err(_) => Err(axum::http::StatusCode::TOO_MANY_REQUESTS),
+        Err(rate_limiter::RateLimitError::TooManyRequests { retry_after }) => {
+            // Say when to come back: a client that backs off is a client that
+            // stops asking, and `Retry-After` is the whole protocol for that.
+            let seconds = retry_after.as_secs().max(1).to_string();
+            let mut response =
+                axum::response::Response::new(axum::body::Body::from(serde_json::json!({
+                    "error": "rate limit exceeded",
+                    "retry_after_seconds": retry_after.as_secs().max(1),
+                })
+                .to_string()));
+            *response.status_mut() = axum::http::StatusCode::TOO_MANY_REQUESTS;
+            response.headers_mut().insert(
+                axum::http::header::RETRY_AFTER,
+                axum::http::HeaderValue::from_str(&seconds)
+                    .unwrap_or_else(|_| axum::http::HeaderValue::from_static("1")),
+            );
+            Ok(response)
+        }
     }
 }
 

@@ -18,6 +18,17 @@ impl Remote {
         let mut r=self.client.request(method,format!("{}{path}",self.url)).bearer_auth(&self.key);
         if let Some(body)=body {r=r.json(&body);}
         let r=r.send().await.map_err(|_|anyhow::anyhow!("Gateway connection failed"))?;
+        if r.status().as_u16() == 429 {
+            // The gateway says when to come back; believe it instead of
+            // hammering the same limit.
+            let wait = r
+                .headers()
+                .get("retry-after")
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.trim().parse::<u64>().ok())
+                .unwrap_or(5);
+            anyhow::bail!("The gateway is rate limiting; retry in {wait}s");
+        }
         anyhow::ensure!(r.status().is_success(),"Gateway returned HTTP {} (check gateway URL, key and backend version)",r.status().as_u16());
         r.json().await.context("Invalid gateway JSON response")
     }
@@ -42,6 +53,27 @@ mod tests {
         assert!(Remote::new("file:///tmp/test".into(),"test".into()).is_err());
         assert!(Remote::new("http://host".into(),"".into()).is_err());
     }
+    #[tokio::test]
+    async fn rate_limit_refusals_carry_a_retry_hint() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/messages/u"))
+            .respond_with(
+                ResponseTemplate::new(429)
+                    .insert_header("retry-after", "7")
+                    .set_body_json(serde_json::json!({"error": "rate limit exceeded"})),
+            )
+            .mount(&server)
+            .await;
+        let remote = Remote::new(server.uri(), "synthetic-key".into()).unwrap();
+        let error = remote.messages("u").await.unwrap_err().to_string();
+        // The caller learns when to retry instead of guessing or looping.
+        assert!(error.contains("rate limiting"), "{error}");
+        assert!(error.contains("retry in 7s"), "{error}");
+    }
+
     #[tokio::test]
     async fn remote_client_uses_backend_history_and_bearer_header() {
         use wiremock::{Mock,MockServer,ResponseTemplate,matchers::{method,path,header}};
