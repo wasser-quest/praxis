@@ -23,6 +23,51 @@ absolute; the default is `INSTALLATION/data`. **Supply your actual `DATA_DIR`**
 when opting into VM flags for an existing installation. The command deliberately
 does not infer this from a secrets/configuration file.
 
+## Install the shipped plugins one by one
+
+The presets above install **public assets** (and copy the shipped plugin
+folders so the gateway can load them). Installing a plugin *through the
+lifecycle* is a separate, deliberate act: it runs the install hooks under
+`PLUGIN_HOOKS` (`allow|ask|deny`, default `ask`), validates the manifest,
+records manifest and hook hashes in `PLUGINS_DIR/praxis.lock.json` for
+`praxis plugin verify`, and never enables tools or grants trust on its own.
+
+Install each plugin you want, one at a time:
+
+```bash
+./praxis plugin install ./plugins/system_info
+./praxis plugin install ./plugins/brave_search
+./praxis plugin install ./plugins/minimax_image
+./praxis plugin install ./plugins/openrouter_image
+./praxis plugin install ./plugins/mimo_understand
+./praxis plugin install ./plugins/elevenlabs_tts
+./praxis plugin install ./plugins/comfyui
+./praxis plugin install ./plugins/sosse
+./praxis plugin install ./plugins/spotify
+./praxis plugin install ./plugins/vm          # grant tools later: install-preset --enable-vm-tools
+```
+
+Plugins with install hooks need `--allow-scripts` (or `PLUGIN_HOOKS=allow`);
+non-interactive `ask` skips hooks. The kernel-bundled packages (`file_ops`,
+`runtime_control`, `memory`, `rag`, `cron`, `discord`, `interaction`, `skills`,
+`workflow_authoring`) need no install at all: `praxis plugin builtins` lists
+them and `praxis plugin disable-builtin <id>` makes one absent. The optional
+binary packages build and place themselves with
+`scripts/install-{shell,legacy-file-ops,vision,tui,dashboard}-package.sh`, and
+the asset packs install like any plugin (`praxis plugin install
+./packages/asset_coding`).
+
+The same ten installs in one dependency-ordered command — same lifecycle, same
+records — uses a preset file:
+
+```bash
+./praxis plugin install-default --preset examples/presets/shipped-plugins.json
+```
+
+A preset is `{"plugins": ["<dir>", …]}` with paths relative to the
+installation root (absolute paths work too), so you can list exactly the
+subset you want. `--dry-run` shows what would happen.
+
 ## Fresh installation
 
 ```bash

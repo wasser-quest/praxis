@@ -1,0 +1,14 @@
+{
+  "plugins": [
+    "plugins/system_info",
+    "plugins/brave_search",
+    "plugins/minimax_image",
+    "plugins/openrouter_image",
+    "plugins/mimo_understand",
+    "plugins/elevenlabs_tts",
+    "plugins/comfyui",
+    "plugins/sosse",
+    "plugins/spotify",
+    "plugins/vm"
+  ]
+}
