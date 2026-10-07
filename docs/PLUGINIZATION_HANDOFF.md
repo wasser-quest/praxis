@@ -415,7 +415,12 @@ pinned against the kernel definitions they replaced where those still exist
   transcription/synthesis layer in or out (with `serenity` optional and the
   voice tests following their feature), so a core-only host's dependency tree
   carries no `serenity`, `songbird`, `whisper-rs` or `vosk`. Their package
-  manifests and the channel ingress seam remain. ComfyUI's native
+  remains. The Discord channel is `crates/praxis-channel-discord`: it defines
+  the `ChannelHost` seam it needs (pairing, context, sessions, history,
+  agent control, interactions, delivery feed, skills), receives only scoped
+  credentials (`packages/discord_service`), and links nothing of the kernel —
+  `KernelChannelHost` implements the seam and keeps authority. ComfyUI's
+  native
   workflow/qwen3/XTTS pieces are `crates/praxis-comfyui` (a media provider with
   plain `config::Settings`, local WAV output and no host types) and GPU routing
   is `crates/praxis-gpu-router` (runtime-enabled by `GPU_ROUTER_URL`, safe

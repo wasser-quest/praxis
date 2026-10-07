@@ -5,7 +5,7 @@ edition = "2021"
 description = "AI Agent Platform — Praxis"
 
 [workspace]
-members = ["crates/praxis-vm", "crates/praxis-plugin-api", "crates/praxis-voice", "crates/praxis-comfyui", "crates/praxis-provider-api", "crates/praxis-gpu-router", "crates/praxis-tui", "crates/praxis-vm-web", "crates/praxis-vm-worker", "crates/praxis-dashboard", "crates/praxis-legacy-file-ops", "crates/praxis-shell", "crates/praxis-vision"]
+members = ["crates/praxis-vm", "crates/praxis-plugin-api", "crates/praxis-channel-discord", "crates/praxis-voice", "crates/praxis-comfyui", "crates/praxis-provider-api", "crates/praxis-gpu-router", "crates/praxis-tui", "crates/praxis-vm-web", "crates/praxis-vm-worker", "crates/praxis-dashboard", "crates/praxis-legacy-file-ops", "crates/praxis-shell", "crates/praxis-vision"]
 default-members = ["."]
 resolver = "2"
 
@@ -22,23 +22,24 @@ shell = ["dep:praxis-shell"]
 vision = ["dep:praxis-vision"]
 # Voice/audio: transcription, synthesis and their ComfyUI backends; omitted
 # entirely from a core-only host.
-voice = []
+voice = ["dep:praxis-voice"]
 # Discord channel ingress and its voice glue (pulls the voice layer).
-discord = ["dep:serenity", "dep:hound", "voice"]
+discord = ["dep:praxis-channel-discord", "voice"]
 # Web dashboard: UI, listener, TLS and its static assets. The runtime,
 # gateway, CLI and verified workflows work without it.
 dashboard = ["dep:axum-server", "dep:rcgen", "dep:hostname"]
 vm = ["dep:praxis-vm", "dep:praxis-vm-web"]
 voice_vosk = ["praxis-voice/voice_vosk"]
 voice_whisper = ["praxis-voice/voice_whisper"]
-songbird = ["dep:songbird"]
+songbird = ["praxis-channel-discord/voice"]
 vosk = ["voice_vosk"]
 
 [dependencies]
 praxis-plugin-api = { path = "crates/praxis-plugin-api" }
 praxis-provider-api = { path = "crates/praxis-provider-api" }
 praxis-comfyui = { path = "crates/praxis-comfyui" }
-praxis-voice = { path = "crates/praxis-voice" }
+praxis-voice = { path = "crates/praxis-voice", optional = true }
+praxis-channel-discord = { path = "crates/praxis-channel-discord", optional = true }
 praxis-gpu-router = { path = "crates/praxis-gpu-router" }
 praxis-legacy-file-ops = { path = "crates/praxis-legacy-file-ops", optional = true }
 praxis-shell = { path = "crates/praxis-shell", optional = true }
@@ -58,7 +59,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 tracing-appender = "0.2"
 anyhow = "1"
 png = "0.18"
-serenity = { version = "0.12", features = ["voice"], optional = true }
 axum = { version = "0.7", features = ["ws", "json", "multipart"] }
 axum-server = { version = "0.7", features = ["tls-rustls"], optional = true }
 rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs"] }
@@ -97,8 +97,6 @@ cron = "0.15"
 rusqlite = { version = "0.32", features = ["bundled", "vtab"] }
 backon = "1"
 
-songbird = { version = "0.6", optional = true, features = ["driver", "builtin-queue", "serenity", "receive"] }
-hound = { version = "3.5", optional = true }
 
 image = "0.25"
 

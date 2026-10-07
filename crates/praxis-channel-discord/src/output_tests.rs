@@ -35,8 +35,8 @@ fn thinking_codeboxes_are_bounded_lossless_and_cannot_be_escaped() {
 
 #[test]
 fn small_model_reasoning_wire_event_is_not_disposable_feedback() {
-    let msg: crate::discord::ws_client::IncomingMessage = serde_json::from_value(
+    let msg: crate::ws_client::IncomingMessage = serde_json::from_value(
         serde_json::json!({"type":"reasoning","user_id":"synthetic","content":"complete reasoning"})
     ).unwrap();
-    assert!(matches!(msg, crate::discord::ws_client::IncomingMessage::Reasoning { content, .. } if content == "complete reasoning"));
+    assert!(matches!(msg, crate::ws_client::IncomingMessage::Reasoning { content, .. } if content == "complete reasoning"));
 }

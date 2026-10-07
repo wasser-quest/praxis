@@ -1,0 +1,36 @@
+[package]
+name = "praxis-channel-discord"
+version = "1.0.3"
+edition = "2021"
+description = "Praxis Discord channel: pairing, commands, delivery adapters and voice glue over the ChannelHost seam"
+
+# The channel links nothing of the kernel: it defines the ChannelHost seam it
+# needs, receives only scoped credentials, and speaks serenity to Discord.
+[dependencies]
+anyhow = "1"
+async-trait = "0.1"
+chrono = { version = "0.4", features = ["serde"] }
+dashmap = "6"
+futures-util = "0.3"
+lazy_static = "1"
+hound = "3.5"
+once_cell = "1"
+praxis-voice = { path = "../praxis-voice" }
+rand = "0.8"
+reqwest = { version = "0.12.28", default-features = false, features = ["rustls-tls", "json", "stream", "multipart"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serenity = { version = "0.12", features = ["voice"] }
+songbird = { version = "0.6", optional = true, features = ["driver", "builtin-queue", "serenity", "receive"] }
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+tracing = "0.1"
+urlencoding = "2.1"
+uuid = { version = "1", features = ["v4"] }
+
+[features]
+default = []
+voice = ["dep:songbird"]
+
+[dev-dependencies]
+tempfile = "3"

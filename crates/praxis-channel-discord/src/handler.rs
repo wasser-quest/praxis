@@ -1,5 +1,5 @@
-use super::host::{ChannelHost, DiscordCredentials, MirroredMessage};
-use crate::discord::ws_client::{IncomingMessage, OutgoingMessage, WsClient};
+use crate::host::{ChannelHost, DiscordCredentials, MirroredMessage};
+use crate::ws_client::{IncomingMessage, OutgoingMessage, WsClient};
 use serenity::async_trait;
 use serenity::model::application::Interaction;
 use serenity::model::channel::Message;
@@ -48,7 +48,7 @@ pub struct DiscordHandler {
     pub voice_muted: Arc<Mutex<bool>>,
     pub voice_deafened: Arc<Mutex<bool>>,
     pub credentials: DiscordCredentials,
-    pub voice_handler: Option<Arc<crate::voice::handler::VoiceHandler>>,
+    pub voice_handler: Option<Arc<crate::voice::VoiceHandler>>,
 }
 
 impl DiscordHandler {
@@ -80,7 +80,7 @@ impl DiscordHandler {
                 let guild_id = msg.guild_id.map(|g| g.to_string());
                 let channel_id = msg.channel_id.to_string();
 
-                crate::discord::commands::channel_allowed(&ctx["settings"], guild_id.as_deref(), &channel_id)
+                crate::commands::channel_allowed(&ctx["settings"], guild_id.as_deref(), &channel_id)
             }
             Err(_) => false,
         }
@@ -97,7 +97,7 @@ impl EventHandler for DiscordHandler {
         #[cfg(feature = "songbird")]
         {
             if let Some(manager) = songbird::serenity::get(&ctx).await {
-                crate::discord::set_songbird_manager(manager);
+                crate::set_songbird_manager(manager);
                 tracing::info!("Songbird manager stored");
             }
         }
@@ -478,7 +478,7 @@ impl EventHandler for DiscordHandler {
         if let Interaction::Command(command) = interaction {
             match command.data.name.as_str() {
                 "skill" => {
-                    if let Err(error) = crate::discord::commands::handle_skill_command(&self.host, &ctx, &command).await {
+                    if let Err(error) = crate::commands::handle_skill_command(&self.host, &ctx, &command).await {
                         tracing::error!(%error, "Skill command response failed");
                     }
                 }
@@ -539,7 +539,7 @@ impl EventHandler for DiscordHandler {
                 }
                 "pair" => {
                     if let Err(e) =
-                        crate::discord::commands::handle_pair_command(self.host.as_ref(), &ctx, &command)
+                        crate::commands::handle_pair_command(self.host.as_ref(), &ctx, &command)
                             .await
                     {
                         tracing::error!("Pair command error: {}", e);
@@ -740,7 +740,7 @@ impl EventHandler for DiscordHandler {
                         if let Some(manager) = manager {
                             match manager.join(guild_id, voice_channel_id).await {
                                 Ok(call) => {
-                                    crate::discord::set_discord_voice_state(
+                                    crate::set_discord_voice_state(
                                         Some(guild_id.get()),
                                         Some(command.user.id.get()),
                                     )
@@ -750,7 +750,7 @@ impl EventHandler for DiscordHandler {
                                     // startet → GPU-Slots vorwärmen (LLM für
                                     // Antworten, media für TTS; STT läuft
                                     // router-lokal). Fire-and-forget.
-                                    crate::gpu_router::wake_slots_for_session();
+                                    praxis_gpu_router::wake_slots_for_session();
 
                                     // Check context for deafened and voice_enabled settings
                                     let discord_user_id = command.user.id.to_string();
@@ -781,7 +781,7 @@ impl EventHandler for DiscordHandler {
 
                                     // Set up voice handler and transcription pipeline
                                     let voice_handler =
-                                        Arc::new(crate::voice::handler::VoiceHandler::new());
+                                        Arc::new(crate::voice::VoiceHandler::new());
 
                                     let fallback_discord_id = command.user.id.get();
 
@@ -810,7 +810,7 @@ impl EventHandler for DiscordHandler {
                                         }
                                     }
 
-                                    let voice_receiver = crate::voice::handler::songbird_integration::VoiceReceiver::new(voice_handler.clone());
+                                    let voice_receiver = praxis_voice::songbird_integration::VoiceReceiver::new(voice_handler.clone());
 
                                     // Register event handler on the call
                                     {
@@ -898,56 +898,59 @@ impl EventHandler for DiscordHandler {
                                             };
 
                                             // Get STT config from context
-                                            let ctx = db
+                                            let ctx = self
+                                                .host
                                                 .load_context(&praxis_user_id)
-                                                .unwrap_or_else(|_| crate::db::contexts::Context {
-                                                    user_id: praxis_user_id.clone(),
-                                                    ..Default::default()
+                                                .unwrap_or_else(|_| {
+                                                    serde_json::json!({
+                                                        "user_id": praxis_user_id,
+                                                        "settings": {}
+                                                    })
                                                 });
-                                            let stt_type = ctx.settings.voice_stt_type.clone();
+                                            let settings = &ctx["settings"];
+                                            let string =
+                                                |key: &str| settings[key].as_str().map(str::to_string);
+                                            let stt_type =
+                                                string("voice_stt_type").unwrap_or_default();
 
-                                            if !ctx.settings.voice_enabled || !ctx.settings.use_stt
+                                            if !settings["voice_enabled"].as_bool().unwrap_or(false)
+                                                || !settings["use_stt"].as_bool().unwrap_or(false)
                                             {
-                                                tracing::debug!("VOICE_PIPELINE: voice_enabled={}, use_stt={} for user {}, skipping transcription", ctx.settings.voice_enabled, ctx.settings.use_stt, user_id);
+                                                tracing::debug!("VOICE_PIPELINE: voice_enabled={}, use_stt={} for user {}, skipping transcription", settings["voice_enabled"], settings["use_stt"], user_id);
                                                 continue;
                                             }
 
-                                            let api_key = self.credentials.elevenlabs_api_key.clone();
+                                            let api_key =
+                                                self.credentials.elevenlabs_api_key.clone();
                                             let model_path = match stt_type.as_str() {
-                                                "vosk" => {
-                                                    ctx.settings.voice_vosk_model_path.clone()
-                                                }
-                                                "whisper" => {
-                                                    ctx.settings.voice_whisper_model_path.clone()
-                                                }
+                                                "vosk" => string("voice_vosk_model_path"),
+                                                "whisper" => string("voice_whisper_model_path"),
                                                 _ => None,
                                             };
 
-                                            let stt_config = crate::voice::STTConfig {
+                                            let stt_config = praxis_voice::STTConfig {
                                                 engine: stt_type,
                                                 api_key,
                                                 model_path,
-                                                vosk_url: ctx.settings.voice_vosk_url.clone(),
-                                                elevenlabs_model: ctx
-                                                    .settings
-                                                    .elevenlabs_stt_model
-                                                    .clone(),
-                                                elevenlabs_language: ctx
-                                                    .settings
-                                                    .elevenlabs_stt_language
-                                                    .clone(),
-                                                elevenlabs_tag_audio_events: ctx
-                                                    .settings
-                                                    .elevenlabs_stt_tag_audio_events,
-                                                elevenlabs_no_verbatim: ctx
-                                                    .settings
-                                                    .elevenlabs_stt_no_verbatim,
+                                                vosk_url: string("voice_vosk_url"),
+                                                elevenlabs_model: string("elevenlabs_stt_model"),
+                                                elevenlabs_language: string(
+                                                    "elevenlabs_stt_language",
+                                                ),
+                                                elevenlabs_tag_audio_events: settings
+                                                    ["elevenlabs_stt_tag_audio_events"]
+                                                    .as_bool()
+                                                    .unwrap_or(false),
+                                                elevenlabs_no_verbatim: settings
+                                                    ["elevenlabs_stt_no_verbatim"]
+                                                    .as_bool()
+                                                    .unwrap_or(false),
                                             };
 
                                             let wav_data =
-                                                crate::voice::pcm_to_wav(&audio_data, 16000, 1);
+                                                praxis_voice::pcm_to_wav(&audio_data, 16000, 1);
 
-                                            let transcription = crate::voice::transcribe_audio(
+                                            let transcription = praxis_voice::transcribe_audio(
                                                 &wav_data,
                                                 &stt_config,
                                             )
@@ -977,7 +980,7 @@ impl EventHandler for DiscordHandler {
                                             // Check wake words
                                             let wake_words = ctx.settings.voice_wake_words.clone();
                                             let wake_match =
-                                                crate::voice::wake_word::matches_wake_word(
+                                                praxis_voice::wake_word::matches_wake_word(
                                                     &text,
                                                     &wake_words,
                                                 );
@@ -998,7 +1001,7 @@ impl EventHandler for DiscordHandler {
                                                 wake_match.wake_word, message_text);
 
                                             // Send to gateway via WsClient
-                                            let payload = crate::discord::ws_client::OutgoingMessage::Message {
+                                            let payload = crate::ws_client::OutgoingMessage::Message {
                                                 user_id: praxis_user_id.clone(),
                                                 content: message_text,
                                                 channel_id: format!("voice:{}", guild_id),
@@ -1129,7 +1132,7 @@ impl EventHandler for DiscordHandler {
                                 if let Err(e) = manager.remove(guild_id).await {
                                     tracing::error!("Failed to disconnect: {}", e);
                                 }
-                                crate::discord::set_discord_voice_state(None, None).await;
+                                crate::set_discord_voice_state(None, None).await;
                                 tracing::info!("Disconnected from voice in guild {}", guild_id);
                                 let _ = command
                                     .create_response(
@@ -1195,7 +1198,7 @@ impl EventHandler for DiscordHandler {
                         )
                         .await;
 
-                    let compact_msg = crate::discord::ws_client::OutgoingMessage::Compact {
+                    let compact_msg = crate::ws_client::OutgoingMessage::Compact {
                         user_id: pairing.user_id.clone(),
                     };
 

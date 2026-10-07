@@ -74,3 +74,37 @@ fn skill_command_rechecks_pairing_revocation_and_channel_permissions() {
         );
     }
 }
+
+/// The kernel host plus the channel's skill commands: activation is paired,
+/// scoped and permission-checked (handoff §6D channel seam).
+#[test]
+fn backend_skill_activation_is_paired_scoped_and_permission_checked() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = crate::db::Database::new(&dir.path().join("db")).unwrap();
+    crate::db::tools::init_default_tools(&db).unwrap();
+    let skills = dir.path().join("skills/test");
+    std::fs::create_dir_all(&skills).unwrap();
+    std::fs::write(skills.join("skill.json"), r#"{"name":"test","description":"Test","required_parameters":["code"]}"#).unwrap();
+    std::fs::write(skills.join("skill.poml"), "<poml><p>test</p></poml>").unwrap();
+    // The host indexes its skill catalog at startup, after the fixtures.
+    let host = crate::channels::KernelChannelHost::new(db.clone(), dir.path().to_path_buf()).unwrap();
+    assert!(apply_skill_command(&host, "discord-a", None, "channel", "test").is_err());
+    db.create_pairing("alice", "discord-a", None).unwrap();
+    db.create_pairing("bob", "discord-b", None).unwrap();
+    assert!(apply_skill_command(&host, "discord-a", None, "channel", "list").unwrap().contains("test"));
+    apply_skill_command(&host, "discord-a", None, "channel", "test").unwrap();
+    assert_eq!(db.load_context("alice").unwrap().settings.active_skill.as_deref(), Some("test"));
+    assert!(db.load_context("bob").unwrap().settings.active_skill.is_none());
+    assert!(apply_skill_command(&host, "discord-a", None, "channel", "unknown").is_err());
+    crate::db::tools::set_plugin_tool_enabled(&db, "use_skill", false).unwrap();
+    assert!(apply_skill_command(&host, "discord-a", None, "channel", "test").is_err());
+    apply_skill_command(&host, "discord-a", None, "channel", "off").unwrap();
+    let mut ctx = db.load_context("alice").unwrap();
+    ctx.settings.allowed_channels = vec!["private".into()];
+    db.save_context(&ctx).unwrap();
+    assert!(apply_skill_command(&host, "discord-a", None, "channel", "list").is_err());
+    assert!(db.load_context("alice").unwrap().settings.active_skill.is_none());
+    ctx.settings.allowed_guilds = vec!["guild-1".into()];
+    assert!(!channel_allowed(&serde_json::to_value(&ctx.settings).unwrap_or_default(), Some("guild-2"), "private"));
+    assert!(channel_allowed(&serde_json::to_value(&ctx.settings).unwrap_or_default(), Some("guild-1"), "private"));
+}

@@ -3685,7 +3685,6 @@ dependencies = [
  "futures-util",
  "governor",
  "hostname",
- "hound",
  "httpdate",
  "image",
  "jsonwebtoken",
@@ -3693,6 +3692,7 @@ dependencies = [
  "libc",
  "once_cell",
  "png",
+ "praxis-channel-discord",
  "praxis-comfyui",
  "praxis-gpu-router",
  "praxis-legacy-file-ops",
@@ -3713,10 +3713,8 @@ dependencies = [
  "rustls-pemfile",
  "serde",
  "serde_json",
- "serenity",
  "sha2",
  "shlex",
- "songbird",
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
@@ -3732,6 +3730,33 @@ dependencies = [
  "uuid",
  "wiremock",
  "zeroize",
+]
+
+[[package]]
+name = "praxis-channel-discord"
+version = "1.0.3"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "dashmap 6.1.0",
+ "futures-util",
+ "hound",
+ "lazy_static",
+ "once_cell",
+ "praxis-voice",
+ "rand 0.8.6",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "serenity",
+ "songbird",
+ "tempfile",
+ "tokio",
+ "tokio-tungstenite 0.24.0",
+ "tracing",
+ "urlencoding",
+ "uuid",
 ]
 
 [[package]]

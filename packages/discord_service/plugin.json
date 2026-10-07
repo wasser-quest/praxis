@@ -1,0 +1,8 @@
+{
+  "name": "discord_service",
+  "description": "Discord channel service (crates/praxis-channel-discord): pairing, commands, delivery adapters and voice glue over the ChannelHost seam",
+  "version": "1.0.3",
+  "enabled": true,
+  "secrets": ["discord_bot_token", "elevenlabs_api_key"],
+  "tools": []
+}

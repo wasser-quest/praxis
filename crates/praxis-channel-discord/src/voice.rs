@@ -434,7 +434,7 @@ mod handler_tests {
         handler.set_ssrc_user(100, 42).await;
         handler.add_audio_raw(&[i16::MIN; 320], 100).await;
         assert_eq!(handler.user_buffers.get(&100).unwrap().len(), 320);
-        assert_eq!(crate::voice::apply_noise_gate(&[i16::MIN, i16::MAX, 10], 100), vec![i16::MIN, i16::MAX, 0]);
+        assert_eq!(praxis_voice::apply_noise_gate(&[i16::MIN, i16::MAX, 10], 100), vec![i16::MIN, i16::MAX, 0]);
     }
 
     #[tokio::test]

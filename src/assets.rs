@@ -188,6 +188,7 @@ const COMPATIBILITY_ASSETS: &[Asset] = &[
     asset!("plugins/mimo_understand/understand_audio.py", executable),
     asset!("plugins/mimo_understand/understand_image.py", executable),
     asset!("plugins/mimo_understand/understand_video.py", executable),
+    asset!("packages/discord_service/plugin.json"),
     asset!("plugins/minimax_image/README.md"),
     asset!("plugins/minimax_image/image_generate.py", executable),
     asset!("plugins/minimax_image/image_analyze.py", executable),
