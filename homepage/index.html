@@ -110,9 +110,11 @@ C = agent_complete</code></pre><div class="instruction"><span>execute_decision</
         <div class="setup-sheet"><div class="code-heading"><span>Build &amp; start</span><button class="copy-button" type="button" data-copy-target="setup-commands" aria-label="Copy setup commands">Copy commands</button></div><pre><code id="setup-commands">git clone https://github.com/wasser-quest/praxis.git
 cd praxis
 cargo build --release --locked
+./target/release/praxis install-preset compatibility --directory "$PWD"
 ./target/release/praxis onboard --interactive
 ./target/release/praxis run</code></pre><div class="setup-note"><strong>Open the dashboard at <code>http://localhost:1337</code>.</strong><p>Dashboard: <code>0.0.0.0:1337</code> · Gateway API: <code>0.0.0.0:3537</code>. Use your server's hostname for remote access. Keep access behind your firewall, VPN or authenticated TLS proxy.</p></div></div>
       </div>
+      <div class="wrap workspace-note"><span class="small-label">The standard preset</span><p><code>praxis install-preset compatibility --directory &lt;install&gt;</code> fills in what a source checkout cannot ship: workflows, prompts, skills, dashboard files, the shipped plugin folders and the VM runtime assets. It installs public files only &mdash; never a service, a secret, a provider call or a tool flag. Upgrades add <code>--update-dashboard</code> (previous files are backed up) and a one-time <code>--enable-vm-tools --data-dir &lt;data&gt;</code> grants the VM tools. Then onboarding writes your settings and <code>praxis run</code> starts. Whole setups &mdash; plugins, workflows, personas and a config profile in one signed bundle &mdash; arrive with <code>xis</code>, its plan and its change report.</p></div>
       <div class="wrap workspace-note"><span class="small-label">For verified coding</span><p>Select an existing project with <code>praxis run --workspace-dir /path/to/project</code>. Installation assets stay at <code>ROOT_DIR</code>. The runtime checks the prepared project before calling the model.</p><a href="https://github.com/wasser-quest/praxis/blob/main/docs/DECISION_IR.md">Project setup <span aria-hidden="true">↗</span></a></div>
     </section>
   </main>
