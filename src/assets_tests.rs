@@ -13,6 +13,21 @@ fn compatibility_preset_contains_all_shipped_plugins_and_preserves_operator_file
     for entry in std::fs::read_dir(source).unwrap() {
         let path = entry.unwrap().path();
         if path.join("plugin.json").is_file() {
+            let manifest: serde_json::Value = serde_json::from_str(
+                &std::fs::read_to_string(path.join("plugin.json")).unwrap(),
+            )
+            .unwrap();
+            // Three kinds of folder beside the shippable plugins: packages
+            // with a build step (source + 'praxis plugin install --build'),
+            // asset packs (the preset writes their canonical files instead)
+            // and kernel-bundled packages (nothing to install).
+            let asset_pack = manifest["provides"]["assets"].as_array().is_some();
+            let bundled = manifest["tools"].as_array().is_some_and(|tools| {
+                tools.iter().any(|tool| tool["handler"]["type"] == "builtin")
+            });
+            if manifest.get("build").is_some() || asset_pack || bundled {
+                continue;
+            }
             assert!(dir.path().join("plugins").join(path.file_name().unwrap()).join("plugin.json").is_file());
         }
     }
@@ -348,7 +363,7 @@ async fn onboarding_assets_first_message_and_active_skill_render_from_fresh_inst
 fn asset_packs_mirror_the_canonical_workspace_files() {
     let mut claimed = std::collections::HashSet::new();
     let mut packs = 0;
-    for entry in std::fs::read_dir("packages").unwrap() {
+    for entry in std::fs::read_dir("plugins").unwrap() {
         let entry = entry.unwrap();
         let manifest_path = entry.path().join("plugin.json");
         if !manifest_path.is_file() {

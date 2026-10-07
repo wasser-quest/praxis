@@ -1,0 +1,43 @@
+{
+  "name": "vision",
+  "description": "Raw image loading for visual analysis, installed independently of the Praxis host",
+  "version": "0.1.0",
+  "enabled": true,
+  "replaces": [
+    "vision"
+  ],
+  "tools": [
+    {
+      "name": "understand_image",
+      "description": "Load an image for visual analysis. The image is sent to the vision API - you WILL see and understand the image content in your next response. After calling this tool, describe what you see in the image. Use for screenshots, photos, or any visual content.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Path to the image file (supports PPM, PNG, JPEG)"
+          },
+          "prompt": {
+            "type": "string",
+            "description": "What to look for in the image. E.g. 'What menu options are shown?' or 'Describe the installation step shown'."
+          }
+        },
+        "required": [
+          "path",
+          "prompt"
+        ]
+      },
+      "handler": {
+        "type": "executable",
+        "path": "bin/praxis-vision",
+        "timeout_secs": 30
+      }
+    }
+  ],
+  "build": {
+    "crate": "praxis-vision",
+    "bins": [
+      "praxis-vision"
+    ]
+  }
+}

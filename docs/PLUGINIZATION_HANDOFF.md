@@ -60,11 +60,11 @@ Keep these true or the design collapses:
 | `praxis-shell` | `execute_terminal` executable + durable background worker |
 | `praxis-vision` | `understand_image` executable |
 
-### Installed packages (`packages/`, `plugins/`)
+### Installed packages (`plugins/`, `plugins/`)
 
-* `packages/{dashboard,legacy_file_ops,shell,tui,vision}` — first-party optional
+* `plugins/{dashboard,legacy_file_ops,shell,tui,vision}` — first-party optional
   packages with installers in `scripts/`.
-* `packages/runtime_control` — a **privileged bundled package**: its manifest
+* `plugins/runtime_control` — a **privileged bundled package**: its manifest
   declares the 12 model-facing tools over `builtin` handlers bound to
   host-owned operations, and the kernel always registers it (see §5.9).
 * `plugins/*` — shipped v1 tool plugins (vm, comfyui, elevenlabs_tts,
@@ -133,7 +133,7 @@ Handlers: `builtin`, `http`, `script`, `executable`, `verification`,
 * `dashboard` Cargo feature; without it there is no listener/TLS/assets.
 * Host services extracted (`src/services`), Host API v1, feature page slots.
 * Standard dashboard package (`crates/praxis-dashboard`,
-  `packages/dashboard`, `scripts/install-dashboard-package.sh`).
+  `plugins/dashboard`, `praxis plugin install --build ./plugins/dashboard`).
 * Open: navigation slots for absent features; remove the builtin dashboard
   after a release.
 
@@ -142,7 +142,7 @@ Handlers: `builtin`, `http`, `script`, `executable`, `verification`,
 * `file_ops` core: `inspect_file`, `write_file`, `apply_patch`, `run_check`.
 * Extracted: `legacy_file_ops`, `shell`, `vision` (optional crates + packages +
   installers), and the TUI as a standalone `praxis-tui` executable +
-  `packages/tui`.
+  `plugins/tui`.
 * **Lifecycle hooks**: `hooks.install`/`hooks.uninstall`, policy
   `PLUGIN_HOOKS=allow|ask|deny`, staged atomic install, rollback, script
   hashing (`PLUGINS_DIR/praxis.lock.json`), `plugin verify`.
@@ -171,14 +171,14 @@ Handlers: `builtin`, `http`, `script`, `executable`, `verification`,
 * **Checked `write_file`**: `expected_absent` / `expected_sha256` transactional
   single-file write with the durable journal; legacy raw form unchanged.
 * **`runtime_control` as a privileged bundled package**: the 12 model-facing
-  tools are declared by `packages/runtime_control/plugin.json` (`builtin`
+  tools are declared by `plugins/runtime_control/plugin.json` (`builtin`
   handlers) and implemented by host-owned operations in
   `tools::builtin_operations`; the tools are no longer seeded from
   `db/tools.rs`, legacy enable/disable flags migrate to the plugin flag store,
   and `execute_decision` lowers one instruction through the dispatch loop.
 * **Every tool owner is a package**: `delegation`, `memory`, `rag`, `cron`,
   `discord`, `interaction`, `skills`, `workflow_authoring` and `file_ops` are
-  privileged bundled packages (`packages/<id>/plugin.json`) over host-owned
+  privileged bundled packages (`plugins/<id>/plugin.json`) over host-owned
   operations, next to the extracted `legacy_file_ops`, `shell` and `vision`.
   `db/tools.rs` seeds no tool at all; each name has exactly one owner.
 * **Implementation bytes are pinned**: the registry revision hashes the files
@@ -191,7 +191,7 @@ Handlers: `builtin`, `http`, `script`, `executable`, `verification`,
   directory and its previous asset placement.
 * **`praxis-tui` is an unlinked crate**: the terminal frontend links neither
   the kernel nor its database and does everything over the authenticated `/v1`
-  API; `praxis chat` launches the standalone binary. The kernel no longer
+  API; `praxis tui` launches the standalone binary. The kernel no longer
   links `ratatui`/`crossterm`/`unicode-segmentation`.
 * **VM status uses per-guest metadata**: it attaches every guest through the
   endpoints recorded at creation, claim or recovery in either socket mode.
@@ -280,7 +280,7 @@ VM/media service.
 
 Some capabilities must keep working for the kernel's own workflows, but should
 still be *declared*, owned and switched like any other package. A **privileged
-bundled package** is a manifest under `packages/` (today `runtime_control`,
+bundled package** is a manifest under `plugins/` (today `runtime_control`,
 later `file_ops`) that the kernel registers before anything installed:
 
 * Its tools are `builtin` handlers naming host-owned operations
@@ -339,7 +339,7 @@ Then make `file_ops` a privileged bundled plugin.
 
 **Mechanism — not a new crate, and not a blocker.** §9 step 1's second option is
 the one that applies to these owners: “or the installed executable +
-`plugin.json` under `packages/`”, using the `builtin` handler from §3.
+`plugin.json` under `plugins/`”, using the `builtin` handler from §3.
 `plan/PLUGINIZATION.md` is explicit that `runtime_control` “exposes
 `execute_decision`, discovery, context and navigation tools to the model **using
 host-owned operations**”, so it becomes a package whose `plugin.json` declares
@@ -352,7 +352,7 @@ already exists; `PluginRegistry::execute_tool_with_host(db, user, call, …)`
 already carries that context to the handler boundary.
 
 For `runtime_control` concretely: declare its 12 tools in
-`packages/runtime_control/plugin.json` over that operation table and stop
+`plugins/runtime_control/plugin.json` over that operation table and stop
 seeding them from `db/tools.rs`'s default list. The migration must keep existing
 enable/disable flags and every identifier that SM/IR guards and tool groups
 reference, and must never expose both a builtin and a plugin owner. (This is
@@ -365,7 +365,7 @@ package owner; `db/tools.rs` seeds none of them:
 - [x] `shell` (3) — optional crate + package + durable background worker.
 - [x] `vision` (1) — optional crate + package.
 - [x] `runtime_control` (12) — privileged bundled package
-  (`packages/runtime_control/plugin.json`), not a `"replaces"` plugin:
+  (`plugins/runtime_control/plugin.json`), not a `"replaces"` plugin:
   - [x] `tools::builtin_operations` seam with host-issued identity;
         unknown operations fail closed.
   - [x] `execute_decision` — a table entry backed by the general "run this
@@ -418,7 +418,7 @@ pinned against the kernel definitions they replaced where those still exist
   remains. The Discord channel is `crates/praxis-channel-discord`: it defines
   the `ChannelHost` seam it needs (pairing, context, sessions, history,
   agent control, interactions, delivery feed, skills), receives only scoped
-  credentials (`packages/discord_service`), and links nothing of the kernel —
+  credentials (`plugins/discord_service`), and links nothing of the kernel —
   `KernelChannelHost` implements the seam and keeps authority. ComfyUI's
   native
   workflow/qwen3/XTTS pieces are `crates/praxis-comfyui` (a media provider with
@@ -467,7 +467,7 @@ no VM/UI/media.
       socket mode. Per-guest TCP port *allocation* for new guests remains open
       alongside PR 3.
 - [ ] Remove the builtin dashboard after a release. Release-gated: the
-      `dashboard` feature and `packages/dashboard` are the replacement; the
+      `dashboard` feature and `plugins/dashboard` are the replacement; the
       removal itself waits for a release boundary so existing installs keep a
       working UI in between.
 
@@ -565,11 +565,11 @@ PLUGINS_DIR="$TMP/plugins" DATA_DIR="$TMP/data" ROOT_DIR="$TMP/root" \
 ## 9. Recipe: add a package
 
 1. Create the implementation crate under `crates/` (no host internals) or the
-   installed executable + `plugin.json` under `packages/`.
+   installed executable + `plugin.json` under `plugins/`.
 2. Add an optional `[features]` entry and dependency; include it in
    `compatibility` only if it is a former default. Gate host call sites with
    `#[cfg(feature = "…")]`.
-3. Add `packages/<id>/plugin.json` and `scripts/install-<id>-package.sh`
+3. Add `plugins/<id>/plugin.json` and `praxis plugin install --build ./plugins/<id>`
    (honors `CARGO_TARGET_DIR`, `PLUGINS_DIR`, `PROFILE`; refuses overwrite).
 4. Add the tool/owner to `tools/packages.rs`; extend `native_available` if the
    implementation is optional.
@@ -583,7 +583,7 @@ PLUGINS_DIR="$TMP/plugins" DATA_DIR="$TMP/data" ROOT_DIR="$TMP/root" \
 | Area | File |
 | --- | --- |
 | Owner catalog / packages | `src/tools/catalog.rs`, `src/tools/packages.rs` |
-| Host-owned operations / bundled manifests | `src/tools/builtin_operations.rs`, `packages/runtime_control/plugin.json` |
+| Host-owned operations / bundled manifests | `src/tools/builtin_operations.rs`, `plugins/runtime_control/plugin.json` |
 | Dispatch | `src/gateway/tool_dispatch.rs` |
 | Plugin manifest/loader | `src/plugins/mod.rs` |
 | Lifecycle/hooks/lockfile/assets | `src/plugins/lifecycle.rs` |

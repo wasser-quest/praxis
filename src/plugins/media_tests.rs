@@ -45,6 +45,7 @@ async fn media_plugin_registry_delivers_only_the_selected_plugins_declared_secre
         ("image", "openrouter_api_key"),
     ] {
         registry.register(Plugin {
+            build: None,
             name: name.into(),
             description: "test".into(),
             version: "1".into(),

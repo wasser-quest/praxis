@@ -85,7 +85,7 @@ Commands (normal build plus loopback-only fixtures):
 cargo test --locked tui:: -- --test-threads=1
 cargo test --locked gateway::llm:: -- --test-threads=1
 cargo test --locked sse:: -- --test-threads=1
-node scripts/test_tui_isolated.js
+cargo test --locked -p praxis-tui
 cargo build --locked --bin praxis
 node scripts/test_tui_selection_pty.js target/debug/praxis
 PRAXIS_PTY_TOOL_RESULT=1 node scripts/test_tui_selection_pty.js target/debug/praxis

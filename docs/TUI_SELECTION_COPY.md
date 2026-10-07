@@ -97,7 +97,7 @@ model, gateway, shell, logs or an external clipboard service.
 ```sh
 cargo test --locked tui:: -- --test-threads=1
 cargo test --locked sse:: -- --test-threads=1
-node scripts/test_tui_isolated.js
+cargo test --locked -p praxis-tui
 cargo build --locked --bin praxis
 node scripts/test_tui_selection_pty.js target/debug/praxis
 node scripts/test_chat_terminal.js
@@ -105,7 +105,7 @@ node scripts/test_chat_history.js
 node scripts/test_ui_browser.js
 node scripts/test_ui_static.js
 node --check scripts/test_tui_selection_pty.js
-node --check scripts/test_tui_isolated.js
+node --check scripts/test_tui_selection_pty.js
 git diff --check
 ```
 

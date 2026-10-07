@@ -1,6 +1,6 @@
 use std::io::{self, Write};
 
-pub fn run_interactive_onboard() -> anyhow::Result<()> {
+pub async fn run_interactive_onboard() -> anyhow::Result<()> {
     println!();
     println!("========================================");
     println!("   Praxis AI Agent Platform - Setup");
@@ -670,7 +670,18 @@ pub fn run_interactive_onboard() -> anyhow::Result<()> {
     println!("Configuration saved to {}", env_path);
 
     std::fs::create_dir_all("data")?;
-    std::fs::create_dir_all("plugins")?;
+    let data_dir = env_lines
+        .iter()
+        .find(|l| l.starts_with("DATA_DIR="))
+        .map(|l| l.strip_prefix("DATA_DIR=").unwrap_or("./data"))
+        .unwrap_or("./data")
+        .to_string();
+    std::fs::create_dir_all(&data_dir)?;
+    // Plugins install under DATA_DIR by default: one directory holds every
+    // installed plugin (see docs/PLUGIN_LIFECYCLE.md).
+    let plugins_dir = std::env::var("PLUGINS_DIR")
+        .unwrap_or_else(|_| format!("{}/plugins", data_dir.trim_end_matches('/')));
+    std::fs::create_dir_all(&plugins_dir)?;
     // One complete bundle for onboarding and repair, including all relative
     // POML imports, canonical contexts/*.sm, native skills and bitmap branding.
     // Preserve existing user customizations instead of overwriting prompts.
@@ -678,25 +689,67 @@ pub fn run_interactive_onboard() -> anyhow::Result<()> {
     println!("Installed {} runtime assets; preserved {} existing files.", assets.created.len(), assets.preserved.len());
     println!("For dashboard upgrades without reconfiguring: ./praxis repair-assets --update-dashboard");
 
-    // Ask about MiniMax image plugin
-    if provider_name == "minimax" || provider_name == "mimo" {
-        println!();
-        println!("--- Plugins ---");
-        println!("The MiniMax Image plugin provides image generation and analysis tools.");
-        let install_plugin = prompt_yes_no("Install MiniMax Image plugin?", true)?;
-        if install_plugin {
-            env_lines.push("PLUGIN_MINIMAX_IMAGE=true".to_string());
-            println!("MiniMax Image plugin will be enabled.");
+    // Install the shipped plugins through the normal lifecycle: manifest
+    // validation, PLUGIN_HOOKS policy and praxis.lock.json records — exactly
+    // what 'praxis plugin install' does by hand.
+    println!();
+    println!("--- Plugins ---");
+    let shipped = [
+        "system_info",
+        "brave_search",
+        "minimax_image",
+        "openrouter_image",
+        "mimo_understand",
+        "elevenlabs_tts",
+        "comfyui",
+        "sosse",
+        "spotify",
+        "vm",
+    ];
+    let available: Vec<String> = shipped
+        .iter()
+        .map(|name| name.to_string())
+        .filter(|name| std::path::Path::new("plugins").join(name).join("plugin.json").is_file())
+        .filter(|name| !std::path::Path::new(&plugins_dir).join(name).exists())
+        .collect();
+    if !available.is_empty()
+        && prompt_yes_no(
+            &format!(
+                "Install the {} shipped plugins (search, image, media, Spotify, VM)?",
+                available.len()
+            ),
+            true,
+        )?
+    {
+        let run_hooks = crate::plugins::lifecycle::resolve_consent(
+            crate::plugins::lifecycle::HookPolicy::from_env()?,
+            false,
+            false,
+            "Run plugin install hooks?",
+        );
+        for name in available {
+            let source = std::path::Path::new("plugins").join(&name);
+            match crate::plugins::lifecycle::install(&crate::plugins::lifecycle::InstallRequest {
+                source: &source,
+                plugins_dir: std::path::Path::new(&plugins_dir),
+                data_dir: std::path::Path::new(&data_dir),
+                run_hooks,
+                dry_run: false,
+            })
+            .await
+            {
+                Ok(report) => println!("  installed {}", report.name),
+                Err(error) => println!("  {name} skipped: {error}"),
+            }
         }
     }
+    println!("Everything installed lives in one directory: {plugins_dir}");
+    println!("Frontends and tool packages build from source whenever you want them:");
+    println!("  praxis plugin install --build ./plugins/tui        # terminal UI");
+    println!("  praxis plugin install --build ./plugins/dashboard  # web dashboard");
 
     // Create database
-    let data_dir = env_lines
-        .iter()
-        .find(|l| l.starts_with("DATA_DIR="))
-        .map(|l| l.strip_prefix("DATA_DIR=").unwrap_or("./data"))
-        .unwrap_or("./data");
-    let _db = crate::db::Database::new(std::path::Path::new(data_dir))?;
+    let _db = crate::db::Database::new(std::path::Path::new(&data_dir))?;
     println!("Database initialized");
 
     // Save all secrets to encrypted storage (enc2)

@@ -7,7 +7,7 @@
 - Thinking generation level and visibility separate; `/show_thinking` displays the complete provider reasoning, including Discord splitting.
 - Native default streaming in web and TUI: text, optional reasoning, tool names and argument fragments. Never execute incomplete calls.
 - Web `/stop` with trailing text and Send button must be a command, not a user prompt.
-- TUI local and remote: `praxis chat --gateway-url ... --gateway-key ...`, no dependence on a remote client's local backend DB/agent registry.
+- TUI local and remote: `praxis tui --gateway-url ... --gateway-key ...`, no dependence on a remote client's local backend DB/agent registry.
 - At least 1,000 automated cases plus meaningful real-model tests (not a claim of 1,000 live GPU calls).
 - 20-task live state-machine experiment: user prompts never ask for switching. Measure model-chosen vs deterministic routing, task correctness and benefit. Re-evaluate state between model/tool steps, not just once per task. Compare baseline with adapted test template. Isolated fixtures only.
 - Reliable auto-compaction BEFORE overflow, failure-safe persistence, summaries capture big idea, key insights, decisions, pending tasks and actionable handoff.

@@ -125,7 +125,7 @@ pub fn owner_of(tool: &str) -> Option<&'static Package> {
 }
 
 /// Kernel-shipped privileged packages. Their tools are declared by a bundled
-/// manifest under `packages/`, but the implementations are host-owned
+/// manifest under `plugins/`, but the implementations are host-owned
 /// operations in the kernel (`tools::builtin_operations`), so the package is
 /// never installed, never replaced and never trusted with authority: removing
 /// or disabling it removes the tools from the catalog, not the runtime's
@@ -136,16 +136,16 @@ pub fn bundled(id: &str) -> bool {
 
 fn bundled_manifest(id: &str) -> Option<&'static str> {
     match id {
-        "runtime_control" => Some(include_str!("../../packages/runtime_control/plugin.json")),
-        "delegation" => Some(include_str!("../../packages/delegation/plugin.json")),
-        "memory" => Some(include_str!("../../packages/memory/plugin.json")),
-        "rag" => Some(include_str!("../../packages/rag/plugin.json")),
-        "cron" => Some(include_str!("../../packages/cron/plugin.json")),
-        "discord" => Some(include_str!("../../packages/discord/plugin.json")),
-        "interaction" => Some(include_str!("../../packages/interaction/plugin.json")),
-        "skills" => Some(include_str!("../../packages/skills/plugin.json")),
-        "workflow_authoring" => Some(include_str!("../../packages/workflow_authoring/plugin.json")),
-        "file_ops" => Some(include_str!("../../packages/file_ops/plugin.json")),
+        "runtime_control" => Some(include_str!("../../plugins/runtime_control/plugin.json")),
+        "delegation" => Some(include_str!("../../plugins/delegation/plugin.json")),
+        "memory" => Some(include_str!("../../plugins/memory/plugin.json")),
+        "rag" => Some(include_str!("../../plugins/rag/plugin.json")),
+        "cron" => Some(include_str!("../../plugins/cron/plugin.json")),
+        "discord" => Some(include_str!("../../plugins/discord/plugin.json")),
+        "interaction" => Some(include_str!("../../plugins/interaction/plugin.json")),
+        "skills" => Some(include_str!("../../plugins/skills/plugin.json")),
+        "workflow_authoring" => Some(include_str!("../../plugins/workflow_authoring/plugin.json")),
+        "file_ops" => Some(include_str!("../../plugins/file_ops/plugin.json")),
         _ => None,
     }
 }

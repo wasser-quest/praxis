@@ -14,7 +14,7 @@ fn fixture(mode: &str) -> (tempfile::TempDir, Database, Config, PluginRegistry) 
     std::fs::create_dir_all(package.join("bin")).unwrap();
     std::fs::write(
         package.join("plugin.json"),
-        include_str!("../../packages/shell/plugin.json"),
+        include_str!("../../plugins/shell/plugin.json"),
     )
     .unwrap();
     let worker = package.join("worker");
@@ -38,7 +38,7 @@ fn fixture(mode: &str) -> (tempfile::TempDir, Database, Config, PluginRegistry) 
     let mut registry = PluginRegistry::new();
     registry
         .try_register(
-            serde_json::from_str(include_str!("../../packages/shell/plugin.json")).unwrap(),
+            serde_json::from_str(include_str!("../../plugins/shell/plugin.json")).unwrap(),
         )
         .unwrap();
     (dir, db, config, registry)
@@ -178,7 +178,7 @@ async fn installed_shell_package_runs_through_chat_agent_and_worker() {
         )
         .unwrap();
     }
-    std::fs::copy("packages/shell/plugin.json", package.join("plugin.json")).unwrap();
+    std::fs::copy("plugins/shell/plugin.json", package.join("plugin.json")).unwrap();
     let mut registry = crate::plugins::load_all_plugins(&dir.path().join("plugins"));
     assert_eq!(registry.list().len(), 1 + crate::tools::packages::bundled_plugins().len());
     let data = dir.path().join("data");

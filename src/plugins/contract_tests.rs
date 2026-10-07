@@ -23,6 +23,7 @@ fn fixture(handler: &str) -> (tempfile::TempDir, PluginRegistry) {
     })).unwrap();
     let mut registry = PluginRegistry::new();
     registry.register(Plugin {
+        build: None,
         name: "sample".into(),
         description: "sample".into(),
         version: "1".into(),

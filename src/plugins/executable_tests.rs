@@ -213,7 +213,7 @@ async fn executable_real_legacy_package_runs_through_chat_agent_and_live_guards(
         .expect("build the package separately first");
     std::fs::copy(executable, package_dir.join("bin/praxis-legacy-file-ops")).unwrap();
     std::fs::copy(
-        "packages/legacy_file_ops/plugin.json",
+        "plugins/legacy_file_ops/plugin.json",
         package_dir.join("plugin.json"),
     )
     .unwrap();
@@ -283,7 +283,7 @@ async fn executable_real_vision_package_runs_through_chat_and_agent_and_live_gua
     let executable =
         std::env::var("PRAXIS_VISION_EXECUTABLE").expect("build praxis-vision first");
     std::fs::copy(executable, package_dir.join("bin/praxis-vision")).unwrap();
-    std::fs::copy("packages/vision/plugin.json", package_dir.join("plugin.json")).unwrap();
+    std::fs::copy("plugins/vision/plugin.json", package_dir.join("plugin.json")).unwrap();
     let registry = load_all_plugins(&dir.path().join("plugins"));
     assert_eq!(registry.list().len(), 1 + crate::tools::packages::bundled_plugins().len());
     let db = crate::db::Database::new(dir.path()).unwrap();

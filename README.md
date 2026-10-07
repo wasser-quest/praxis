@@ -79,27 +79,35 @@ cargo build --release --locked --features compatibility
 ./target/release/praxis run
 # Dashboard: http://localhost:1337
 # Gateway API: http://localhost:3537
+
+# Terminal UI: install the package, then start it
+./target/release/praxis plugin install --build ./plugins/tui
+./target/release/praxis tui
+# /login <provider> configures a model; Up/Down recalls earlier prompts
 ```
 
 ### Install what you need
 
-Everything is a package, and each kind has one obvious home:
+Everything is a package, and one command installs any of them: `praxis plugin
+install`. The only variation is `--build` for packages that compile from source.
 
 | What | How |
 | --- | --- |
-| **Terminal UI** | `./scripts/install-tui-package.sh` — then `praxis chat` finds it beside the kernel, on `PATH`, or where `PRAXIS_TUI_EXECUTABLE` points |
-| **Dashboard** | `./scripts/install-dashboard-package.sh` (or the compatibility preset) |
-| **Tool packages** | `./scripts/install-{shell,legacy-file-ops,vision}-package.sh` |
+| **Terminal UI** | `praxis plugin install --build ./plugins/tui` — afterwards `praxis tui` starts it (found in `PLUGINS_DIR`, beside the kernel, on `PATH`, or where `PRAXIS_TUI_EXECUTABLE` points) |
+| **Dashboard** | `praxis plugin install --build ./plugins/dashboard` (or the compatibility preset) |
+| **Tool packages** | `praxis plugin install --build ./plugins/{shell,legacy_file_ops,vision}` |
 | **Tool & media plugins** | `praxis plugin install ./plugins/<name>`, one at a time — or all at once: `praxis plugin install-default --preset examples/presets/shipped-plugins.json` |
-| **Asset packs** | `praxis plugin install ./packages/asset_coding` (likewise `asset_learning`, `asset_persona`, `asset_workflow`) |
+| **Asset packs** | `praxis plugin install ./plugins/asset_coding` (likewise `asset_learning`, `asset_persona`, `asset_workflow`) |
 | **Whole setups** | `xis install repo/setup@version` |
 | **Kernel-bundled** | nothing to install: `file_ops`, `runtime_control`, `memory`, `rag`, `cron`, `discord`, `interaction`, `skills`, `workflow_authoring` (`praxis plugin builtins`) |
 
 Installing through `praxis plugin install` runs the lifecycle: manifest
 validation, `PLUGIN_HOOKS` policy (`allow|ask|deny`), `praxis.lock.json`
 records for `praxis plugin verify` — and it never enables tools or grants
-trust on its own. Everything lands in `PLUGINS_DIR`: one directory to list,
-verify and remove.
+trust on its own. Everything lands in `PLUGINS_DIR` (default `DATA_DIR/plugins`):
+one directory to list, verify and remove. In the terminal UI, `Up`/`Down` walk
+your recent prompts — a recalled prompt is ordinary editable input, so you can
+change it and re-enter it.
 
 ### Setups with xis
 
@@ -153,7 +161,7 @@ To keep legacy file code outside the host while retaining `read_file` and
 
 ```bash
 cargo build --release --locked -p praxis --no-default-features
-./scripts/install-legacy-file-ops-package.sh /actual/PLUGINS_DIR
+praxis plugin install --build ./plugins/legacy_file_ops
 # Restart Praxis with PLUGINS_DIR set to that directory.
 ```
 
@@ -167,7 +175,7 @@ To keep shell execution outside the host while retaining `execute_terminal`,
 
 ```bash
 cargo build --release --locked -p praxis --no-default-features
-./scripts/install-shell-package.sh /actual/PLUGINS_DIR
+praxis plugin install --build ./plugins/shell
 # The manifest declares the background worker; the env var below is an
 # optional override. Foreground execution needs no worker.
 # export SHELL_SERVICE_EXECUTABLE=plugins/shell/bin/praxis-shell
@@ -261,15 +269,15 @@ This restores missing workflows, templates/includes, skills and icons. Existing 
 
 ### TUI selection, copy and paste
 
-In `praxis chat`, **F2** toggles mouse capture for native terminal selection; **F3** enters whole-message copy mode. Use **Up/Down** to select, **Ctrl+C** or **y** to request clipboard copy, and **Esc** to return to your unchanged draft. **Ctrl+Q** always quits; Ctrl+C quits outside copy mode. PageUp/PageDown work in either mouse mode. Paste with your terminal's paste shortcut; multiline Unicode remains in the draft until sent. Clipboard requests use OSC 52 where supported, with native selection as the fallback. See [bindings, safety and terminal limitations](docs/TUI_SELECTION_COPY.md), or `/help` inside the TUI.
+In `praxis tui`, **F2** toggles mouse capture for native terminal selection; **F3** enters whole-message copy mode. Use **Up/Down** to select, **Ctrl+C** or **y** to request clipboard copy, and **Esc** to return to your unchanged draft. **Ctrl+Q** always quits; Ctrl+C quits outside copy mode. PageUp/PageDown work in either mouse mode. Paste with your terminal's paste shortcut; multiline Unicode remains in the draft until sent. Clipboard requests use OSC 52 where supported, with native selection as the fallback. See [bindings, safety and terminal limitations](docs/TUI_SELECTION_COPY.md), or `/help` inside the TUI.
 
 ### Provider login from the TUI
 
-Start the chat TUI (`praxis chat`, or `praxis chat --gateway-url https://host:3537 --gateway-key …` for a remote gateway) and use `/login`. Login always runs on the **gateway machine** — the process that talks to the model — so a remote TUI logs the remote backend in. The router is rebuilt in place; no restart.
+Start the chat TUI (`praxis tui`, or `praxis tui --gateway-url https://host:3537 --gateway-key …` for a remote gateway) and use `/login`. Login always runs on the **gateway machine** — the process that talks to the model — so a remote TUI logs the remote backend in. The router is rebuilt in place; no restart.
 
 The same client is available as a standalone `praxis-tui` executable
 (`praxis-tui --gateway-url … --gateway-key …`, or without a URL for a local
-gateway). `scripts/install-tui-package.sh` installs it as the `tui` frontend
+gateway). `praxis plugin install --build ./plugins/tui` installs it as the `tui` frontend
 package under `PLUGINS_DIR` so it can be distributed separately from the
 kernel.
 
@@ -392,7 +400,7 @@ For provider diagnostics, enable debug logging on the **gateway** process:
 
 ```bash
 RUST_LOG=warn,praxis::gateway::llm=debug praxis run
-RUST_LOG=warn,praxis::tui=debug praxis chat
+RUST_LOG=warn,praxis::tui=debug praxis tui
 ```
 
 Daily logs are written under `LOG_DIR` (default `./logs`):

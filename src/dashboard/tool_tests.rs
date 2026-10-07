@@ -79,6 +79,7 @@ fn backend_tool_toggle_builtin_ownership_is_preserved() {
     // taken over by an installed manifest: one owner per name.
     for name in ["execute_terminal", "execute_decision"] {
         assert!(plugins.try_register(crate::plugins::Plugin {
+            build: None,
             name: "shadow".into(),
             description: "Synthetic name collision".into(),
             version: "1.0.0".into(),

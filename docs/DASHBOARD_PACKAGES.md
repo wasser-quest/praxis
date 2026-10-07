@@ -153,10 +153,10 @@ routing, budgets, IR enforcement and receipts are unchanged.
 ## The standard dashboard package
 
 The full Praxis dashboard ships as a package too (`crates/praxis-dashboard`,
-manifest in `packages/dashboard/plugin.json`):
+manifest in `plugins/dashboard/plugin.json`):
 
 ```bash
-./scripts/install-dashboard-package.sh            # builds, installs plugins/dashboard
+praxis plugin install --build ./plugins/dashboard            # builds, installs plugins/dashboard
 cargo build --release --no-default-features       # optional: core without dashboard code
 DASHBOARD_PACKAGE=dashboard praxis run
 ```

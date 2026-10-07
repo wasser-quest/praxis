@@ -1,0 +1,34 @@
+{
+  "name": "dashboard",
+  "version": "0.1.0",
+  "description": "The Praxis web dashboard as a replaceable package (Host API v1).",
+  "enabled": true,
+  "tools": [],
+  "dashboard": {
+    "executable": "bin/praxis-dashboard",
+    "args": [
+      "--stdio"
+    ],
+    "scopes": [
+      "sessions:read",
+      "sessions:write",
+      "agent",
+      "events",
+      "auth",
+      "admin:read",
+      "admin:write",
+      "secrets",
+      "media",
+      "features"
+    ]
+  },
+  "build": {
+    "crate": "praxis-dashboard",
+    "bins": [
+      "praxis-dashboard"
+    ],
+    "dirs": {
+      "static": "static"
+    }
+  }
+}

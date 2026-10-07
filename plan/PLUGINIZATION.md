@@ -363,7 +363,7 @@ host bridge rather than arbitrary privileged same-origin JavaScript.
 
 Implementation extraction has started with `legacy_file_ops`: its read/edit
 code lives in `crates/praxis-legacy-file-ops`, with a standalone executable
-package in `packages/legacy_file_ops`. The compatibility Cargo feature links
+package in `plugins/legacy_file_ops`. The compatibility Cargo feature links
 it; a core-only host omits the implementation and dependency and can install
 the package later without rebuilding. See [tool packages](../docs/TOOL_PACKAGES.md).
 Package enable/disable state is distinct from native build availability.
@@ -374,7 +374,7 @@ verification/receipt authority in the host.
 
 The shell package followed the same pattern: `execute_terminal`,
 `run_background` and `background_status` live in `crates/praxis-shell`, with a
-package in `packages/shell` and the `shell` Cargo feature in `compatibility`.
+package in `plugins/shell` and the `shell` Cargo feature in `compatibility`.
 Foreground execution keeps the one-shot exact-text transport; background jobs
 use a long-lived process-protocol worker because the job registry is process
 memory. The host issues the authenticated caller and drains completion notices.

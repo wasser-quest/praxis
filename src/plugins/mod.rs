@@ -3,6 +3,7 @@ mod contract_tests;
 #[cfg(all(test, unix))]
 mod source_contract_tests;
 pub mod contracts;
+pub mod build;
 pub mod lifecycle;
 pub mod migrations;
 pub mod trust;
@@ -321,6 +322,11 @@ pub struct Plugin {
     /// Optional runtime-engine worker; only valid with `role: "runtime"`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub engine: Option<EngineDeclaration>,
+    /// Optional declarative source build for `praxis plugin install --build`.
+    /// Inert metadata: it never runs during install, only when the operator
+    /// passes `--build`. See docs/PLUGIN_LIFECYCLE.md.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build: Option<crate::plugins::build::PackageBuild>,
 }
 
 impl TrustRole {
@@ -1038,6 +1044,8 @@ struct PluginManifest {
     #[serde(default)]
     frontend: Option<FrontendDeclaration>,
     #[serde(default)]
+    build: Option<crate::plugins::build::PackageBuild>,
+    #[serde(default)]
     provides: ProvidesDeclaration,
     #[serde(default)]
     role: TrustRole,
@@ -1191,6 +1199,9 @@ pub(crate) fn load_plugin_from_manifest(manifest_path: &Path, plugin_dir: &Path)
         provides: manifest.provides,
         role: manifest.role,
         engine: validate_engine(plugin_dir, manifest.role, manifest.engine)?,
+        // Inert build metadata: never resolved against the package and never
+        // executed on load — only `plugin install --build` reads it.
+        build: manifest.build,
     })
 }
 
@@ -1401,6 +1412,7 @@ mod plugin_tests {
     fn test_plugin_registry() {
         let mut registry = PluginRegistry::new();
         registry.register(Plugin {
+            build: None,
             name: "test".to_string(),
             description: "Test plugin".to_string(),
             version: "1.0.0".to_string(),
@@ -1443,6 +1455,7 @@ mod plugin_tests {
     fn test_plugin_enabled_tools() {
         let mut registry = PluginRegistry::new();
         registry.register(Plugin {
+            build: None,
             name: "test".to_string(),
             description: "Test plugin".to_string(),
             version: "1.0.0".to_string(),
@@ -1473,6 +1486,7 @@ mod plugin_tests {
     fn test_plugin_disabled_tools() {
         let mut registry = PluginRegistry::new();
         registry.register(Plugin {
+            build: None,
             name: "test".to_string(),
             description: "Test plugin".to_string(),
             version: "1.0.0".to_string(),
@@ -1636,6 +1650,7 @@ mod plugin_tests {
     fn test_context_defaults_empty() {
         let mut registry = PluginRegistry::new();
         registry.register(Plugin {
+            build: None,
             name: "no_ctx".to_string(),
             description: "No context".to_string(),
             version: "1.0.0".to_string(),
@@ -1658,6 +1673,7 @@ mod plugin_tests {
     fn test_collect_secrets() {
         let mut registry = PluginRegistry::new();
         registry.register(Plugin {
+            build: None,
             name: "sec_plugin".to_string(),
             description: "Plugin with secrets".to_string(),
             version: "1.0.0".to_string(),

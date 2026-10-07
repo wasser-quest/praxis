@@ -239,7 +239,7 @@ pub fn init_default_tools(db: &Database) -> anyhow::Result<()> {
 /// Canonical built-in contracts shared by discovery and state-based routing.
 /// Tools of a kernel-bundled package (`runtime_control`) are deliberately not
 /// seeded here: their names, schemas and ownership come from the bundled
-/// manifest under `packages/`, while the implementations stay host-owned.
+/// manifest under `plugins/`, while the implementations stay host-owned.
 pub(crate) fn get_default_tools() -> Vec<Tool> {
     vec![
         Tool {

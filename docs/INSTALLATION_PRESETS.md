@@ -53,9 +53,9 @@ non-interactive `ask` skips hooks. The kernel-bundled packages (`file_ops`,
 `workflow_authoring`) need no install at all: `praxis plugin builtins` lists
 them and `praxis plugin disable-builtin <id>` makes one absent. The optional
 binary packages build and place themselves with
-`scripts/install-{shell,legacy-file-ops,vision,tui,dashboard}-package.sh`, and
+`praxis plugin install --build ./plugins/<id>`, and
 the asset packs install like any plugin (`praxis plugin install
-./packages/asset_coding`).
+./plugins/asset_coding`).
 
 The same ten installs in one dependency-ordered command — same lifecycle, same
 records — uses a preset file:
@@ -193,7 +193,7 @@ The core-only build omits native `read_file`/`edit_file`. To keep their code
 outside the host, install `praxis-legacy-file-ops` independently:
 
 ```bash
-./scripts/install-legacy-file-ops-package.sh /actual/PLUGINS_DIR
+praxis plugin install --build ./plugins/legacy_file_ops
 ```
 
 Restart Praxis with that `PLUGINS_DIR`. The same names and results become
@@ -208,7 +208,7 @@ to keep `execute_terminal`, `run_background` and `background_status` outside the
 host:
 
 ```bash
-./scripts/install-shell-package.sh /actual/PLUGINS_DIR
+praxis plugin install --build ./plugins/shell
 ```
 
 Foreground `execute_terminal` then works through the package immediately after
@@ -223,7 +223,7 @@ The core-only build also omits native image loading. Install the vision package
 to keep `understand_image` outside the host:
 
 ```bash
-./scripts/install-vision-package.sh /actual/PLUGINS_DIR
+praxis plugin install --build ./plugins/vision
 ```
 
 Restart Praxis with that `PLUGINS_DIR`. The package returns the same

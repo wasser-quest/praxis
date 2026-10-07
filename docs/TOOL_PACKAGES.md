@@ -94,7 +94,7 @@ Build a host without the native package, then install its executable separately:
 
 ```bash
 cargo build --release --locked -p praxis --no-default-features
-./scripts/install-legacy-file-ops-package.sh /absolute/path/to/plugins
+praxis plugin install --build ./plugins/legacy_file_ops
 # Keep PLUGINS_DIR pointed to that directory and restart Praxis.
 ```
 
@@ -140,7 +140,7 @@ The package has two entry points in one binary:
 
 ```bash
 cargo build --release --locked -p praxis --no-default-features
-./scripts/install-shell-package.sh /actual/PLUGINS_DIR
+praxis plugin install --build ./plugins/shell
 # Restart Praxis with PLUGINS_DIR set to that directory. The manifest declares
 # the background worker; set SHELL_SERVICE_EXECUTABLE only to override it.
 ```
@@ -188,7 +188,7 @@ the chat/agent loops still attach the image as a provider content part.
 
 ```bash
 cargo build --release --locked -p praxis --no-default-features
-./scripts/install-vision-package.sh /actual/PLUGINS_DIR
+praxis plugin install --build ./plugins/vision
 # Restart Praxis with PLUGINS_DIR set to that directory.
 ```
 

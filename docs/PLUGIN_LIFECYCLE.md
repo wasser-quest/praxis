@@ -252,7 +252,7 @@ A package may contribute a `frontend` executable. It is launched by the
 operator, not registered as a tool, and is part of the registry revision so a
 changed frontend invalidates task receipts. The `tui` package installs
 `bin/praxis-tui`, a client of the same gateway API as the dashboard.
-`scripts/install-tui-package.sh` builds and installs it; this is the first step
+`praxis plugin install --build ./plugins/tui` builds and installs it; this is the first step
 of moving the TUI fully into an unlinked package.
 
 ## Using it

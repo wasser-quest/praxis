@@ -123,6 +123,14 @@ pub struct App {
     pub cursor: usize,
     /// Pending file attachments for the next message (absolute paths).
     pub attachments: Vec<String>,
+    /// Prompt history of this session: Up recalls older prompts, Down walks
+    /// forward back to the live draft. A recalled prompt is ordinary editable
+    /// input, so it can be changed and re-entered.
+    pub history: Vec<String>,
+    /// Position in `history`; `None` means the buffer holds the live draft.
+    pub history_index: Option<usize>,
+    /// Draft preserved while history navigation is active.
+    pub history_draft: String,
 
     pub popup: Popup,
 
@@ -177,6 +185,9 @@ impl App {
             input: String::new(),
             cursor: 0,
             attachments: Vec::new(),
+            history: Vec::new(),
+            history_index: None,
+            history_draft: String::new(),
             popup: Popup::None,
             show_sidebar: true,
             mouse_capture: true,
@@ -760,11 +771,59 @@ impl App {
         Ok(value)
     }
 
+    /// Up: recall the next older prompt. The live draft is kept so Down can
+    /// restore it exactly as typed.
+    fn history_prev(&mut self) {
+        if self.history.is_empty() {
+            return;
+        }
+        match self.history_index {
+            None => {
+                self.history_draft = self.input.clone();
+                self.history_index = Some(self.history.len() - 1);
+            }
+            Some(0) => {}
+            Some(index) => self.history_index = Some(index - 1),
+        }
+        if let Some(index) = self.history_index {
+            self.input = self.history[index].clone();
+            self.cursor = self.input.chars().count();
+        }
+    }
+
+    /// Down: walk forward through history; past the newest entry the live
+    /// draft comes back untouched.
+    fn history_next(&mut self) {
+        let Some(index) = self.history_index else { return };
+        if index + 1 < self.history.len() {
+            self.history_index = Some(index + 1);
+            self.input = self.history[index + 1].clone();
+        } else {
+            self.history_index = None;
+            self.input = self.history_draft.clone();
+        }
+        self.cursor = self.input.chars().count();
+    }
+
+    /// Remember a submitted prompt; blanks and immediate repeats are skipped.
+    fn push_history(&mut self, prompt: &str) {
+        let prompt = prompt.trim();
+        if prompt.is_empty() {
+            return;
+        }
+        if self.history.last().map(String::as_str) != Some(prompt) {
+            self.history.push(prompt.to_string());
+        }
+        self.history_index = None;
+        self.history_draft.clear();
+    }
+
     async fn send_message(&mut self) {
         let text = self.input.clone();
         if text.trim().is_empty() && self.attachments.is_empty() {
             return;
         }
+        self.push_history(&text);
         // Slash commands run locally — they should never leave the TUI.
         // We accept both single-token (`/help`) and multi-token (`/context set foo=bar`).
         if text.trim_start().starts_with('/') {
@@ -1337,6 +1396,14 @@ async fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
         }
         KeyCode::Home => app.cursor = 0,
         KeyCode::End => app.cursor = app.input.chars().count(),
+        KeyCode::Up => {
+            app.history_prev();
+            app.update_popup();
+        }
+        KeyCode::Down => {
+            app.history_next();
+            app.update_popup();
+        }
         KeyCode::Esc => app.popup = Popup::None,
         _ => {}
     }
@@ -1977,6 +2044,38 @@ mod tests {
             app.stream_event("history", &serde_json::to_string(&history).unwrap());
             assert!(matches!(&app.transcript[0], Bubble::ToolResult {content,..} if content == &raw));
         }
+    }
+
+    #[tokio::test]
+    async fn prompt_history_is_recalled_editable_and_reenterable() {
+        let mut app = dummy_app();
+        for prompt in ["/recall first", "/recall second"] {
+            app.input = prompt.into();
+            app.cursor = app.input.chars().count();
+            handle_key(&mut app, KeyCode::Enter, KeyModifiers::NONE).await;
+        }
+        assert_eq!(app.history, ["/recall first", "/recall second"]);
+        assert!(app.input.is_empty());
+
+        app.input = "unfinished draft".into();
+        app.cursor = app.input.chars().count();
+        handle_key(&mut app, KeyCode::Up, KeyModifiers::NONE).await;
+        assert_eq!(app.input, "/recall second");
+        handle_key(&mut app, KeyCode::Up, KeyModifiers::NONE).await;
+        assert_eq!(app.input, "/recall first");
+        // A recalled prompt is ordinary input: edit and re-enter it.
+        handle_key(&mut app, KeyCode::Char('!'), KeyModifiers::NONE).await;
+        assert_eq!(app.input, "/recall first!");
+        handle_key(&mut app, KeyCode::Enter, KeyModifiers::NONE).await;
+        assert_eq!(app.history.last().unwrap(), "/recall first!");
+
+        // Down past the newest entry restores the untouched draft.
+        app.input = "second draft".into();
+        app.cursor = app.input.chars().count();
+        handle_key(&mut app, KeyCode::Up, KeyModifiers::NONE).await;
+        assert_eq!(app.input, "/recall first!");
+        handle_key(&mut app, KeyCode::Down, KeyModifiers::NONE).await;
+        assert_eq!(app.input, "second draft");
     }
 
     fn dummy_app() -> App {

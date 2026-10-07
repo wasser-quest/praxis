@@ -119,7 +119,10 @@ enum Cli {
     /// so previous conversations are visible immediately on launch.
     /// Show the xis change report (until the operator acknowledges it)
     Motd,
-    Chat {
+    /// Launch the terminal UI (installed first with
+    /// 'praxis plugin install --build ./plugins/tui')
+    #[command(alias = "chat")]
+    Tui {
         /// Connect to a remote Praxis gateway (e.g. http://host:3537)
         #[arg(long)]
         gateway_url: Option<String>,
@@ -180,6 +183,9 @@ enum PluginAction {
         /// Path to the plugin directory (must contain plugin.json)
         #[arg(value_name = "PLUGIN_PATH")]
         path: String,
+        /// Build the package from source first (its declared 'build' steps)
+        #[arg(long)]
+        build: bool,
         /// Run the install hook without asking
         #[arg(long)]
         allow_scripts: bool,
@@ -222,6 +228,9 @@ enum PluginAction {
         /// Path to the new plugin directory (must contain plugin.json)
         #[arg(value_name = "PLUGIN_PATH")]
         path: String,
+        /// Build the package from source first (its declared 'build' steps)
+        #[arg(long)]
+        build: bool,
         /// Run the install hook without asking
         #[arg(long)]
         allow_scripts: bool,
@@ -425,7 +434,7 @@ async fn run() -> anyhow::Result<()> {
     // The TUI takes over stdout (alternate screen) so we mustn't write
     // tracing logs there. Initialise logging with file-only output and
     // jump straight to the chat module.
-    if let Cli::Chat { gateway_url, gateway_key } = &cli {
+    if let Cli::Tui { gateway_url, gateway_key } = &cli {
         let log_dir = std::env::var("LOG_DIR").unwrap_or_else(|_| "./logs".to_string());
         let _ = std::fs::create_dir_all(&log_dir);
         let file_appender = tracing_appender::rolling::daily(&log_dir, "praxis-tui.log");
@@ -479,7 +488,7 @@ async fn run() -> anyhow::Result<()> {
             workspace_dir,
         } => run_services(password, !no_discord, !no_dashboard, minimal, workspace_dir).await,
         Cli::Pair { code } => pair_command(&code).await,
-        Cli::Onboard { interactive: true } => praxis::onboard::run_interactive_onboard(),
+        Cli::Onboard { interactive: true } => praxis::onboard::run_interactive_onboard().await,
         Cli::Onboard { interactive: false } => {
             anyhow::bail!("Onboard requires --interactive flag");
         }
@@ -498,7 +507,7 @@ async fn run() -> anyhow::Result<()> {
             }
             Ok(())
         }
-        Cli::Chat { .. } => unreachable!(),
+        Cli::Tui { .. } => unreachable!(),
         Cli::RepairAssets { .. } => unreachable!(),
         Cli::InstallPreset { .. } => unreachable!(),
         Cli::RecoverPatches { .. } => unreachable!(),
@@ -634,8 +643,11 @@ async fn run_services(
         }
     };
 
-    // Create placeholder secrets for plugins
-    let plugins_dir = std::env::var("PLUGINS_DIR").unwrap_or_else(|_| "./plugins".to_string());
+    // Create placeholder secrets for plugins. Plugins install under DATA_DIR
+    // by default: the checkout's plugins/ directory is the shipped source
+    // inventory, never the install target.
+    let plugins_dir = std::env::var("PLUGINS_DIR")
+        .unwrap_or_else(|_| format!("{}/plugins", data_dir.trim_end_matches('/')));
     let trust_dir = std::env::var("DATA_DIR").unwrap_or_else(|_| "./data".to_string());
     let trust = praxis::plugins::trust::load(std::path::Path::new(&trust_dir))?;
     let mut plugin_registry = praxis::plugins::load_all_plugins_with_trust(
@@ -921,11 +933,30 @@ WantedBy=multi-user.target
     Ok(())
 }
 
-async fn handle_plugin_action(action: &PluginAction) -> anyhow::Result<()> {
-    let plugins_dir = std::env::var("PLUGINS_DIR").unwrap_or_else(|_| "./plugins".to_string());
-    let plugins_path = Path::new(&plugins_dir);
+/// Run a package's declared build steps (see docs/PLUGIN_LIFECYCLE.md).
+/// `praxis plugin install --build` is the one install command: packages that
+/// declare no build simply skip this.
+fn stage_build(path: &Path) -> anyhow::Result<()> {
+    let manifest: praxis::plugins::Plugin =
+        serde_json::from_slice(&std::fs::read(path.join("plugin.json"))?)?;
+    match manifest.build {
+        Some(build) => {
+            for staged in praxis::plugins::build::build_package(path, &build)? {
+                println!("  built {staged}");
+            }
+        }
+        None => println!("  nothing to build (plugin.json declares no \"build\")"),
+    }
+    Ok(())
+}
 
+async fn handle_plugin_action(action: &PluginAction) -> anyhow::Result<()> {
     let data_dir = std::path::PathBuf::from(std::env::var("DATA_DIR").unwrap_or_else(|_| "./data".to_string()));
+    // Default beside DATA_DIR so the checkout's plugins/ sources and the
+    // installed plugins never share a directory.
+    let plugins_dir = std::env::var("PLUGINS_DIR")
+        .unwrap_or_else(|_| format!("{}/plugins", data_dir.display()));
+    let plugins_path = Path::new(&plugins_dir);
     // Declared assets mirror their package-relative path under ROOT_DIR.
     let assets_root = std::env::var("ROOT_DIR").unwrap_or_else(|_| ".".to_string());
     let assets_root = Path::new(&assets_root);
@@ -952,11 +983,19 @@ async fn handle_plugin_action(action: &PluginAction) -> anyhow::Result<()> {
         }
         PluginAction::Install {
             path,
+            build,
             allow_scripts,
             no_scripts,
             yes,
             dry_run,
         } => {
+            if *build {
+                if *dry_run {
+                    println!("Dry run: would build the package first");
+                } else {
+                    stage_build(Path::new(path))?;
+                }
+            }
             let policy = praxis::plugins::lifecycle::HookPolicy::from_env()?;
             let run_hooks = praxis::plugins::lifecycle::resolve_consent(
                 policy,
@@ -1091,11 +1130,19 @@ async fn handle_plugin_action(action: &PluginAction) -> anyhow::Result<()> {
         }
         PluginAction::Upgrade {
             path,
+            build,
             allow_scripts,
             no_scripts,
             yes,
             dry_run,
         } => {
+            if *build {
+                if *dry_run {
+                    println!("Dry run: would build the package first");
+                } else {
+                    stage_build(Path::new(path))?;
+                }
+            }
             let policy = praxis::plugins::lifecycle::HookPolicy::from_env()?;
             let run_hooks = praxis::plugins::lifecycle::resolve_consent(
                 policy,
@@ -1530,12 +1577,19 @@ async fn handle_restore(file: &str, yes: bool) -> anyhow::Result<()> {
 }
 
 
-/// `praxis chat` launches the standalone terminal frontend. The kernel does not
-/// link it: the `praxis-tui` binary comes from its own crate/package.
+/// `praxis tui` launches the standalone terminal frontend. The kernel does not
+/// link it: the `praxis-tui` binary comes from its own crate/package and is
+/// found after 'praxis plugin install --build ./plugins/tui' installed it.
 fn launch_tui(gateway_url: Option<String>, gateway_key: Option<String>) -> anyhow::Result<()> {
     let explicit = std::env::var_os("PRAXIS_TUI_EXECUTABLE").map(std::path::PathBuf::from);
+    let installed = std::env::var("PLUGINS_DIR")
+        .ok()
+        .or_else(|| std::env::var("DATA_DIR").ok().map(|data| format!("{}/plugins", data.trim_end_matches('/'))))
+        .map(|dir| std::path::PathBuf::from(dir).join("tui/bin/praxis-tui"))
+        .filter(|path| path.is_file());
     let beside = std::env::current_exe().ok().map(|exe| exe.with_file_name("praxis-tui"));
     let program = explicit
+        .or(installed)
         .or_else(|| beside.filter(|path| path.is_file()))
         .unwrap_or_else(|| "praxis-tui".into());
     let mut command = std::process::Command::new(program);
@@ -1546,7 +1600,7 @@ fn launch_tui(gateway_url: Option<String>, gateway_key: Option<String>) -> anyho
         command.arg("--gateway-key").arg(key);
     }
     let status = command.status().map_err(|error| {
-        anyhow::anyhow!("Cannot start the praxis-tui frontend ({error}); install the TUI package or set PRAXIS_TUI_EXECUTABLE")
+        anyhow::anyhow!("Cannot start the praxis-tui frontend ({error}); install it first with 'praxis plugin install --build ./plugins/tui', or set PRAXIS_TUI_EXECUTABLE")
     })?;
     if !status.success() {
         std::process::exit(status.code().unwrap_or(1));
@@ -1769,14 +1823,27 @@ mod tests {
             Cli::Plugin { action } => match action {
                 PluginAction::Install {
                     path,
+                    build,
                     allow_scripts,
                     no_scripts,
                     yes,
                     dry_run,
                 } => {
                     assert_eq!(path, "./plugins/demo");
-                    assert!(allow_scripts && dry_run && !no_scripts && !yes);
+                    assert!(allow_scripts && dry_run && !no_scripts && !yes && !build);
                 }
+                _ => panic!("Expected Install variant"),
+            },
+            _ => panic!("Expected Plugin variant"),
+        }
+        // One install command for every package: --build runs the declared
+        // build steps first and is a no-op for packages that need none.
+        let cli =
+            Cli::try_parse_from(["praxis", "plugin", "install", "./plugins/tui", "--build"])
+                .unwrap();
+        match cli {
+            Cli::Plugin { action } => match action {
+                PluginAction::Install { build, .. } => assert!(build),
                 _ => panic!("Expected Install variant"),
             },
             _ => panic!("Expected Plugin variant"),

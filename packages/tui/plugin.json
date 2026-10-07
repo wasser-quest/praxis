@@ -1,8 +1,0 @@
-{
-  "name": "tui",
-  "description": "Terminal UI frontend (praxis-tui) for a local or remote Praxis gateway",
-  "version": "0.1.0",
-  "enabled": true,
-  "frontend": {"executable": "bin/praxis-tui", "args": []},
-  "tools": []
-}

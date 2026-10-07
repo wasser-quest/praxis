@@ -49,7 +49,7 @@ optional workflow packs add assets rather than replacing the core interpreter.
 - [ ] PR 6: providers, channels, media and workflow/prompt packages.
   Progress: `crates/praxis-provider-api` defines the common interfaces
   (streaming, usage, model list, embedding, typed errors) and the kernel's
-  adapters implement them; `packages/asset_{coding,learning,persona,workflow}`
+  adapters implement them; `plugins/asset_{coding,learning,persona,workflow}`
   ship installable asset packs; `plugins/minimax_image` packages the MiniMax
   image provider; `crates/praxis-comfyui` and `crates/praxis-gpu-router` are
   provider crates with scoped settings; Discord and voice/audio compile behind
@@ -96,7 +96,7 @@ optional workflow packs add assets rather than replacing the core interpreter.
 - [ ] PR 8d: extract the remaining packages and ship the `--install-default` and
   minimal presets; make the TUI a separate `praxis-tui` frontend plugin.
   Progress: `praxis-tui` now exists as a standalone executable and the `tui`
-  frontend package (`packages/tui`, `scripts/install-tui-package.sh`), pending
+  frontend package (`plugins/tui`, `scripts/install-tui-package.sh`), pending
   the crate extraction so the kernel does not link it.
 - [ ] Future: **`xis`**, a separate setup/package manager executable that
   installs whole setups (plugins, skills, templates, state machines, config
@@ -259,7 +259,7 @@ clipboard) remains an operator smoke check.
   list, owner-confined HTTP/WebSocket forwarding through the shared
   `runtime::web_proxy` transport.
 - [x] Standard dashboard package (`crates/praxis-dashboard`,
-  `packages/dashboard`, `scripts/install-dashboard-package.sh`): ships the
+  `plugins/dashboard`, `scripts/install-dashboard-package.sh`): ships the
   frontend assets and serves the whole UI on Host API v1; verified end to end
   against a `--no-default-features` core.
 - [x] Navigation slots for absent features: the host reports registered

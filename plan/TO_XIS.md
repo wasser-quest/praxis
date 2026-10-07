@@ -20,7 +20,7 @@ kernel becomes an explicit `ChannelHost` seam (~12 methods: agent control,
 interactive input, delivery events, context commands, skill lookup and the
 tool/credential/message state it reads). `src/discord` then compiles as
 `crates/praxis-channel-discord` behind the `discord` feature, with its
-`packages/discord_service` manifest and scoped `discord_bot_token` credentials.
+`plugins/discord_service` manifest and scoped `discord_bot_token` credentials.
 
 Verify: crate tests + kernel `--lib` both configurations + a core-only build
 that carries neither `serenity` nor `songbird`.
