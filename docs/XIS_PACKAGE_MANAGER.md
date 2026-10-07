@@ -1,7 +1,13 @@
 # xis — a separate setup and package manager for Praxis
 
-Status: future design. Nothing here is implemented. This records the agreed
-direction so the current plugin/manifest work stays compatible with it.
+Status: implemented in `crates/xis` (phases 1–4 below, with tests for pinned
+keys, content addressing, immutable versions, plans, ownership and change
+reports). Two format details this design left open are settled there: an
+artifact is a content-addressed JSON **bundle** (`{"files":[{"path","mode",
+"content_base64"}]}`) so `xis` needs no archive tooling, and a setup's config
+profile carries its settings as a `config` map alongside `config_changes`
+(the required environment). Praxis shows the report (`praxis motd`, and on
+`praxis run`) and never parses or acts on it.
 
 ## Decision
 
@@ -174,8 +180,9 @@ templates/contexts/skills, a MOTD service, and a safe config-profile writer.
 ## Phasing
 
 1. **Read-only repositories**: `xis repo add/list/refresh`, `xis search`,
-   `xis plan` over an index with hashes (no writes).
+   `xis plan` over an index with hashes (no writes). ✅
 2. **Setup install**: bundles + `keep/backup/overwrite` + `xis.lock.json`
-   ownership + plugin delegation to the Praxis CLI.
-3. **MOTD**: change report service, `praxis motd`, shown on `praxis run`.
-4. **Trust**: index signatures, pinned repo keys, immutable-version enforcement.
+   ownership + plugin delegation to the Praxis CLI. ✅
+3. **MOTD**: change report service, `praxis motd`, shown on `praxis run`. ✅
+4. **Trust**: index signatures, pinned repo keys, immutable-version
+   enforcement. ✅

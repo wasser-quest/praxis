@@ -117,6 +117,8 @@ enum Cli {
     /// Open the terminal chat UI. Connects to a running `praxis run` instance
     /// to send messages, but reads history directly from the local database
     /// so previous conversations are visible immediately on launch.
+    /// Show the xis change report (until the operator acknowledges it)
+    Motd,
     Chat {
         /// Connect to a remote Praxis gateway (e.g. http://host:3537)
         #[arg(long)]
@@ -488,6 +490,14 @@ async fn run() -> anyhow::Result<()> {
             no_isos,
         } => return handle_backup(output, no_disks, no_isos).await,
         Cli::Restore { file, yes } => return handle_restore(&file, yes).await,
+        Cli::Motd => {
+            let root = std::path::PathBuf::from(praxis::config::Config::from_env().root_dir);
+            match change_report(&root) {
+                Some(report) => print!("{report}"),
+                None => println!("No change report."),
+            }
+            Ok(())
+        }
         Cli::Chat { .. } => unreachable!(),
         Cli::RepairAssets { .. } => unreachable!(),
         Cli::InstallPreset { .. } => unreachable!(),
@@ -777,6 +787,11 @@ async fn run_services(
         tracing::info!("Discord bot starting...");
     }
 
+    if let Some(report) = change_report(std::path::Path::new(&config.root_dir)) {
+        // Operator text from xis: printed, never parsed or acted upon.
+        println!("{report}");
+        tracing::info!("xis change report shown (acknowledge it with 'xis motd --ack')");
+    }
     tracing::info!("Praxis started successfully");
     gateway_handle.await?;
 
@@ -1537,6 +1552,14 @@ fn launch_tui(gateway_url: Option<String>, gateway_key: Option<String>) -> anyho
         std::process::exit(status.code().unwrap_or(1));
     }
     Ok(())
+}
+
+
+/// The xis change report, shown until the operator acknowledges it
+/// (`xis motd --ack`). It is operator text: Praxis prints it and never parses
+/// or acts on it (`docs/XIS_PACKAGE_MANAGER.md`).
+fn change_report(root: &std::path::Path) -> Option<String> {
+    std::fs::read_to_string(root.join("xis-motd.md")).ok()
 }
 
 #[cfg(test)]

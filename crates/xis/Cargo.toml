@@ -1,0 +1,31 @@
+[package]
+name = "xis"
+version = "0.1.0"
+edition = "2021"
+description = "Setup and package manager for Praxis distributions: signed repositories, setup bundles, plans and change reports"
+
+# xis is a separate project from the Praxis kernel and links nothing of it. It
+# is a signed `curl | tar` with a plan, a diff and a lockfile: it fetches a
+# whole setup, verifies it, reports required changes and delegates plugin
+# installs to the Praxis CLI so the kernel keeps its lifecycle, hooks policy,
+# lockfile and trust store.
+[[bin]]
+name = "xis"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+base64 = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", features = ["derive"] }
+ed25519-dalek = { version = "2", features = ["pkcs8"] }
+hex = "0.4"
+reqwest = { version = "0.12.28", default-features = false, features = ["rustls-tls", "json", "blocking"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+
+[dev-dependencies]
+tempfile = "3"
+wiremock = "0.6"

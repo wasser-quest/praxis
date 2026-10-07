@@ -482,11 +482,17 @@ no VM/UI/media.
 
 ### I. Future (design recorded, not started)
 
-- [ ] **`xis`** — separate executable: signed repository indexes, setup bundles
-  (plugins/skills/templates/contexts/config profile), plan + apply with
-  keep/backup/overwrite, ownership lock and a MOTD of required changes,
-  delegating plugin installs to the Praxis CLI. The kernel does not link it.
-  See [the xis design](XIS_PACKAGE_MANAGER.md).
+- [x] **`xis`** — separate executable (`crates/xis`, links nothing of the
+  kernel): operator-pinned repositories with ed25519 index signatures and
+  content-addressed bundles, setup resolution with immutable versions and
+  conflict-failing version constraints, `plan`/`install`/`upgrade`/`remove`
+  under `keep|backup|overwrite` with `xis.lock.json` ownership (only owned,
+  unedited files are touched), config profiles limited to documented
+  non-secret keys with `.env` backups, plugin installs delegated to the Praxis
+  CLI (its hooks policy, lockfile and trust store), and a change report that
+  never leaks secrets, never runs trust commands and never claims a skipped
+  step succeeded. `praxis motd` and `praxis run` show it. See
+  [the xis design](XIS_PACKAGE_MANAGER.md).
 
 ## 7. Known limitations and caveats
 

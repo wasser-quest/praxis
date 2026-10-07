@@ -4442,6 +4442,7 @@ checksum = "eddd3ca559203180a307f12d114c268abf583f59b03cb906fd0b3ff8646c1147"
 dependencies = [
  "base64",
  "bytes",
+ "futures-channel",
  "futures-core",
  "futures-util",
  "http",
@@ -6988,6 +6989,25 @@ dependencies = [
  "rand_core 0.6.4",
  "serde",
  "zeroize",
+]
+
+[[package]]
+name = "xis"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "chrono",
+ "clap 4.6.1",
+ "ed25519-dalek",
+ "hex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "wiremock",
 ]
 
 [[package]]

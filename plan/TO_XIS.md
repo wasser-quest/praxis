@@ -44,7 +44,7 @@ media.
 
 Verify: one scripted run over the three flows on a core-only host.
 
-## Task 5 — `xis` (handoff §6I) — start here
+## Task 5 — `xis` (handoff §6I) ✅
 
 Arrive here with the kernel and packages in the shape the design assumes.
 Phases from the design: (1) read-only repositories (`repo add/list/refresh`,
