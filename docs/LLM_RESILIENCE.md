@@ -63,6 +63,41 @@ Ollama zählt Thinking und Tool-Argumente gegen `options.num_predict`. Bei `done
 
 Beide Ollama-Pfade erkennen diesen Abschlussgrund jetzt als `OutputLimit`, nicht als leere/erfolgreiche Antwort. **Vor sichtbarer Textausgabe** darf derselbe LLM-Aufruf mit verdoppelter Ausgabegrenze wiederholt werden, standardmäßig 4096 → 8192 → 16384. Die Obergrenze ist `LLM_RETRY_MAX_OUTPUT_TOKENS` (0 deaktiviert die Erweiterung). Der erste Versuch bleibt unverändert; es werden keine Gesprächs-, Modell- oder Tool-Parameter ausgetauscht. Ohne bekannte positive Grenze, ohne verbleibenden Versuch oder am Erweiterungslimit endet der Aufruf mit einem konkreten Tokenlimit-Fehler statt weiterer identischer Retries oder Providerwechsel.
 
+**Runtime-Fenster statt Ausgabelimit (Nachuntersuchung 2026-10-07):** In den
+Release-Logs derselben Installation endeten Tool-Runden mit `done_reason=length`
+nach 23 von 32768 erlaubten Ausgabetokens (`content_bytes=0 tool_call_count=0`),
+und eine verdoppelte Ausgabegrenze ließ den Abbruchpunkt unverändert (23/23,
+55/55, 1814/1814). Nicht `num_predict` band, sondern das Laufzeitfenster: Ollama
+startet Modelle mit eigenem `num_ctx` (beobachtet per `/api/ps`: 8192 bei einem
+262144-Token-Modell) und schneidet die Erzeugung auf `num_ctx − Prompt` ab.
+Der Abbruch kam deshalb weit unterhalb von `num_predict`.
+
+Der Ollama-Adapter sendet deshalb `options.num_ctx` explizit (Standard
+`min(Modellkontext, 32768)`, änderbar über `OLLAMA_NUM_CTX`). Die obere
+Ausgabehälfte ist `min(LLM_MAX_OUTPUT_TOKENS, Fenster/2)`; die andere Hälfte
+bleibt garantiert für Tools und Verlauf — bei `OLLAMA_NUM_CTX=W` bleibt die
+effektive Ausgabe also höchstens `W/2`. Zu lange Prompts durchlaufen dieselbe
+Reduktionsleiter wie llama.cpp (Tool-Schemata, große gespeicherte Tool-Ausgaben
+als `read_tool_result`-Previews mit erhaltener `output_id`, ältere ganze Turns,
+dann Minimal-System-Prompt; gespeicherte Ergebnisse bleiben unverändert). Ein
+Abbruch mit übrigem Ausgabebudget nennt jetzt `OLLAMA_NUM_CTX` statt
+`LLM_RETRY_MAX_OUTPUT_TOKENS`. Die Modellkontextgröße wird einmalig pro Modell
+per `GET /api/tags` abgefragt; ohne Antwort bleibt das alte Verhalten (kein
+`num_ctx`, keine Kappung).
+
+Ein **reiner Denkschritt** in einer Tool-Runde (kein Text, keine Tools) wird
+weder als `[Denkspur]`-Antwort ausgegeben noch als Fehler beendet: Der Adapter
+gibt ihn als fortsetzbaren Schritt zurück (`finish_reason` `reasoning`, ohne
+Antworttext), und der Host wiederholt den Aufruf mit dem bisherigen Denken plus
+expliziter Handlungsanweisung — derselbe Mechanismus wie beim Codex-Provider,
+inklusive 32-MiB-Replay-Grenze. Gleicher Mechanismus fängt den obigen
+Fenster-Abbruch mitten im Denken ab, bevor die ganze Nachricht fehlschlägt.
+Gedankeninhalte erscheinen nur als abschaltbare Denkspur-Vorschau, nie als
+Antworttext, TTS, Ereignisdaten oder Verlauf. Ohne Tool-Kontext bleibt die alte
+`[Denkspur]`-Ausgabe erhalten. Fehlt ein Modell auf dem Server, ist das ein
+Konfigurationsfehler mit Handlungsanweisung (`OLLAMA_MODEL` bzw.
+`settings.model`) statt einer leeren Provider-Antwort.
+
 Die **anfängliche** Ausgabegrenze ist jetzt über `LLM_MAX_OUTPUT_TOKENS`
 konfigurierbar (unveränderter Default: 4096). Chat, Multi-Turn-Agent und die
 öffentliche Tool-Loop-API verwenden sie auch für alle Tool-Folgeaufrufe statt
@@ -110,6 +145,7 @@ Alle Einstellungen werden beim Start gelesen; Änderungen benötigen einen Neust
 | `LLM_RETRY_MAX_MS` | `30000` | Maximaler exponentieller Backoff; mindestens Base, maximal 300000 ms; begrenzt nicht `Retry-After` |
 | `LLM_REQUEST_TIMEOUT_MS` | `180000` | Pro Versuch inklusive HTTP-Upload, Antwort/Stream und Parsing; 1–86400000 ms |
 | `LLM_TOTAL_TIMEOUT_MS` | `300000` | Queue, alle Versuche und Wartezeiten zusammen; 1–86400000 ms |
+| `OLLAMA_NUM_CTX` | `min(Modellkontext, 32768)` | Explizites Laufzeitfenster für Ollama (`options.num_ctx`); Ausgabe ≤ Fenster/2, Prompt in der anderen Hälfte; 2048–1048576 und höchstens der Modellkontext |
 
 ### Opt-in-Profil für lange Thinking-/Tool-Aufgaben
 
@@ -189,6 +225,7 @@ Providerfehler enthalten Kategorie, HTTP-Status, einen kontrollierten Transportg
    USE_PROVIDER=ollama
    OLLAMA_API_BASE=http://localhost:11434
    OLLAMA_MODEL=glm-5.3-flash:cloud
+   OLLAMA_NUM_CTX=65536
    LLM_FALLBACK_PROVIDERS=
    LLM_MAX_CONCURRENT=1
    ```

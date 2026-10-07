@@ -46,7 +46,8 @@ for key, count in seen.items():
         errors.append(f'Duplicate: {key} ({count} rows)')
 
 kinds = {'String': 'string', 'bool': 'boolean', 'i32': 'I32', 'usize': 'Usize', 'f32': 'F32', 'f64': 'F64',
-         'Vec<String>': 'array of strings', 'serde_json::Value': 'JSON', 'ContextSettings': 'object'}
+         'Vec<String>': 'array of strings', 'serde_json::Value': 'JSON', 'ContextSettings': 'object',
+         'std::collections::HashMap<String, Vec<String>>': 'object: name → array of strings'}
 for key, rust_type in expected.items():
     if key not in rows or len(rows[key]) != 5:
         continue

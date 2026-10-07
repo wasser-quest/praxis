@@ -194,10 +194,11 @@ These settings do not affect the selected ElevenLabs backend unless RVC is enabl
 | `settings.feedback_mode` | array of strings | Any subset of `["tts", "dm", "text"]`; `[]` allowed; unknown entries have no defined routing | `[]` | Agent feedback destinations. `text` uses a valid channel or falls back to DM; `tts` uses the voice backend. Empty/unhandled modes can still trigger fallback TTS for voice input/use_tts. |
 | `settings.feedback_channel_id` | string or null | Discord text-channel numeric ID **as a string**, or `null` | `null` | Feedback channel override and fallback for tool `channel_id`. `voice:<guild>` is an internal input marker, not a valid text channel. |
 | `settings.upload_channel_id` | string or null | Discord channel numeric ID as a string, or null | `null` | Agent-loop upload fallback when no tool argument/originating channel is available; does not override an explicit tool channel. |
-| `settings.feedback_template` | — | Removed | — | Old saved values are ignored and no longer written back. Feedback is delivered directly; `tasks/feedback` remains an explicitly selectable task template. |
 | `settings.message_on_toolcalling` | boolean | `true`, `false` | `false` | Enables pre-tool feedback when `feedback_enabled=true`; external delivery uses the same sliding-window limiter. Not ordinary final reply TTS. |
 | `settings.allowed_guilds` | array of strings | `["*"]` = all; guild numeric IDs as strings; `[]` = no guild matches | `["*"]` | Allow-list checked for ordinary paired Discord text messages. DMs bypass the guild check. Not a global/voice ACL; voice authorization is pairing-based. |
 | `settings.allowed_channels` | array of strings | `["*"]` = all; channel numeric IDs as strings; `[]` = none | `["*"]` | Allow-list checked for ordinary Discord text messages, not an enforced voice-channel allow-list. |
+
+Removed setting: `settings.feedback_template`. Old saved values are ignored and no longer written back. Feedback is delivered directly; `tasks/feedback` remains an explicitly selectable task template.
 
 ## VM-related context settings
 

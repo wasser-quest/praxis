@@ -36,6 +36,9 @@ pub struct Config {
     pub anthropic_api_base: String,
     pub ollama_api_base: String,
     pub ollama_model: String,
+    /// Runtime context window requested from Ollama (`options.num_ctx`).
+    /// `None` = probe the model context and use the provider's default window.
+    pub ollama_num_ctx: Option<u64>,
     pub llamacpp_api_base: String,
     pub llamacpp_model: String,
     pub minimax_api_key: Option<String>,
@@ -118,6 +121,10 @@ impl Config {
             ollama_api_base: env::var("OLLAMA_API_BASE")
                 .unwrap_or_else(|_| "http://localhost:11434".to_string()),
             ollama_model: env::var("OLLAMA_MODEL").unwrap_or_else(|_| "llama3".to_string()),
+            // Invalid numbers fail validation instead of silently disabling.
+            ollama_num_ctx: env::var("OLLAMA_NUM_CTX")
+                .ok()
+                .map(|value| value.trim().parse().unwrap_or(u64::MAX)),
             llamacpp_api_base: env::var("LLAMACPP_API_BASE")
                 .unwrap_or_else(|_| "http://localhost:8080".to_string()),
             llamacpp_model: env::var("LLAMACPP_MODEL")
@@ -217,6 +224,11 @@ impl Config {
 
     pub fn validate(&self) -> anyhow::Result<()> {
         self.llm_resilience.validate()?;
+        if let Some(num_ctx) = self.ollama_num_ctx {
+            if !(2_048..=1_048_576).contains(&num_ctx) {
+                anyhow::bail!("OLLAMA_NUM_CTX must be a number between 2048 and 1048576");
+            }
+        }
         if self.gateway_api_key.len() < 16 {
             anyhow::bail!("GATEWAY_API_KEY must be at least 16 characters");
         }

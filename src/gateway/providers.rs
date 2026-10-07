@@ -120,6 +120,8 @@ pub fn effective_config(base: &crate::config::Config, secrets: &crate::db::secre
     if let Some(v) = get("anthropic_model") { config.anthropic_model = v; }
     if let Some(v) = get("ollama_api_base") { config.ollama_api_base = v; }
     if let Some(v) = get("ollama_model") { config.ollama_model = v; }
+    // Garbage maps to u64::MAX so Config::validate rejects it loudly.
+    if let Some(v) = get("ollama_num_ctx") { config.ollama_num_ctx = Some(v.trim().parse().unwrap_or(u64::MAX)); }
     if let Some(v) = get("llamacpp_api_base") { config.llamacpp_api_base = v; }
     if let Some(v) = get("llamacpp_model") { config.llamacpp_model = v; }
     if let Some(v) = get("minimax_api_base") { config.minimax_api_base = v; }

@@ -189,6 +189,10 @@ impl Usage {
 #[derive(Clone)]
 pub enum ProviderContinuation {
     Codex { input: Vec<serde_json::Value> },
+    /// Ollama: raw chat messages replayed on the next attempt — the preserved
+    /// reasoning step plus an explicit continue instruction. Same contract as
+    /// `Codex`: never history, never displayed, never forwarded to a fallback.
+    Ollama { messages: Vec<serde_json::Value> },
 }
 impl std::fmt::Debug for ProviderContinuation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -199,6 +203,7 @@ impl ProviderContinuation {
     pub fn estimated_tokens(&self) -> u64 {
         match self {
             Self::Codex { input } => serde_json::to_vec(input).map_or(0, |s| s.len() as u64 / 3),
+            Self::Ollama { messages } => serde_json::to_vec(messages).map_or(0, |s| s.len() as u64 / 3),
         }
     }
 }

@@ -70,11 +70,14 @@ impl LLMRouter {
             )));
         }
 
-        providers.push(Box::new(ollama::OllamaProvider::new(
-            config.ollama_api_base.clone(),
-            config.ollama_model.clone(),
-            secrets.ollama_api_key.clone(),
-        )));
+        providers.push(Box::new(
+            ollama::OllamaProvider::new(
+                config.ollama_api_base.clone(),
+                config.ollama_model.clone(),
+                secrets.ollama_api_key.clone(),
+            )
+            .num_ctx(config.ollama_num_ctx),
+        ));
 
         providers.push(Box::new(llamacpp::LlamaCppProvider::new(
             secrets.llamacpp_api_key.clone(),

@@ -132,8 +132,10 @@ mod tests {
 
 #[path = "llamacpp_stream.rs"]
 mod stream;
+// Shared with the Ollama provider: one proven reduction ladder for local
+// models with fixed context windows.
 #[path = "llamacpp_budget.rs"]
-mod budget;
+pub(crate) mod budget;
 
 impl LlamaCppProvider {
     fn request_body(&self, request: ChatRequest) -> serde_json::Value {

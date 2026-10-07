@@ -204,7 +204,9 @@ fn codex_done_item_fallback_preserves_messages_and_replayable_reasoning() {
     assert_eq!(attempt.response.finish_reason.as_deref(), Some("reasoning"));
     let state = attempt.continuation.unwrap();
     assert!(!format!("{state:?}").contains("OPAQUE-SECRET"));
-    let ProviderContinuation::Codex { input } = state;
+    let ProviderContinuation::Codex { input } = state else {
+        panic!("expected codex continuation state");
+    };
     assert_eq!(input, vec![reasoning]);
 
     // Done-only messages also work when text deltas were omitted by a proxy.
@@ -341,7 +343,9 @@ fn codex_reasoning_only_is_a_continuation_not_an_answer() {
         assert!(attempt.response.tool_calls.is_none());
         let state = attempt.continuation.unwrap();
         assert!(!format!("{state:?}").contains("OPAQUE-SECRET"));
-        let ProviderContinuation::Codex { input } = state;
+        let ProviderContinuation::Codex { input } = state else {
+            panic!("expected codex continuation state");
+        };
         assert_eq!(input, vec![item]);
     }
 }
