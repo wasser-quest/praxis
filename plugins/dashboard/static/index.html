@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Praxis Dashboard</title>
+    <link rel="icon" href="/favicon.ico" sizes="any">
+    <meta name="theme-color" content="#142724">
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div id="app">
+        <div id="login-screen" class="screen active">
+            <div class="login-container">
+                <div class="logo">
+                    <img src="/logo.svg" alt="Praxis" class="logo-img">
+                    <h1>Praxis</h1>
+                    <p>Agent workflow runtime</p>
+                </div>
+                <form id="login-form">
+                    <div class="form-group">
+                        <label for="password">Admin Password</label>
+                        <input type="password" id="password" placeholder="Enter password" required>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Login</button>
+                    <p id="login-error" class="error hidden"></p>
+                </form>
+            </div>
+        </div>
+
+        <div id="dashboard-screen" class="screen">
+            <nav class="sidebar" id="sidebar">
+                <div class="sidebar-header"><a class="sidebar-brand" href="https://getpraxis.boo" target="_blank" rel="noopener" aria-label="Praxis website"><img src="/logo.svg" width="32" height="32" alt=""><h2>Praxis</h2></a></div>
+                <ul class="nav-links">
+                    <li class="nav-section" role="presentation">Workspace</li>
+                    <li class="active" data-tab="overview">Overview</li>
+                    <li data-tab="chat">Chat</li>
+                    <li data-tab="graphs">Graphs</li>
+                    <li data-tab="messages">Messages</li>
+                    <li class="nav-section" role="presentation">Runtime</li>
+                    <li data-tab="contexts">Contexts</li>
+                    <li data-tab="templates">Templates</li>
+                    <li data-tab="decision-profiles">Decision Routing</li>
+                    <li data-tab="tools">Tools</li>
+                    <li data-tab="memory">Memory</li>
+                    <li class="nav-section" role="presentation">Administration</li>
+                    <li data-tab="secrets">Secrets</li>
+                    <li data-tab="pairings">Pairings</li>
+                    <li data-tab="sm-files">Statemachine</li>
+                    <li data-tab="cron-jobs">Cron Jobs</li>
+                </ul>
+                <div class="sidebar-footer">
+                    <button id="theme-toggle" class="btn btn-sm btn-secondary" style="width:100%;margin-bottom:0.5rem" onclick="toggleTheme()">🌙 Dark</button>
+                    <button id="logout-btn" class="btn btn-secondary">Logout</button>
+                </div>
+                <button id="sidebar-toggle" type="button" class="sidebar-toggle" onclick="toggleSidebar()" title="Dashboard menu" aria-label="Dashboard menu" aria-controls="sidebar" aria-expanded="true">&#9776;</button>
+            </nav>
+
+            <main class="content">
+                <header class="workspace-heading"><div><span class="eyebrow">PRAXIS / WORKSPACE</span><h1 id="workspace-title">Overview</h1></div><a href="https://getpraxis.boo" target="_blank" rel="noopener" class="workspace-link">getpraxis.boo ↗</a></header>
+                <div id="tab-overview" class="tab active">
+                    <h2>Overview</h2>
+                    <div class="stats-grid">
+                        <div class="stat-card"><h3>Status</h3><p id="status-indicator" class="status ok">Running</p></div>
+                        <div class="stat-card"><h3>GPU-Router</h3><p id="gpu-router-state" class="status" title="Slot-States + Budget heute (pgpu)">–</p></div>
+                        <div class="stat-card"><h3>Version</h3><p id="version">-</p></div>
+                        <div class="stat-card"><h3>Contexts</h3><p id="context-count">0</p></div>
+                        <div class="stat-card"><h3>Pairings</h3><p id="pairing-count">0</p></div>
+                        <div class="stat-card"><h3>Pending</h3><p id="pending-count">0</p></div>
+                    </div>
+                    <div style="margin-top:2rem">
+                        <h3>Quick Agent Start</h3>
+                        <div class="data-list" id="overview-agent-starters"></div>
+                    </div>
+                </div>
+
+                <div id="tab-chat" class="tab">
+                    <button id="chat-sidebar-toggle" type="button" class="chat-sidebar-toggle" onclick="toggleChatConversations()" title="Toggle conversations" aria-label="Open conversations" aria-controls="chat-session-list" aria-expanded="false">☰ Chats</button>
+                    <div class="chat-app">
+                        <div class="chat-sidebar">
+                            <div class="chat-sidebar-header">
+                                <span>Conversations</span>
+                                <button class="btn btn-sm btn-primary" onclick="chatNewSession()">+ New</button>
+                            </div>
+                            <div id="chat-session-list" class="chat-session-list"></div>
+                        </div>
+                        <div class="chat-main">
+                            <div id="chat-telemetry" class="chat-telemetry" aria-label="Generation and context usage">
+                                <span id="generation-speed">Generation —</span><span id="generation-latency">First output —</span>
+                                <span id="history-budget">History —</span><span id="compaction-budget">Compaction —</span>
+                                <progress id="history-progress" value="0" max="100" aria-label="History budget usage"></progress>
+                            </div>
+                            <div id="chat-sm-status" class="sm-status-bar" style="display:none">
+                                <span id="sm-status-file" class="sm-badge">-</span>
+                                <span id="sm-status-state" class="sm-badge">-</span>
+                                <span id="sm-status-temps" class="sm-badge">-</span>
+                                <span id="sm-status-skill" class="sm-badge" style="display:none"></span>
+                                <span id="sm-status-vars" class="sm-badge" title="Variables changed in this state">-</span>
+                            </div>
+                            <div id="chat-agent-banner" class="agent-banner" style="display:none">
+                                <span class="agent-badge" id="chat-agent-badge">Agent: Inactive</span>
+                                <button class="btn btn-sm btn-primary" id="chat-start-btn" onclick="chatStartAgent()">Start Agent</button>
+                                <button class="btn btn-sm btn-danger" id="chat-stop-btn" onclick="chatStopAgent()" style="display:none">Stop Agent</button>
+                                <div style="margin-left:auto;display:flex;align-items:center;gap:0.75rem">
+                                    <div style="display:flex;flex-direction:column;align-items:center;gap:0.5rem">
+                                        <div style="display:flex;flex-direction:column;align-items:center;gap:0.15rem">
+                                            <img id="chat-bot-avatar" class="avatar-sm" src="/logo.svg" alt="Bot" title="Bot avatar" onclick="showAvatarModal('bot')" style="cursor:pointer">
+                                            <span id="chat-bot-name" class="avatar-label">Praxis</span>
+                                        </div>
+                                        <div style="display:flex;flex-direction:column;align-items:center;gap:0.15rem">
+                                            <img id="chat-user-avatar" class="avatar-sm" style="display:none;cursor:pointer" alt="User" onclick="showAvatarModal('user')">
+                                            <span id="chat-user-name-label" class="avatar-label">User</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="chat-container">
+                                <div id="chat-messages" class="chat-messages">
+                                    <div class="chat-welcome">Start an agent to begin chatting. Your messages appear here with tool calls visible inline.</div>
+                                </div>
+                                <div id="chat-timer-bar" class="chat-timer" style="display:none">
+                                    <div class="chat-timer-fill" id="chat-timer-fill"></div>
+                                    <span class="chat-timer-text" id="chat-timer-text">30s</span>
+                                </div>
+                                <button type="button" id="chat-tts-indicator" class="chat-tts-indicator" style="display:none" onclick="chatTtsActive(false)" title="Audio stoppen">
+                                    🔊 Praxis spricht … ■ Stop
+                                </button>
+                                <div id="chat-options-box" class="chat-options" style="display:none"></div>
+                                <div id="chat-attachments-preview" class="chat-attachments" style="display:none"></div>
+                                <div class="chat-input-row">
+                                    <button class="btn btn-sm btn-secondary chat-upload-btn" onclick="document.getElementById('chat-file-input').click()" title="Upload files">&#128206;</button>
+                                    <input type="file" id="chat-file-input" multiple style="display:none" onchange="chatHandleFiles(this.files)">
+                                    <button class="btn btn-sm btn-secondary" id="chat-mic-btn" onclick="chatToggleMic()" title="Speak to Praxis (speech-to-text)">&#127908;</button>
+                                    <button class="btn btn-sm btn-secondary" id="chat-tts-btn" onclick="chatToggleTts()" title="Read replies aloud (configured TTS provider)" aria-pressed="false">&#128266;</button>
+                                    <div style="position:relative;flex:1">
+                                        <textarea id="chat-input" class="chat-input" placeholder="Type a message... (try /clear, /start, /stop, /new, /status)" rows="3" onkeydown="chatKeyDown(event)" oninput="chatInput(event)"></textarea>
+                                        <div id="slash-commands" class="slash-commands" style="display:none"></div>
+                                    </div>
+                                    <button class="btn btn-primary chat-send-btn" id="chat-send-btn" onclick="chatSendMessage()">Send</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="tab-contexts" class="tab">
+                    <h2>Contexts</h2>
+                    <div id="contexts-list" class="data-list"></div>
+                </div>
+                <div id="tab-graphs" class="tab">
+                    <div class="page-intro"><span class="eyebrow">WORKFLOW EXPLORER</span><h2>Follow the decision.</h2><p>States, available actions and verified transitions from the loaded workflow.</p></div>
+                    <div class="graph-toolbar">
+                        <label>Context<select id="graph-user-id" aria-label="Graph context"></select></label>
+                        <label>Workflow<select id="graph-workflow" aria-label="Graph workflow"><option value="">Active workflow</option></select></label>
+                        <button id="graph-refresh" class="btn btn-secondary btn-sm">Refresh</button>
+                        <button id="graph-fit" class="btn btn-secondary btn-sm">Fit</button>
+                        <button id="graph-zoom-in" class="btn btn-secondary btn-sm" aria-label="Zoom in">+</button>
+                        <button id="graph-zoom-out" class="btn btn-secondary btn-sm" aria-label="Zoom out">−</button>
+                    </div>
+                    <div id="graph-status" class="graph-status" aria-live="polite">Select a context to explore its workflow.</div>
+                    <div class="graph-layout">
+                        <div class="graph-stage" id="graph-stage"><svg id="workflow-graph" role="img" aria-label="State machine graph"><title>Workflow graph</title></svg><div class="graph-legend"><span><i class="legend-dot active"></i>Current</span><span><i class="legend-dot visited"></i>Visited</span><span><i class="legend-line"></i>Transition</span><span><i class="legend-line blocked"></i>Blocked / automatic</span></div></div>
+                        <aside id="graph-inspector" class="graph-inspector"><span class="eyebrow">STATE INSPECTOR</span><p>Select a node to see its purpose, IR and outgoing choices.</p></aside>
+                    </div>
+                </div>
+                <div id="tab-messages" class="tab">
+                    <h2>Messages</h2>
+                    <p class="page-description">Conversation, actual system prompts, configuration changes and execution evidence in one timeline.</p>
+                    <div class="form-group" style="display:flex;gap:0.5rem;align-items:end">
+                        <div style="flex:1"><label for="message-user-id">User</label>
+                            <select id="message-user-id"><option value="">Select user...</option></select>
+                        </div>
+                        <button id="load-messages-btn" class="btn btn-primary" style="width:auto">Load</button>
+                        <label class="timeline-filter">Show<select id="message-filter"><option value="all">Everything</option><option value="model">Model calls &amp; prompts</option><option value="changes">Transitions &amp; compaction</option><option value="conversation">Conversation &amp; tools</option></select></label>
+                    </div>
+                    <div id="messages-list" class="data-list"></div>
+                </div>
+                <div id="tab-templates" class="tab"><h2>Templates</h2><div id="templates-list" class="data-list"></div></div>
+                <div id="tab-decision-profiles" class="tab"><h2>Decision Routing</h2><p>JSON profiles in <code>decisions/*.json</code>. Select one with <code>settings.decision_profile</code> in a context or .sm state. Set it to <code>off</code> to disable. State-map targets must exist in the active workflow. Probabilities are not calibrated certainty.</p><button class="btn btn-primary" onclick="editDecisionProfile()">New profile</button><div id="decision-profiles-list" class="data-list"></div></div>
+                <div id="tab-tools" class="tab"><h2>Tools</h2><h3>Packages</h3><div id="tool-packages-list" class="data-list"></div><h3 style="margin-top:1rem">Tools</h3><div id="tools-list" class="data-list"></div></div>
+                <div id="tab-memory" class="tab">
+                    <h2>Memory</h2>
+                    <div class="form-group" style="display:flex;gap:0.5rem;align-items:end">
+                        <div style="flex:1"><label for="memory-user-id">User</label>
+                            <select id="memory-user-id"><option value="">Select user...</option></select>
+                        </div>
+                        <button id="load-memory-btn" class="btn btn-primary" style="width:auto">Load</button>
+                    </div>
+                    <div id="memory-content"></div>
+                </div>
+                <div id="tab-secrets" class="tab"><h2>Secrets</h2><div id="secrets-content"></div></div>
+                <div id="tab-pairings" class="tab">
+                    <h2>Pairings</h2>
+                    <div id="pairings-list" class="data-list"></div>
+                    <h3 style="margin-top:2rem;margin-bottom:1rem">Pending Pairings</h3>
+                    <div id="pending-pairings-list" class="data-list"></div>
+                </div>
+                <div id="tab-sm-files" class="tab">
+                    <h2>Statemachine</h2>
+                    <div style="margin-bottom:1rem"><button class="btn btn-primary" style="width:auto;padding:0.5rem 1.5rem" onclick="createSmFile()">+ New Statemachine</button></div>
+                    <div id="sm-files-list" class="data-list"></div>
+                </div>
+                <div id="tab-cron-jobs" class="tab"><h2>Cron Jobs</h2><div id="cron-jobs-list" class="data-list"></div></div>
+            </main>
+        </div>
+    </div>
+
+    <script src="/static/extensions.js?v=1"></script>
+    <script src="/static/app.js?v=16"></script>
+    <script src="/static/workflow-dashboard.js?v=1"></script>
+    <script src="/static/chat-audio.js?v=1"></script>
+</body>
+</html>

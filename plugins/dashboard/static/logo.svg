@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" role="img" aria-labelledby="praxis-title praxis-desc">
+  <title id="praxis-title">Praxis</title>
+  <desc id="praxis-desc">A geometric P follows an angular path to a gold checkpoint: judgment put into practice.</desc>
+  <g id="praxis-mark">
+    <path id="decision-path" fill="#23594d" fill-rule="evenodd" d="M20 16H72L108 48V64L76 96H48V112H20Z M48 40V72H64L80 56L64 40Z"/>
+    <path id="checkpoint" fill="#c58938" d="M92 48H108V64H92Z"/>
+  </g>
+</svg>
