@@ -3698,6 +3698,7 @@ dependencies = [
  "praxis-legacy-file-ops",
  "praxis-plugin-api",
  "praxis-provider-api",
+ "praxis-sandbox",
  "praxis-shell",
  "praxis-vision",
  "praxis-vm",
@@ -3848,6 +3849,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "praxis-sandbox"
+version = "1.1.0"
+dependencies = [
+ "anyhow",
+ "libc",
+]
+
+[[package]]
 name = "praxis-shell"
 version = "1.1.0"
 dependencies = [
@@ -3857,6 +3866,7 @@ dependencies = [
  "dashmap 6.1.0",
  "libc",
  "praxis-plugin-api",
+ "praxis-sandbox",
  "serde",
  "serde_json",
  "tempfile",

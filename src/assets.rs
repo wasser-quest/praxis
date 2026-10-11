@@ -117,6 +117,8 @@ const BUNDLED_ASSETS: &[Asset] = &[
     asset!("skills/poml_templates/skill.json"),
     asset!("skills/poml_templates/skill.poml"),
     asset!("skills/poml_templates/reference.md"),
+    asset!("skills/safe_web_search/skill.json"),
+    asset!("skills/safe_web_search/skill.poml"),
     asset!("skills/poml_templates/examples/defaults.json"),
     asset!("skills/poml_templates/examples/footer.poml"),
     asset!("skills/poml_templates/examples/starter.poml"),
@@ -165,6 +167,8 @@ const BUNDLED_ASSETS: &[Asset] = &[
     asset!("plugins/brave_search/plugin.json"),
     asset!("plugins/brave_search/search.py", executable),
     asset!("plugins/brave_search/README.md"),
+    asset!("plugins/brave_search/skills/safe_web_search/skill.json"),
+    asset!("plugins/brave_search/skills/safe_web_search/skill.poml"),
 ];
 
 // First-party compatibility packages shipped with the full distribution.

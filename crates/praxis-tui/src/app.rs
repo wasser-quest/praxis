@@ -29,6 +29,7 @@ pub const SLASH_COMMANDS: &[SlashCmd] = &[
     SlashCmd { name: "/clear", desc: "Clear messages in this session" },
     SlashCmd { name: "/new", desc: "Create a new chat session (forks current)" },
     SlashCmd { name: "/sessions", desc: "Toggle the sessions sidebar" },
+    SlashCmd { name: "/session", desc: "Switch to session <n> (Alt+digit; Ctrl+digit when the terminal keeps Alt for itself)" },
     SlashCmd { name: "/stop", desc: "Stop the running agent loop" },
     SlashCmd { name: "/status", desc: "Print agent status" },
     SlashCmd { name: "/delegations", desc: "Show delegated subtasks (status + result)" },
@@ -156,7 +157,8 @@ pub fn render_state(graph: &serde_json::Value) -> String {
             let index = edge["index"].as_u64().map(|i| i.to_string()).unwrap_or_else(|| "?".into());
             let edge_title = text(&edge["title"]);
             let destination = text(&edge["to"]);
-            out.push_str(&format!("\n  {index} → {destination}{}{}", if edge_title.is_empty() || edge_title == destination { String::new() } else { format!(" ({edge_title})") }, match edge["blocked_reason"].as_str() { Some(reason) => format!(" · blocked: {reason}"), None => " · eligible".into() }));
+            let exit = if destination == "_complete" { " (exit)" } else { "" };
+            out.push_str(&format!("\n  {index} → {destination}{}{}{}", if edge_title.is_empty() || edge_title == destination { String::new() } else { format!(" ({edge_title})") }, exit, match edge["blocked_reason"].as_str() { Some(reason) => format!(" · blocked: {reason}"), None => " · eligible".into() }));
         }
     }
     let history = graph["history"].as_array().map(Vec::as_slice).unwrap_or(EMPTY);
@@ -209,6 +211,10 @@ pub struct App {
     pub mouse_capture: bool,
     pub copy_selection: Option<CopySelection>,
     pending_clipboard: Option<String>,
+    /// Escape seen on its own: terminals that bind Alt+1..9 to their own tab
+    /// switching send Alt as an Escape prefix instead, so the next digit is read
+    /// as the modifier form.
+    pub alt_prefix: Option<Instant>,
     /// Vertical scroll offset (0 = pinned to bottom).
     pub scroll_offset: usize,
     /// Track if user was at bottom before new messages (for auto-scroll).
@@ -219,6 +225,12 @@ pub struct App {
     pub agent_active: bool,
 
     pub status_msg: Option<(String, Instant)>,
+
+    /// A request is in flight: the agent is working on something for this session.
+    pub working: bool,
+    /// The workflow state the last /state read reported, so the footer can show
+    /// where the agent is without a second round trip.
+    pub workflow_state: Option<String>,
 
     pub should_quit: bool,
 
@@ -269,12 +281,15 @@ impl App {
             mouse_capture: true,
             copy_selection: None,
             pending_clipboard: None,
+            alt_prefix: None,
             scroll_offset: 0,
             at_bottom: true,
             viewport: (0, 0, 0),
             event_tx: None,
             agent_active: false,
             status_msg: None,
+            working: false,
+            workflow_state: None,
             should_quit: false,
             session_prompt_tokens: 0,
             session_completion_tokens: 0,
@@ -441,6 +456,7 @@ impl App {
                     self.transcript.push(Bubble::Assistant {content: data.into()});
                     self.pending_echoes.push(index);
                     self.stream_history.push(index);
+                    self.working = false;
                 }
                 // Final text is validated by the gateway. Keep its bubble while
                 // waiting for history, even across tool continuations/reconnects.
@@ -471,6 +487,7 @@ impl App {
                 let failed = event == "request_failed" || data.starts_with("LLM request failed") || data.starts_with("LLM error:");
                 if event == "request_failed" {
                     self.agent_active = false;
+                    self.working = false;
                     self.live.apply("stream_abort", "");
                 }
                 // The POST result may repeat the latest SSE error. Do not
@@ -683,7 +700,7 @@ impl App {
         // is forwarded as-is so commands like `/context set foo=bar` work.
         let mut parts = line.splitn(2, char::is_whitespace);
         let name = parts.next().unwrap_or("").to_string();
-        let _rest = parts.next().unwrap_or("").to_string();
+        let rest = parts.next().unwrap_or("").to_string();
         match name.as_str() {
             "/clear" => {
                 let result = self.remote
@@ -708,6 +725,14 @@ impl App {
             }
             "/sessions" => {
                 self.show_sidebar = !self.show_sidebar;
+            }
+            "/session" => {
+                // A slash command works in every terminal, including the ones
+                // that keep Alt+1..9 for themselves.
+                match rest.trim().parse::<usize>() {
+                    Ok(n) if n > 0 => self.switch_session(n - 1).await,
+                    _ => self.flash("usage: /session <number> (see /sessions)"),
+                }
             }
             "/stop" => {
                 self.stop_agent().await;
@@ -749,12 +774,15 @@ impl App {
             "/state" | "/workflow" => {
                 let id = self.active_user_id().to_string();
                 match self.remote.graph(&id).await {
-                    Ok(graph) => self.transcript.push(Bubble::System { content: render_state(&graph) }),
+                    Ok(graph) => {
+                        self.workflow_state = graph["active_state"].as_str().map(String::from);
+                        self.transcript.push(Bubble::System { content: render_state(&graph) })
+                    }
                     Err(error) => self.flash(format!("state failed: {error}")),
                 }
             }
             "/rename" => {
-                let title = _rest.trim();
+                let title = rest.trim();
                 if title.is_empty() || title.chars().count() > 128 {
                     self.flash("Usage: /rename <name> (1–128 characters)"); return;
                 }
@@ -802,7 +830,7 @@ impl App {
             }
             "/fold" => {
                 // Toggle folding for all tool/result bubbles, or specific index.
-                let arg = _rest.trim();
+                let arg = rest.trim();
                 if arg.is_empty() {
                     // Toggle global: if any folded, unfold all; else fold all tool results.
                     if self.folded_bubbles.is_empty() {
@@ -857,7 +885,7 @@ impl App {
                 self.transcript.push(Bubble::Banner {
                     kind: BannerKind::Info,
                     content: format!(
-                        "Keys: F2 mouse ON/OFF (native selection when OFF); F3 message copy mode.\nCopy: tool results show/copy their full raw receipt (not the formatted view).\nUp/Down/Home/End select; Ctrl+C or y requests terminal clipboard (OSC 52).\nMark (vim-like): v starts a visual mark, Up/Down extend it, Home/End jump, [ ] change message, y copies the marked lines, v or Esc leaves the mark.\nFold: new tool results fold to a preview automatically; Tab expands; /fold preview <n>, /fold auto <lines|off>.\nEsc/F3 leaves copy mode; Ctrl+Q always quits; Ctrl+C quits outside copy mode.\nPgUp/PgDn scroll with or without mouse capture.\nPaste: use your terminal paste shortcut; multiline/Unicode stays in the draft.\nIf OSC 52 is unsupported/blocked, use F2 then native selection/copy.\n\nCommands:\n{body}\n\nAttach files with @path. Use Tab/Enter to autocomplete.\n\
+                        "Keys: F2 mouse ON/OFF (native selection when OFF); F3 message copy mode.\nCopy: tool results show/copy their full raw receipt (not the formatted view).\nUp/Down/Home/End select; Ctrl+C or y requests terminal clipboard (OSC 52).\nMark (vim-like): v starts a visual mark, Up/Down extend it, Home/End jump, [ ] change message, y copies the marked lines, v or Esc leaves the mark.\nFold: new tool results fold to a preview automatically; Tab expands; /fold preview <n>, /fold auto <lines|off>.\nEsc/F3 leaves copy mode; Ctrl+Q always quits; Ctrl+C quits outside copy mode.\nPgUp/PgDn scroll with or without mouse capture.\nSessions: Alt+1..9 switches; if your terminal keeps Alt for its own tabs, use Ctrl+1..9 or /session <n>.\nPaste: use your terminal paste shortcut; multiline/Unicode stays in the draft.\nIf OSC 52 is unsupported/blocked, use F2 then native selection/copy.\n\nCommands:\n{body}\n\nAttach files with @path. Use Tab/Enter to autocomplete.\n\
                          /context examples:\n  \
                             /context set custom_data.device=main settings.max_llm_turns=20\n  \
                             /context set settings.voice_tts_enabled=true\n  \
@@ -867,7 +895,7 @@ impl App {
                 });
             }
             "/login" | "/logout" => {
-                self.run_login(&name, &_rest).await;
+                self.run_login(&name, &rest).await;
             }
             "/quit" | "/exit" => {
                 self.should_quit = true;
@@ -1057,6 +1085,7 @@ impl App {
             }
         });
         self.agent_active = true;
+        self.working = true;
         self.flash("sent");
     }
 
@@ -1127,6 +1156,31 @@ impl App {
             self.refresh_transcript().await;
         }
     }
+}
+
+/// Which session a digit key selects, if it selects one.
+///
+/// Alt+digit is the intended binding. GNOME Terminal (and several others) bind
+/// Alt+1..9 to their own tab switching, so the app never sees the modifier; those
+/// terminals send Alt as an Escape prefix instead. The prefix is accepted only as
+/// a modifier — a fresh press followed immediately by a digit, with nothing typed
+/// — so a digit that is part of a prompt stays a digit. Ctrl+digit is the binding
+/// no terminal steals.
+fn session_switch_index(c: char, mods: KeyModifiers, draft: &str, alt_prefix: Option<Instant>) -> Option<usize> {
+    if !c.is_ascii_digit() {
+        return None;
+    }
+    if mods.contains(KeyModifiers::ALT) || mods.contains(KeyModifiers::CONTROL) {
+        return Some((c as u8 - b'1') as usize);
+    }
+    if mods.is_empty() && draft.is_empty() {
+        if let Some(pressed) = alt_prefix {
+            if pressed.elapsed() < Duration::from_millis(50) {
+                return Some((c as u8 - b'1') as usize);
+            }
+        }
+    }
+    None
 }
 
 /// Compute a stable dedup key for a gateway message.
@@ -1431,6 +1485,11 @@ async fn handle_event(ev: Event, app: &mut App) {
 
 async fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
     // Global keybinds first.
+    if code == KeyCode::Esc {
+        app.alt_prefix = Some(Instant::now());
+    } else {
+        app.alt_prefix = None;
+    }
     if code == KeyCode::F(2) {
         app.toggle_mouse_capture();
         return;
@@ -1503,8 +1562,9 @@ async fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
             app.scroll_down(5);
             return;
         }
-        (KeyCode::Char(c), KeyModifiers::ALT) if c.is_ascii_digit() => {
+        (KeyCode::Char(c), mods) if c.is_ascii_digit() && session_switch_index(c, mods, &app.input, app.alt_prefix).is_some() => {
             let idx = (c as u8 - b'1') as usize;
+            app.alt_prefix = None;
             app.switch_session(idx).await;
             return;
         }
@@ -1729,8 +1789,20 @@ mod tests {
         assert!(rendered.contains("AT setup — Prepare"), "{rendered}");
         assert!(rendered.contains("Read the manifest"), "{rendered}");
         assert!(rendered.contains("0 → build (Implement) · blocked: check test has no receipt"), "{rendered}");
-        assert!(rendered.contains("1 → _complete · eligible"), "{rendered}");
+        assert!(rendered.contains("1 → _complete (exit) · eligible"), "{rendered}");
         assert!(rendered.contains("VISITED setup"), "{rendered}");
+    }
+
+    #[test]
+    fn the_working_flag_tracks_the_agent_not_the_terminal() {
+        let mut app = dummy_app();
+        assert!(!app.working, "a fresh session is idle");
+        app.working = true;
+        app.stream_event("assistant", "the answer");
+        assert!(!app.working, "an answer means the agent stopped working");
+        app.working = true;
+        app.stream_event("request_failed", "gateway is down");
+        assert!(!app.working, "a failed request must not leave the agent looking busy");
     }
 
     #[tokio::test]
@@ -2270,6 +2342,17 @@ mod tests {
         assert_eq!(app.input, "/recall first!");
         handle_key(&mut app, KeyCode::Down, KeyModifiers::NONE).await;
         assert_eq!(app.input, "second draft");
+    }
+
+    #[test]
+    fn a_digit_switches_session_when_it_is_a_modifier_not_a_keystroke() {
+        assert_eq!(session_switch_index('3', KeyModifiers::ALT, "", None), Some(2));
+        assert_eq!(session_switch_index('3', KeyModifiers::CONTROL, "", None), Some(2), "the binding no terminal steals");
+        let fresh = Instant::now();
+        assert_eq!(session_switch_index('1', KeyModifiers::NONE, "", Some(fresh)), Some(0), "the Escape-prefix form terminals fall back to");
+        assert_eq!(session_switch_index('1', KeyModifiers::NONE, "1 hello", Some(fresh)), None, "a digit in a prompt stays a digit");
+        assert_eq!(session_switch_index('1', KeyModifiers::NONE, "", Some(fresh - Duration::from_millis(120))), None, "a stale Escape is not a modifier");
+        assert_eq!(session_switch_index('a', KeyModifiers::ALT, "", Some(fresh)), None);
     }
 
     fn dummy_app() -> App {

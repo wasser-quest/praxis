@@ -93,7 +93,7 @@ impl Requirements {
             }
         }
         ensure!(failures.is_empty(),
-            "Workspace preflight failed at '{}': {}. Point WORKSPACE_DIR (or praxis run --workspace-dir) at the prepared project and start a new task; nothing was changed.",
+            "workspace preflight failed at '{}': {}. Point WORKSPACE_DIR (or praxis run --workspace-dir) at the prepared project and start a new task; nothing was changed.",
             root.display(), failures.join("; "));
         Ok(())
     }

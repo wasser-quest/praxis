@@ -984,10 +984,25 @@ async fn execute_script(
         serde_json::to_string(&secrets.cloned().unwrap_or_default())?,
     );
 
-    let output = cmd
-        .output()
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to execute script {}: {}", path, e))?;
+    // Confine the interpreter before exec: a plugin script is model-reachable
+    // input running under the operator's identity, so the syscall surface and
+    // the resource budget are narrowed in the child.
+    #[cfg(unix)]
+    {
+        let sandbox = praxis_sandbox::Sandbox::from_env();
+        unsafe { cmd.pre_exec(praxis_sandbox::hook(&sandbox)) };
+    }
+
+    // A hung script would otherwise hold the tool call open forever.
+    let limit = std::env::var("PRAXIS_PLUGIN_TIMEOUT_SECS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(60);
+    let output = match tokio::time::timeout(std::time::Duration::from_secs(limit), cmd.output()).await {
+        Ok(output) => output?,
+        Err(_) => anyhow::bail!("Plugin script {} exceeded the {}s execution limit", path, limit),
+    };
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

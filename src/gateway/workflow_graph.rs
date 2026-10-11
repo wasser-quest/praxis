@@ -34,7 +34,7 @@ pub async fn edges(sm: &StateMachine, context: &Value, user: &str) -> Vec<Edge> 
                 Some(obj) => crate::runtime::engine::evaluate_condition(&transition.condition, obj, &evidence).await,
                 None => false,
             };
-        let blocked_reason = if !sm.states.contains_key(&transition.to) {
+        let blocked_reason = if !sm.states.contains_key(&transition.to) && transition.to != "_complete" {
             Some("Destination state is undefined".into())
         } else if !condition_met {
             Some(format!("Condition is false: {}", transition.condition))
@@ -129,10 +129,19 @@ pub async fn view(sm: &StateMachine, ctx: &Context) -> Value {
             "decision_ir": sm.ir_for(name), "guards": sm.guards.get(name), "action_guards": sm.action_guards.get(name),
             "action_guard_triggers": sm.action_guard_triggers.get(name), "user_reply_guards": sm.user_reply_guards.get(name)})
     }).collect();
+    // The exit is part of the graph when the workflow declares it, so the graph
+    // explorer and the TUI briefing can show how a run is allowed to end.
+    let exit = json!({"id": "_complete", "title": "Complete", "description": "Exit: the run ends here when the completion guards hold",
+        "guards": sm.guards.get("_complete"), "action_guards": sm.action_guards.get("_complete"),
+        "action_guard_triggers": sm.action_guard_triggers.get("_complete")});
+    if sm.transitions.iter().any(|t| t.to == "_complete") || sm.guards.contains_key("_complete") || sm.action_guards.contains_key("_complete") {
+        nodes.push(exit.clone());
+    }
     nodes.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
     json!({"name": sm.name, "description": sm.description, "routing": if sm.is_graph() {"graph"} else {"linear"},
         "start": sm.entry_state(), "active_state": ctx.active_state, "history": history(&ctx.user_id),
-        "nodes": nodes, "edges": edges(sm, &context, &ctx.user_id).await, "workflow": super::prompt::workflow_name(ctx),
+        "nodes": nodes, "edges": edges(sm, &context, &ctx.user_id).await, "exit": exit,
+        "workflow": super::prompt::workflow_name(ctx),
         "reply_facts": super::action_contracts::reply_facts(&ctx.user_id), "completion_guards": sm.action_guards.get("_complete"),
         "completion_triggers": sm.action_guard_triggers.get("_complete")})
 }

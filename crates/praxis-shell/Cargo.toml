@@ -7,6 +7,7 @@ description = "Optional raw shell execution and durable background jobs for Prax
 
 [dependencies]
 praxis-plugin-api = { path = "../praxis-plugin-api" }
+praxis-sandbox = { path = "../praxis-sandbox" }
 async-trait = "0.1"
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }

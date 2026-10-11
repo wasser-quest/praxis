@@ -27,6 +27,17 @@ pub const FINISHED_JOB_TTL_SECS: i64 = 3600;
 /// Hard cap on retained jobs; the oldest finished entries are dropped first.
 pub const MAX_JOBS: usize = 500;
 
+/// Confine the child between fork and exec. The policy comes from the
+/// environment, so it is operator policy, never a tool argument a model can
+/// widen. On platforms without kernel filters this is a no-op.
+fn confine(cmd: &mut tokio::process::Command) {
+    #[cfg(unix)]
+    {
+        let sandbox = praxis_sandbox::Sandbox::from_env();
+        unsafe { cmd.pre_exec(praxis_sandbox::hook(&sandbox)) };
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct BackgroundJob {
     pub id: String,
@@ -85,6 +96,7 @@ pub async fn execute_terminal(command: &str, cwd: Option<&str>) -> Result<Termin
     if let Some(dir) = cwd {
         cmd.current_dir(dir);
     }
+    confine(&mut cmd);
     cmd.stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -164,6 +176,7 @@ impl ShellJobs {
         if let Some(dir) = cwd {
             cmd.current_dir(dir);
         }
+        confine(&mut cmd);
         cmd.stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())

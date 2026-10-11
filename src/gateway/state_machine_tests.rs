@@ -60,3 +60,14 @@ fn twenty_tasks_manifest_contains_twenty_natural_tasks_and_hidden_rubrics() {
         assert!(!task["checks"].as_array().unwrap().is_empty());
     }
 }
+
+#[tokio::test]
+async fn the_exit_is_part_of_the_graph_and_not_a_missing_state() {
+    let sm = crate::sm::parse("[state review]\n[transitions]\nreview -> _complete : when settings.done == true\n").unwrap();
+    let ctx = Context { user_id: "exit-graph".into(), active_state: Some("review".into()), ..Default::default() };
+    let graph = crate::gateway::workflow_graph::view(&sm, &ctx).await;
+    let edge = graph["edges"].as_array().unwrap().iter().find(|e| e["to"] == "_complete").expect("declared exit edge");
+    assert_ne!(edge["blocked_reason"].as_str().unwrap_or(""), "Destination state is undefined", "the exit is a declared destination, not a typo");
+    assert!(graph["nodes"].as_array().unwrap().iter().any(|node| node["id"] == "_complete"), "the graph shows how a run is allowed to end");
+    assert_eq!(graph["exit"]["title"].as_str(), Some("Complete"));
+}

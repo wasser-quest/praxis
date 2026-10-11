@@ -5,3 +5,4 @@ secrets.enc2
 secrets.json
 secrets.json.migrated
 /data
+pycache

@@ -1124,6 +1124,18 @@ pub fn transition_to(
     if crate::gateway::action_contracts::require_for_workflow(user, sm, target_state).is_err() {
         return false;
     }
+    if target_state == "_complete" {
+        // The exit is not a state. A workflow that declares `x -> _complete`
+        // ends through that edge, and only when the completion guards hold —
+        // which is what the guard check above just did.
+        return match context.get_mut("settings").and_then(|settings| settings.as_object_mut()) {
+            Some(settings) => {
+                settings.insert("done".into(), serde_json::json!(true));
+                true
+            }
+            None => false,
+        };
+    }
     apply_state(sm, context, target_state)
 }
 
@@ -1560,6 +1572,20 @@ mode = "chat"
 
         let success = transition_to(&sm, &mut ctx, "nonexistent");
         assert!(!success);
+    }
+
+    #[test]
+    fn the_exit_edge_ends_the_run_instead_of_looking_like_a_missing_state() {
+        let input = r#"
+[state review]
+[transitions]
+review -> _complete : when settings.done == true
+"#;
+        let sm = parse(input).unwrap();
+        let mut ctx = serde_json::json!({"active_state": "review", "settings": {"done": false}});
+        assert!(transition_to(&sm, &mut ctx, "_complete"));
+        assert_eq!(ctx["settings"]["done"], true, "the exit is a completion, not a state to enter");
+        assert_eq!(ctx["active_state"], "review", "the run still reports where it ended");
     }
 
     #[test]

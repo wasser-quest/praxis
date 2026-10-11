@@ -161,14 +161,12 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
         .active_session()
         .map(|s| s.name.clone())
         .unwrap_or_else(|| app.sessions.active.clone());
-    let agent = if app.agent_active {
-        Span::styled(
-            " ● Agent active ",
-            Style::default()
-                .fg(Color::Black)
-                .bg(ACCENT_CYAN)
-                .add_modifier(Modifier::BOLD),
-        )
+    let state = app.workflow_state.as_ref().map(|state| format!(" · {state}")).unwrap_or_default();
+    let agent = if app.working {
+        Span::styled(format!(" ● working{state} "),
+            Style::default().fg(Color::Black).bg(ACCENT_GREEN).add_modifier(Modifier::BOLD))
+    } else if app.agent_active {
+        Span::styled(format!(" ○ idle{state} "), Style::default().fg(TEXT_DIM))
     } else {
         Span::styled(" ○ Idle ", Style::default().fg(TEXT_DIM))
     };
@@ -1343,6 +1341,21 @@ mod tests {
                 display:"stdout:\nFIRST\n世界 👩‍💻\n  LAST".into()};
             assert_lines_fit(&render_bubble(&bubble,width,"user",None),width);
         }
+    }
+
+
+    #[test]
+    fn the_header_says_whether_the_agent_is_working() {
+        let (mut app, _dir) = dummy_app();
+        app.show_sidebar = false;
+        let mut terminal = Terminal::new(TestBackend::new(80, 12)).unwrap();
+        terminal.draw(|f| draw(f, &mut app)).unwrap();
+        assert!(screen_rows(&terminal).first().unwrap().to_lowercase().contains("idle"), "a quiet session reads as idle");
+        app.working = true;
+        app.workflow_state = Some("review".into());
+        terminal.draw(|f| draw(f, &mut app)).unwrap();
+        let header = screen_rows(&terminal).first().unwrap().clone();
+        assert!(header.contains("working · review"), "{header}");
     }
 
 }
