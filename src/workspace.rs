@@ -41,6 +41,11 @@ impl Requirements {
     }
 
     pub fn check(&self, root: &Path) -> anyhow::Result<()> {
+        // A workflow that declares nothing needs no prepared project: a bare
+        // `praxis` run can just chat instead of failing a setup check.
+        if self.is_empty() {
+            return Ok(());
+        }
         self.validate()?;
         let mut failures = Vec::new();
         for (paths, directory) in [
@@ -88,7 +93,7 @@ impl Requirements {
             }
         }
         ensure!(failures.is_empty(),
-            "Workflow workspace preflight failed at '{}': {}. Set WORKSPACE_DIR or praxis run --workspace-dir to the prepared project directory, then restart Praxis and start a new task. ROOT_DIR selects installation assets. Setup stopped before the next model call; this check did not change project files.",
+            "Workspace preflight failed at '{}': {}. Point WORKSPACE_DIR (or praxis run --workspace-dir) at the prepared project and start a new task; nothing was changed.",
             root.display(), failures.join("; "));
         Ok(())
     }
@@ -97,6 +102,23 @@ impl Requirements {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_workflow_that_declares_nothing_never_touches_the_filesystem() {
+        // The confusing case was a bare run failing a check it never asked for.
+        let nowhere = std::path::Path::new("/definitely-not-a-project-9f2c1");
+        assert!(Requirements::default().check(nowhere).is_ok());
+    }
+
+    #[test]
+    fn a_failure_names_the_missing_paths_and_the_fix_in_one_line() {
+        let root = tempfile::tempdir().unwrap();
+        let error = Requirements { required_files: vec!["Cargo.toml".into()], ..Default::default() }
+            .check(root.path()).unwrap_err().to_string();
+        assert!(error.contains("\"Cargo.toml\" is missing"), "{error}");
+        assert!(error.contains("WORKSPACE_DIR"), "{error}");
+        assert_eq!(error.matches('\n').count(), 0, "the preflight message stays one line: {error}");
+    }
 
     #[test]
     fn required_paths_check_types_without_creating_or_searching_for_files() {

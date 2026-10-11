@@ -23,6 +23,8 @@ pub const CONFIG_KEYS: &[&str] = &[
     "OLLAMA_MODEL",
     "MIMO_MODEL",
     "TOOL_GROUPS",
+    "GATEWAY_RATE_LIMIT_PER_MINUTE",
+    "GATEWAY_RATE_LIMIT_READ_PER_MINUTE",
 ];
 
 pub fn is_secret_key(key: &str) -> bool {

@@ -270,8 +270,9 @@ pub async fn start_with_plugins(db: crate::db::Database, config: crate::config::
 
 /// The same authenticated routes serve configured and setup-only installations.
 pub fn routes(state: GatewayState) -> axum::Router {
-    let rate_limiter = Arc::new(rate_limiter::UserRateLimiter::new(
+    let rate_limiter = Arc::new(rate_limiter::UserRateLimiter::with_budgets(
         rate_limiter::UserRateLimiter::per_minute_from_env(),
+        rate_limiter::UserRateLimiter::read_per_minute_from_env(),
     ));
 
     let app = axum::Router::new()
@@ -311,16 +312,20 @@ async fn rate_limit_middleware(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("anonymous")
         .to_string();
+    // Polling (dashboard tab, TUI, websocket upgrade) is read traffic and must
+    // not consume the budget that chat writes need.
+    let read_only = matches!(req.method().as_str(), "GET" | "HEAD");
 
-    match limiter.check(&user_id) {
+    match limiter.check(&user_id, read_only) {
         Ok(()) => Ok(next.run(req).await),
-        Err(rate_limiter::RateLimitError::TooManyRequests { retry_after }) => {
+        Err(rate_limiter::RateLimitError::TooManyRequests { budget, retry_after }) => {
             // Say when to come back: a client that backs off is a client that
             // stops asking, and `Retry-After` is the whole protocol for that.
             let seconds = retry_after.as_secs().max(1).to_string();
             let mut response =
                 axum::response::Response::new(axum::body::Body::from(serde_json::json!({
                     "error": "rate limit exceeded",
+                    "budget": budget,
                     "retry_after_seconds": retry_after.as_secs().max(1),
                 })
                 .to_string()));

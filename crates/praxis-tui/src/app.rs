@@ -43,7 +43,8 @@ pub const SLASH_COMMANDS: &[SlashCmd] = &[
     SlashCmd { name: "/mouse", desc: "Toggle mouse capture (F2); OFF enables native selection" },
     SlashCmd { name: "/copy", desc: "Select a saved message to copy (F3); arrows select, Ctrl+C/y copies" },
     SlashCmd { name: "/usage", desc: "Show token usage for current response and session" },
-    SlashCmd { name: "/fold", desc: "Toggle output folding for long tool results" },
+    SlashCmd { name: "/state", desc: "Show the current workflow state and what it can move to" },
+    SlashCmd { name: "/fold", desc: "Fold to a preview: /fold | /fold <index> | /fold preview <n> | /fold auto <n|off>" },
     SlashCmd { name: "/help", desc: "Show available commands" },
     SlashCmd { name: "/quit", desc: "Exit the TUI" },
 ];
@@ -92,9 +93,78 @@ pub struct CopySelection {
     pub index: usize,
     pub content: String,
     pub reveal: bool,
+    /// Vim-style visual mark: inclusive line range inside `content`.
+    /// `None` means the whole message is selected.
+    pub mark: Option<(usize, usize)>,
+    /// Line the visual cursor sits on; the mark grows from its anchor.
+    pub cursor: usize,
+    pub visual: bool,
+}
+
+impl CopySelection {
+    pub fn new(index: usize, content: String) -> Self {
+        Self { index, content, reveal: true, mark: None, cursor: 0, visual: false }
+    }
+
+    /// The text an explicit copy action writes: the marked range, or the whole
+    /// message when no range is marked.
+    pub fn marked_text(&self) -> String {
+        let Some((first, last)) = self.mark else { return self.content.clone() };
+        let (first, last) = (first.min(last), first.max(last));
+        self.content
+            .split('\n')
+            .enumerate()
+            .filter(|(i, _)| *i >= first && *i <= last)
+            .map(|(_, line)| line)
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    pub fn line_count(&self) -> usize {
+        self.content.split('\n').count().max(1)
+    }
 }
 
 const MAX_CLIPBOARD_BYTES: usize = 100_000;
+const DEFAULT_FOLD_PREVIEW: usize = 3;
+const DEFAULT_FOLD_AUTO: usize = 8;
+
+/// Turn the backend workflow graph into a briefing a terminal can read: where the
+/// session is, what it can move to, and why a move is blocked. A workflow should
+/// explain itself here, not only in the dashboard graph explorer.
+pub fn render_state(graph: &serde_json::Value) -> String {
+    const EMPTY: &[serde_json::Value] = &[];
+    let text = |value: &serde_json::Value| value.as_str().unwrap_or("").to_string();
+    let null = serde_json::Value::Null;
+    let current = text(&graph["active_state"]);
+    let mut out = format!("WORKFLOW {} · {}", text(&graph["name"]), text(&graph["routing"]));
+    let workflow_description = text(&graph["description"]);
+    if !workflow_description.is_empty() { out.push_str(&format!("\n{workflow_description}")); }
+    let node = graph["nodes"].as_array().map(Vec::as_slice).unwrap_or(EMPTY)
+        .iter().find(|entry| text(&entry["id"]) == current).unwrap_or(&null);
+    let title = text(&node["title"]);
+    out.push_str(&format!("\nAT {current}{}", if title.is_empty() || title == current { String::new() } else { format!(" — {title}") }));
+    let node_description = text(&node["description"]);
+    if !node_description.is_empty() { out.push_str(&format!("\n  {node_description}")); }
+    let outgoing: Vec<&serde_json::Value> = graph["edges"].as_array().map(Vec::as_slice).unwrap_or(EMPTY)
+        .iter().filter(|edge| text(&edge["from"]) == current).collect();
+    if outgoing.is_empty() {
+        out.push_str("\nNothing is declared from here.");
+    } else {
+        out.push_str("\nCAN MOVE TO");
+        for edge in outgoing {
+            let index = edge["index"].as_u64().map(|i| i.to_string()).unwrap_or_else(|| "?".into());
+            let edge_title = text(&edge["title"]);
+            let destination = text(&edge["to"]);
+            out.push_str(&format!("\n  {index} → {destination}{}{}", if edge_title.is_empty() || edge_title == destination { String::new() } else { format!(" ({edge_title})") }, match edge["blocked_reason"].as_str() { Some(reason) => format!(" · blocked: {reason}"), None => " · eligible".into() }));
+        }
+    }
+    let history = graph["history"].as_array().map(Vec::as_slice).unwrap_or(EMPTY);
+    if !history.is_empty() {
+        out.push_str(&format!("\nVISITED {}", history.iter().map(text).collect::<Vec<_>>().join(" → ")));
+    }
+    out
+}
 
 /// Top-level TUI state.
 pub struct App {
@@ -161,6 +231,12 @@ pub struct App {
 
     // Output folding state: indices of folded bubbles.
     pub folded_bubbles: std::collections::HashSet<usize>,
+    /// A folded bubble keeps its first `fold_preview` lines visible. Folding is
+    /// a summary the reader can still scan, not a hiding.
+    pub fold_preview: usize,
+    /// New tool results longer than this many lines fold automatically on
+    /// arrival (0 disables auto-folding).
+    pub fold_auto: usize,
 }
 
 impl App {
@@ -206,6 +282,8 @@ impl App {
             session_generation_ms: 0,
             last_response_usage: None,
             folded_bubbles: std::collections::HashSet::new(),
+            fold_preview: DEFAULT_FOLD_PREVIEW,
+            fold_auto: DEFAULT_FOLD_AUTO,
         }
     }
 
@@ -233,7 +311,14 @@ impl App {
                 Bubble::User {content} | Bubble::Assistant {content} | Bubble::Thinking {content}
                 | Bubble::Tool {content, ..} | Bubble::ToolResult {content, ..} | Bubble::System {content} | Bubble::Banner {content, ..} => content,
             };
-            self.copy_selection = Some(CopySelection {index, content: content.clone(), reveal: true});
+            let snapshot = content.clone();
+            let visual = self.copy_selection.as_ref().is_some_and(|s| s.visual);
+            let mut selection = CopySelection::new(index, snapshot);
+            if visual {
+                selection.visual = true;
+                selection.mark = Some((0, selection.line_count() - 1));
+            }
+            self.copy_selection = Some(selection);
             self.popup = Popup::None;
             self.status_msg = None;
         }
@@ -246,14 +331,52 @@ impl App {
         }
     }
 
+    fn toggle_visual(&mut self) {
+        let Some(selection) = &mut self.copy_selection else { return };
+        if selection.visual {
+            selection.visual = false;
+            selection.mark = None;
+            self.flash("Visual mark cleared");
+        } else {
+            selection.visual = true;
+            selection.cursor = selection.cursor.min(selection.line_count() - 1);
+            selection.mark = Some((selection.cursor, selection.cursor));
+            self.flash("Visual mark: v marks, Up/Down grow, y yanks the range");
+        }
+    }
+
+    fn move_mark(&mut self, delta: i32) {
+        let Some(selection) = &mut self.copy_selection else { return };
+        let last = selection.line_count() - 1;
+        let next = (selection.cursor as i32 + delta).clamp(0, last as i32) as usize;
+        let anchor = selection.mark.map(|(a, _)| a).unwrap_or(next);
+        selection.cursor = next;
+        selection.mark = Some((anchor.min(next), anchor.max(next)));
+    }
+
+    fn auto_fold(&mut self, index: usize, content: &str) {
+        if self.fold_auto > 0 && content.split('\n').count() > self.fold_auto {
+            self.folded_bubbles.insert(index);
+        }
+    }
+
+    fn set_mark_line(&mut self, line: usize) {
+        let Some(selection) = &mut self.copy_selection else { return };
+        let anchor = selection.mark.map(|(a, _)| a).unwrap_or(line);
+        let line = line.min(selection.line_count() - 1);
+        selection.cursor = line;
+        selection.mark = Some((anchor.min(line), anchor.max(line)));
+    }
+
     fn request_copy(&mut self) {
-        let Some(selection) = &self.copy_selection else { return; };
-        if selection.content.len() > MAX_CLIPBOARD_BYTES {
+        let Some(selection) = &self.copy_selection else { return };
+        let text = selection.marked_text();
+        if text.len() > MAX_CLIPBOARD_BYTES {
             self.flash("Copy refused: message exceeds 100,000 bytes; use F2 native selection");
         } else {
             // No shell, provider, gateway or clipboard read. Only an explicit
             // copy key queues this request; receipt by the terminal is unknown.
-            self.pending_clipboard = Some(selection.content.clone());
+            self.pending_clipboard = Some(text);
         }
     }
 
@@ -420,10 +543,13 @@ impl App {
             }
             let arguments = serde_json::from_str::<serde_json::Value>(&call.function.arguments).ok();
             let command = arguments.as_ref().and_then(|args| args.get("command")).and_then(|v| v.as_str());
+            let index = self.transcript.len();
+            let content = command.unwrap_or("(command unavailable: invalid or incomplete arguments)").to_string();
             self.transcript.push(Bubble::Tool {
                 name: format!("{} — command", call.function.name),
-                content: command.unwrap_or("(command unavailable: invalid or incomplete arguments)").into(),
+                content: content.clone(),
             });
+            self.auto_fold(index, &content);
         }
     }
 
@@ -496,7 +622,15 @@ impl App {
                 _ => continue,
             };
             if m.role == "assistant" { self.stream_history.push(self.transcript.len()); }
+            let index = self.transcript.len();
             self.transcript.push(bubble);
+            if matches!(self.transcript[index], Bubble::Tool { .. } | Bubble::ToolResult { .. }) {
+                let content = match &self.transcript[index] {
+                    Bubble::Tool { content, .. } | Bubble::ToolResult { content, .. } => content.clone(),
+                    _ => String::new(),
+                };
+                self.auto_fold(index, &content);
+            }
             self.append_terminal_commands(&m);
             self.seen_keys.insert(key);
         }
@@ -612,6 +746,13 @@ impl App {
                 let response = self.remote.command(self.active_user_id(),line).await;
                 self.transcript.push(Bubble::System {content:response.unwrap_or_else(|e|format!("{e}"))});
             }
+            "/state" | "/workflow" => {
+                let id = self.active_user_id().to_string();
+                match self.remote.graph(&id).await {
+                    Ok(graph) => self.transcript.push(Bubble::System { content: render_state(&graph) }),
+                    Err(error) => self.flash(format!("state failed: {error}")),
+                }
+            }
             "/rename" => {
                 let title = _rest.trim();
                 if title.is_empty() || title.chars().count() > 128 {
@@ -675,6 +816,30 @@ impl App {
                         self.folded_bubbles.clear();
                         self.flash("Unfolded all tool outputs");
                     }
+                } else if let Some(value) = arg.strip_prefix("preview ") {
+                    match value.trim().parse::<usize>() {
+                        Ok(n) if n > 0 => {
+                            self.fold_preview = n;
+                            self.flash(format!("Fold preview: {} lines", n));
+                        }
+                        Ok(_) => self.flash("Fold preview must be at least 1 line"),
+                        Err(_) => self.flash("Usage: /fold preview <lines>"),
+                    }
+                } else if let Some(value) = arg.strip_prefix("auto ") {
+                    let value = value.trim();
+                    if value == "off" || value == "0" {
+                        self.fold_auto = 0;
+                        self.flash("Auto-fold off: new tool results stay open");
+                    } else {
+                        match value.parse::<usize>() {
+                            Ok(n) if n > 0 => {
+                                self.fold_auto = n;
+                                self.flash(format!("Auto-fold: new tool results over {} lines fold to a preview", n));
+                            }
+                            Ok(_) => self.flash("Auto-fold needs a positive line count, or 'off'"),
+                            Err(_) => self.flash("Usage: /fold auto <lines|off>"),
+                        }
+                    }
                 } else if let Ok(idx) = arg.parse::<usize>() {
                     if self.folded_bubbles.contains(&idx) {
                         self.folded_bubbles.remove(&idx);
@@ -692,7 +857,7 @@ impl App {
                 self.transcript.push(Bubble::Banner {
                     kind: BannerKind::Info,
                     content: format!(
-                        "Keys: F2 mouse ON/OFF (native selection when OFF); F3 message copy mode.\nCopy: tool results show/copy their full raw receipt (not the formatted view).\nUp/Down/Home/End select; Ctrl+C or y requests terminal clipboard (OSC 52).\nEsc/F3 leaves copy mode; Ctrl+Q always quits; Ctrl+C quits outside copy mode.\nPgUp/PgDn scroll with or without mouse capture.\nPaste: use your terminal paste shortcut; multiline/Unicode stays in the draft.\nIf OSC 52 is unsupported/blocked, use F2 then native selection/copy.\n\nCommands:\n{body}\n\nAttach files with @path. Use Tab/Enter to autocomplete.\n\
+                        "Keys: F2 mouse ON/OFF (native selection when OFF); F3 message copy mode.\nCopy: tool results show/copy their full raw receipt (not the formatted view).\nUp/Down/Home/End select; Ctrl+C or y requests terminal clipboard (OSC 52).\nMark (vim-like): v starts a visual mark, Up/Down extend it, Home/End jump, [ ] change message, y copies the marked lines, v or Esc leaves the mark.\nFold: new tool results fold to a preview automatically; Tab expands; /fold preview <n>, /fold auto <lines|off>.\nEsc/F3 leaves copy mode; Ctrl+Q always quits; Ctrl+C quits outside copy mode.\nPgUp/PgDn scroll with or without mouse capture.\nPaste: use your terminal paste shortcut; multiline/Unicode stays in the draft.\nIf OSC 52 is unsupported/blocked, use F2 then native selection/copy.\n\nCommands:\n{body}\n\nAttach files with @path. Use Tab/Enter to autocomplete.\n\
                          /context examples:\n  \
                             /context set custom_data.device=main settings.max_llm_turns=20\n  \
                             /context set settings.voice_tts_enabled=true\n  \
@@ -1295,10 +1460,18 @@ async fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
     }
     if let Some(selection) = &app.copy_selection {
         let index = selection.index;
+        let visual = selection.visual;
         match code {
             KeyCode::Esc => { app.copy_selection = None; app.status_msg = None; }
             KeyCode::Char('c') if mods == KeyModifiers::CONTROL => app.request_copy(),
             KeyCode::Char('y') if mods.is_empty() => app.request_copy(),
+            KeyCode::Char('v') if mods.is_empty() => app.toggle_visual(),
+            KeyCode::Up if visual => app.move_mark(-1),
+            KeyCode::Down if visual => app.move_mark(1),
+            KeyCode::Home if visual => app.set_mark_line(0),
+            KeyCode::End if visual => app.set_mark_line(app.copy_selection.as_ref().map(|s| s.line_count() - 1).unwrap_or(0)),
+            KeyCode::Char('[') => app.select_copy_message(index.saturating_sub(1)),
+            KeyCode::Char(']') => app.select_copy_message((index + 1).min(app.transcript.len().saturating_sub(1))),
             KeyCode::Up => app.select_copy_message(index.saturating_sub(1)),
             KeyCode::Down => app.select_copy_message((index + 1).min(app.transcript.len().saturating_sub(1))),
             KeyCode::Home => app.select_copy_message(0),
@@ -1538,6 +1711,27 @@ fn replace_at_token(app: &mut App, prefix: &str, replacement: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_state_command_reads_the_graph_as_a_briefing() {
+        let graph = serde_json::json!({
+            "name": "learning", "routing": "graph", "description": "Learn the repository",
+            "active_state": "setup",
+            "nodes": [{"id": "setup", "title": "Prepare", "description": "Read the manifest"}],
+            "edges": [
+                {"id":"setup:0","index":0,"from":"setup","to":"build","title":"Implement","kind":"normal","eligible":false,"blocked_reason":"check test has no receipt"},
+                {"id":"setup:1","index":1,"from":"setup","to":"_complete","title":"","kind":"normal","eligible":true,"blocked_reason":null}
+            ],
+            "history": ["setup"]
+        });
+        let rendered = render_state(&graph);
+        assert!(rendered.contains("WORKFLOW learning · graph"), "{rendered}");
+        assert!(rendered.contains("AT setup — Prepare"), "{rendered}");
+        assert!(rendered.contains("Read the manifest"), "{rendered}");
+        assert!(rendered.contains("0 → build (Implement) · blocked: check test has no receipt"), "{rendered}");
+        assert!(rendered.contains("1 → _complete · eligible"), "{rendered}");
+        assert!(rendered.contains("VISITED setup"), "{rendered}");
+    }
 
     #[tokio::test]
     async fn selection_mouse_toggle_reports_native_selection_and_keeps_navigation() {
@@ -2087,26 +2281,64 @@ mod tests {
             ".".into(),
         )
     }
-}
 
-
-/// Minimal shell-like splitting: whitespace separated, single/double quotes group.
-fn shell_words(input: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut current = String::new();
-    let mut quote: Option<char> = None;
-    let mut has_token = false;
-    for ch in input.chars() {
-        match (quote, ch) {
-            (Some(q), c) if c == q => quote = None,
-            (Some(_), c) => current.push(c),
-            (None, '"') | (None, '\'') => { quote = Some(ch); has_token = true; }
-            (None, c) if c.is_whitespace() => { if has_token || !current.is_empty() { out.push(std::mem::take(&mut current)); has_token = false; } }
-            (None, c) => { current.push(c); has_token = true; }
-        }
+    fn tool_result(tool: &str, lines: usize) -> Message {
+        let content = (0..lines).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+        let mut message = Message::tool(content, "call-1".into());
+        message.tool_name = Some(tool.into());
+        message
     }
-    if has_token || !current.is_empty() { out.push(current); }
-    out
+
+    #[test]
+    fn a_long_new_tool_result_folds_to_a_point_not_to_nothing() {
+        let mut app = dummy_app();
+        assert_eq!(app.fold_preview, DEFAULT_FOLD_PREVIEW, "a fold must still show what happened");
+        assert_eq!(app.fold_auto, DEFAULT_FOLD_AUTO);
+        app.append_messages(vec![tool_result("read", 12)]);
+        assert!(app.folded_bubbles.contains(&0), "a long arriving result folds by itself");
+        app.append_messages(vec![tool_result("read", 4)]);
+        assert!(!app.folded_bubbles.contains(&1), "a short result stays open");
+    }
+
+    #[tokio::test]
+    async fn fold_preview_and_auto_fold_are_settings_not_one_shot_toggles() {
+        let mut app = dummy_app();
+        app.run_slash("/fold preview 1").await;
+        assert_eq!(app.fold_preview, 1);
+        app.run_slash("/fold auto off").await;
+        assert_eq!(app.fold_auto, 0);
+        app.append_messages(vec![tool_result("read", 12)]);
+        assert!(app.folded_bubbles.is_empty(), "auto-fold off keeps arriving results open");
+    }
+
+    #[tokio::test]
+    async fn a_visual_mark_yanks_only_the_marked_lines() {
+        let mut app = dummy_app();
+        app.append_messages(vec![tool_result("read", 5)]);
+        app.toggle_copy_mode();
+        handle_key(&mut app, KeyCode::Char('v'), KeyModifiers::NONE).await;
+        assert!(app.copy_selection.as_ref().unwrap().visual, "v starts a visual mark");
+        handle_key(&mut app, KeyCode::Down, KeyModifiers::NONE).await;
+        handle_key(&mut app, KeyCode::Down, KeyModifiers::NONE).await;
+        assert_eq!(app.copy_selection.as_ref().unwrap().mark, Some((0, 2)));
+        handle_key(&mut app, KeyCode::Char('y'), KeyModifiers::NONE).await;
+        assert_eq!(app.pending_clipboard.as_deref(), Some("line 0\nline 1\nline 2"));
+    }
+
+    #[tokio::test]
+    async fn brackets_move_the_mark_between_messages_without_editing_the_draft() {
+        let mut app = dummy_app();
+        app.append_messages(vec![tool_result("read", 12), tool_result("read", 14)]);
+        app.toggle_copy_mode();
+        handle_key(&mut app, KeyCode::Char('v'), KeyModifiers::NONE).await;
+        handle_key(&mut app, KeyCode::Char('['), KeyModifiers::NONE).await;
+        assert_eq!(app.copy_selection.as_ref().unwrap().index, 0);
+        handle_key(&mut app, KeyCode::Char(']'), KeyModifiers::NONE).await;
+        assert_eq!(app.copy_selection.as_ref().unwrap().index, 1);
+        handle_key(&mut app, KeyCode::Char('x'), KeyModifiers::NONE).await;
+        assert!(app.input.is_empty(), "copy mode never edits the draft");
+    }
+
 }
 
 /// Turn `/login …` / `/logout …` arguments into a gateway request.
@@ -2215,4 +2447,25 @@ mod login_parse_tests {
         assert_eq!(r["logout"], true);
         assert_eq!(r["provider"], "codex");
     }
+
+}
+
+
+/// Minimal shell-like splitting: whitespace separated, single/double quotes group.
+fn shell_words(input: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut current = String::new();
+    let mut quote: Option<char> = None;
+    let mut has_token = false;
+    for ch in input.chars() {
+        match (quote, ch) {
+            (Some(q), c) if c == q => quote = None,
+            (Some(_), c) => current.push(c),
+            (None, '"') | (None, '\'') => { quote = Some(ch); has_token = true; }
+            (None, c) if c.is_whitespace() => { if has_token || !current.is_empty() { out.push(std::mem::take(&mut current)); has_token = false; } }
+            (None, c) => { current.push(c); has_token = true; }
+        }
+    }
+    if has_token || !current.is_empty() { out.push(current); }
+    out
 }

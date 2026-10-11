@@ -255,7 +255,9 @@ fn draw_transcript(f: &mut Frame, app: &mut App, area: Rect) {
     } else {
         for (idx, b) in transcript.iter().enumerate() {
             let selected = app.copy_selection.as_ref().filter(|selection| selection.index == idx);
+            let mark = selected.and_then(|selection| selection.mark);
             let mut snapshot;
+            let mut preview: Vec<String> = Vec::new();
             let rendered = if let Some(selection) = selected {
                 snapshot = (*b).clone();
                 if let Bubble::ToolResult {name, ..} = &snapshot {
@@ -270,31 +272,42 @@ fn draw_transcript(f: &mut Frame, app: &mut App, area: Rect) {
                 selection_start = Some(lines.len());
                 &snapshot
             } else if app.folded_bubbles.contains(&idx) {
-                // Show collapsed representation for folded tool outputs.
-                let line_count = match b {
-                    Bubble::Tool { content, .. } | Bubble::ToolResult { content, .. } => {
-                        content.lines().count()
-                    }
-                    _ => 0,
+                // Fold to a point, not to nothing: the reader keeps a preview of
+                // what the tool did and can expand the rest.
+                let content = match b {
+                    Bubble::Tool { content, .. } | Bubble::ToolResult { content, .. } => content.as_str(),
+                    _ => "",
                 };
+                let total = content.split('\n').count();
+                let shown = app.fold_preview.min(total);
+                let hidden = total.saturating_sub(shown);
                 snapshot = match b {
-                    Bubble::Tool { name, .. } => Bubble::Banner {
+                    Bubble::Tool { name, .. } | Bubble::ToolResult { name, .. } => Bubble::Banner {
                         kind: BannerKind::Info,
-                        content: format!("⚙ {} — {} lines hidden (Tab/fold to expand)", name, line_count),
-                    },
-                    Bubble::ToolResult { name, .. } => Bubble::Banner {
-                        kind: BannerKind::Info,
-                        content: format!("⚙ {} — {} lines hidden (Tab/fold to expand)", name, line_count),
+                        content: if hidden > 0 {
+                            format!("⚙ {} — {} of {} lines shown (Tab to expand)", name, shown, total)
+                        } else {
+                            format!("⚙ {} — {} lines", name, total)
+                        },
                     },
                     other => (*other).clone(),
                 };
+                preview = content.split('\n').take(shown).map(|line| line.to_string()).collect();
                 &snapshot
             } else { b };
-            let bubble_lines = render_bubble(rendered, bubble_max, app.username());
+            let bubble_lines = render_bubble(rendered, bubble_max, app.username(), mark);
             for l in bubble_lines {
-                lines.push(if selected.is_some() {
+                // Without a mark the whole message is the selection; with one,
+                // only the marked lines are highlighted.
+                lines.push(if selected.is_some() && mark.is_none() {
                     l.patch_style(Style::default().add_modifier(Modifier::REVERSED))
                 } else { l });
+            }
+            for l in preview {
+                lines.push(Line::from(Span::styled(
+                    truncate(&l, bubble_max),
+                    Style::default().fg(TEXT_DIM),
+                )));
             }
             if idx + 1 < transcript.len() {
                 lines.push(Line::from(""));
@@ -321,7 +334,7 @@ fn draw_transcript(f: &mut Frame, app: &mut App, area: Rect) {
 }
 
 /// Render a single bubble into 1+ ratatui lines.
-fn render_bubble(b: &Bubble, max_width: usize, username: &str) -> Vec<Line<'static>> {
+fn render_bubble(b: &Bubble, max_width: usize, username: &str, mark: Option<(usize, usize)>) -> Vec<Line<'static>> {
     match b {
         Bubble::User { content } => bubble_block(
             username,
@@ -330,6 +343,7 @@ fn render_bubble(b: &Bubble, max_width: usize, username: &str) -> Vec<Line<'stat
             ACCENT_CYAN,
             BG_BUBBLE_USER,
             max_width,
+            mark,
         ),
         Bubble::Assistant { content } => bubble_block(
             "praxis",
@@ -338,9 +352,10 @@ fn render_bubble(b: &Bubble, max_width: usize, username: &str) -> Vec<Line<'stat
             ACCENT_PURPLE,
             BG_BUBBLE_BOT,
             max_width,
+            mark,
         ),
         Bubble::Thinking { content } => bubble_block(
-            "Thinking", content, BubbleAlign::Left, TEXT_DIM, BG_BUBBLE_TOOL, max_width,
+            "Thinking", content, BubbleAlign::Left, TEXT_DIM, BG_BUBBLE_TOOL, max_width, mark,
         ),
         Bubble::Tool { name, content } => bubble_block(
             &format!("⚙ {name}"),
@@ -349,10 +364,11 @@ fn render_bubble(b: &Bubble, max_width: usize, username: &str) -> Vec<Line<'stat
             ACCENT_GREEN,
             BG_BUBBLE_TOOL,
             max_width,
+            mark,
         ),
         Bubble::ToolResult { name, display, .. } => bubble_block(
             &format!("⚙ {name} — F3 raw/copy"), display, BubbleAlign::Left,
-            ACCENT_GREEN, BG_BUBBLE_TOOL, max_width,
+            ACCENT_GREEN, BG_BUBBLE_TOOL, max_width, mark,
         ),
         Bubble::System { content } => banner_line(content, ACCENT_GREEN, "·", max_width),
         Bubble::Banner { kind, content } => {
@@ -383,6 +399,7 @@ fn bubble_block(
     accent: Color,
     bg: Color,
     max_width: usize,
+    mark: Option<(usize, usize)>,
 ) -> Vec<Line<'static>> {
     if max_width < 12 {
         return compact_bubble(label, content, accent, max_width.max(1));
@@ -392,8 +409,8 @@ fn bubble_block(
     // that budget, including borders, padding and wide glyphs.
     let max_inner = max_width.saturating_sub(2).max(1);
     let max_content = max_inner.saturating_sub(2).max(1);
-    let wrapped = wrap_text(content, max_content);
-    let widest_content = wrapped.iter().map(|l| display_width(l)).max().unwrap_or(0);
+    let wrapped = wrap_tagged(content, max_content);
+    let widest_content = wrapped.iter().map(|(_, l)| display_width(l)).max().unwrap_or(0);
     let raw_label = format!(" {label} ");
     let label_budget = max_inner.saturating_sub(1).max(1);
     let label_text = truncate(&raw_label, label_budget);
@@ -405,7 +422,7 @@ fn bubble_block(
     let wrapped = if content_width == max_content {
         wrapped
     } else {
-        wrap_text(content, content_width)
+        wrap_tagged(content, content_width)
     };
 
     let mut lines: Vec<Line<'static>> = Vec::new();
@@ -425,16 +442,21 @@ fn bubble_block(
 
     // Body width: border + (space + content + pad + space) + border.
     let style_body = Style::default().fg(TEXT_PRIMARY).bg(bg);
+    let style_mark = style_body.add_modifier(Modifier::REVERSED);
     let style_border = Style::default().fg(accent).bg(bg);
-    for content_line in wrapped {
+    for (source_line, content_line) in wrapped {
+        let style = match mark {
+            Some((first, last)) if source_line >= first && source_line <= last => style_mark,
+            _ => style_body,
+        };
         let cw = display_width(&content_line);
         let pad = content_width.saturating_sub(cw);
         let row = Line::from(vec![
             Span::styled("│".to_string(), style_border),
             Span::styled(" ".to_string(), style_body),
-            Span::styled(content_line, style_body),
-            Span::styled(" ".repeat(pad), style_body),
-            Span::styled(" ".to_string(), style_body),
+            Span::styled(content_line, style),
+            Span::styled(" ".repeat(pad), style),
+            Span::styled(" ".to_string(), style),
             Span::styled("│".to_string(), style_border),
         ]);
         lines.push(align_line_spans(row, align, max_width));
@@ -494,6 +516,18 @@ fn compact_bubble(
 
 /// Word-wrap by terminal columns, preserving explicit/blank lines, indentation
 /// and repeated spaces. Only the separator at a soft wrap is discarded.
+/// Wrap per source line while keeping the source-line index, so a visual mark
+/// highlights exactly the rows that belong to the marked line.
+fn wrap_tagged(text: &str, width: usize) -> Vec<(usize, String)> {
+    let mut out = Vec::new();
+    for (index, raw_line) in text.split('\n').enumerate() {
+        for row in wrap_text(raw_line, width) {
+            out.push((index, row));
+        }
+    }
+    out
+}
+
 fn wrap_text(text: &str, width: usize) -> Vec<String> {
     let width = width.max(1);
     let mut out = Vec::new();
@@ -650,8 +684,17 @@ fn draw_input(f: &mut Frame, app: &App, area: Rect) {
 
 fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
     let mut spans: Vec<Span> = if let Some(selection) = &app.copy_selection {
-        vec![Span::styled(format!("COPY {}/{} ^C/y copy Esc back  ↑/↓ select PgUp/Dn scroll ^Q quit",
-            selection.index + 1, app.transcript.len()), Style::default().fg(ACCENT_CYAN))]
+        let hint = if selection.visual {
+            match selection.mark {
+                Some((first, last)) => format!("COPY {}/{}  MARK {}-{} ({} lines)  v off  ↑/↓ extend  Home/End  [ ] message  y yank",
+                    selection.index + 1, app.transcript.len(), first + 1, last + 1, last - first + 1),
+                None => format!("COPY {}/{}  v mark  y yank  Esc back", selection.index + 1, app.transcript.len()),
+            }
+        } else {
+            format!("COPY {}/{} ^C/y copy Esc back  ↑/↓ select PgUp/Dn scroll ^Q quit",
+                selection.index + 1, app.transcript.len())
+        };
+        vec![Span::styled(hint, Style::default().fg(ACCENT_CYAN))]
     } else { vec![
         Span::raw(format!("F2 mouse:{}  F3 copy  /help  ", if app.mouse_capture { "ON" } else { "OFF" })),
         keybind("Enter", "send"),
@@ -911,7 +954,7 @@ mod tests {
             Bubble::System {content: content.clone()},
             Bubble::Banner {kind: BannerKind::Error, content},
         ] {
-            let lines = render_bubble(&bubble, 30, "user");
+            let lines = render_bubble(&bubble, 30, "user", None);
             assert_lines_fit(&lines, 30);
             let rows: Vec<_> = lines.iter().map(ToString::to_string).collect();
             let first = rows.iter().position(|row| row.contains("FIRST")).unwrap();
@@ -1017,6 +1060,7 @@ mod tests {
                     ACCENT_PURPLE,
                     BG_BUBBLE_BOT,
                     width,
+                    None,
                 );
                 assert_lines_fit(&lines, width);
             }
@@ -1130,15 +1174,50 @@ mod tests {
     }
 
     #[test]
+    fn a_folded_bubble_still_shows_its_point() {
+        let (mut app, _dir) = dummy_app();
+        app.show_sidebar = false;
+        let raw = (0..12).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+        app.transcript.push(Bubble::ToolResult {display: raw.clone(), name: "read".into(), content: raw});
+        app.folded_bubbles.insert(0);
+        let mut terminal = Terminal::new(TestBackend::new(60, 22)).unwrap();
+        terminal.draw(|f| draw(f, &mut app)).unwrap();
+        let rows = screen_rows(&terminal);
+        assert!(rows.iter().any(|row| row.contains("3 of 12 lines shown")), "{rows:?}");
+        assert!(rows.iter().any(|row| row.contains("line 0")), "a fold must still show what happened");
+        assert!(!rows.iter().any(|row| row.contains("line 9")), "the rest stays folded");
+    }
+
+    #[test]
+    fn a_visual_mark_highlights_only_the_marked_lines() {
+        let (mut app, _dir) = dummy_app();
+        app.show_sidebar = false;
+        app.transcript.push(Bubble::Assistant {content: "aaa\nbbb\nccc".into()});
+        let mut selection = crate::app::CopySelection::new(0, "aaa\nbbb\nccc".into());
+        selection.visual = true;
+        selection.mark = Some((1, 1));
+        app.copy_selection = Some(selection);
+        let mut terminal = Terminal::new(TestBackend::new(100, 22)).unwrap();
+        terminal.draw(|f| draw(f, &mut app)).unwrap();
+        assert!(screen_rows(&terminal).last().unwrap().contains("MARK 2-2"));
+        let reversed: Vec<String> = terminal.backend().buffer().content().iter()
+            .filter(|cell| cell.modifier.contains(Modifier::REVERSED))
+            .map(|cell| cell.symbol().to_string())
+            .collect();
+        assert!(reversed.iter().any(|s| s == "b"), "the marked line must be highlighted: {reversed:?}");
+        assert!(!reversed.iter().any(|s| s == "a" || s == "c"), "only the mark is highlighted: {reversed:?}");
+    }
+
+    #[test]
     fn selection_is_highlighted_revealed_and_shows_keyboard_help_after_resize() {
         let (mut app, _dir) = dummy_app();
         app.show_sidebar = false;
         app.transcript.push(Bubble::Assistant {content: "ORIGINAL\n  世界 e\u{301} 👩‍💻".into()});
         for _ in 0..30 { app.transcript.push(Bubble::User {content: "unselected\nmessage".into()}); }
         for width in [24, 40, 80, 100] {
-            app.copy_selection = Some(crate::app::CopySelection {
-                index: 0, content: "SNAPSHOT\n  世界 e\u{301} 👩‍💻".into(), reveal: true,
-            });
+            app.copy_selection = Some(crate::app::CopySelection::new(
+                0, "SNAPSHOT\n  世界 e\u{301} 👩‍💻".into(),
+            ));
             let mut terminal = Terminal::new(TestBackend::new(width, 22)).unwrap();
             terminal.draw(|f| draw(f, &mut app)).unwrap();
             let rows = screen_rows(&terminal);
@@ -1171,7 +1250,7 @@ mod tests {
         app.show_sidebar = false;
         app.transcript.push(Bubble::Assistant {content: "SELECTED".into()});
         for _ in 0..30 { app.transcript.push(Bubble::User {content: "long unselected message ".repeat(4)}); }
-        app.copy_selection = Some(crate::app::CopySelection {index: 0, content: "SELECTED".into(), reveal: true});
+        app.copy_selection = Some(crate::app::CopySelection::new(0, "SELECTED".into()));
         let mut terminal = Terminal::new(TestBackend::new(100, 22)).unwrap();
         terminal.draw(|f| draw(f, &mut app)).unwrap();
         assert!(screen_rows(&terminal).iter().any(|row| row.contains("SELECTED")));
@@ -1247,7 +1326,7 @@ mod tests {
         let second = rows.iter().position(|r| r.contains("SECOND")).unwrap();
         assert_ne!(first, second, "decoded stdout newlines must be separate rows: {rows:?}");
         assert!(!rows.iter().any(|r| r.contains(r#"\n"#)), "raw JSON escapes leaked into presentation");
-        app.copy_selection = Some(crate::app::CopySelection {index:0,content:raw.clone(),reveal:true});
+        app.copy_selection = Some(crate::app::CopySelection::new(0, raw.clone()));
         terminal.draw(|f| draw(f, &mut app)).unwrap();
         assert!(screen_rows(&terminal).iter().any(|r| r.contains(r#"\n"#)), "copy mode must show the exact raw snapshot");
     }
@@ -1256,13 +1335,13 @@ mod tests {
     fn structured_results_commands_and_live_arguments_are_not_decoded() {
         let command = r#"{"stdout":"FIRST\nSECOND"}"#;
         for name in ["execute_terminal — command", "execute_terminal — generating, not executed"] {
-            let lines = render_bubble(&Bubble::Tool {name:name.into(),content:command.into()},120,"user");
+            let lines = render_bubble(&Bubble::Tool {name:name.into(),content:command.into()},120,"user",None);
             assert!(lines.iter().any(|line|line.to_string().contains(command)));
         }
         for width in 1..80 {
             let bubble = Bubble::ToolResult {name:"execute_terminal".into(),content:command.into(),
                 display:"stdout:\nFIRST\n世界 👩‍💻\n  LAST".into()};
-            assert_lines_fit(&render_bubble(&bubble,width,"user"),width);
+            assert_lines_fit(&render_bubble(&bubble,width,"user",None),width);
         }
     }
 

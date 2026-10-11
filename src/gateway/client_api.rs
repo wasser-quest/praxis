@@ -14,6 +14,7 @@ pub fn routes() -> Router<GatewayState> {
         .route("/v1/models", axum::routing::get(models))
         .route("/v1/providers", axum::routing::get(providers))
         .route("/v1/providers/login", axum::routing::post(login))
+        .route("/v1/graphs/:user", axum::routing::get(graph))
 }
 /// Models the selected provider can serve. Listing never selects a provider.
 async fn models(State(s): State<GatewayState>, axum::extract::Query(query): axum::extract::Query<std::collections::HashMap<String, String>>) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
@@ -62,6 +63,14 @@ async fn sessions(State(s): State<GatewayState>) -> Result<Json<Value>, StatusCo
         sessions.push(json!({"id":id,"name":ctx.pointer("/custom_data/session_title").and_then(Value::as_str).or_else(||ctx["username"].as_str()).unwrap_or(&id),"username":ctx["username"].as_str().unwrap_or("User")}));
     }
     Ok(Json(json!({"sessions":sessions})))
+}
+/// The workflow graph for one session, read through the shared SM parser. A
+/// terminal client can explain a workflow without opening the dashboard.
+async fn graph(State(s): State<GatewayState>, Path(user): Path<String>) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    crate::services::graphs::graph_in(&s.db, &std::path::PathBuf::from(&s.config.root_dir), &user, None)
+        .await
+        .map(Json)
+        .map_err(|error| (StatusCode::BAD_REQUEST, Json(json!({"error": error.to_string()}))))
 }
 #[derive(serde::Deserialize)]
 struct Fork { new_user_id:String, username:Option<String> }
