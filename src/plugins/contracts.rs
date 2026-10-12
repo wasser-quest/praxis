@@ -436,6 +436,7 @@ pub(crate) async fn execute_with_service(
     secrets: Option<&HashMap<String, String>>,
     service: Option<&crate::runtime::features::ServiceInvocation>,
 ) -> anyhow::Result<String> {
+    crate::gateway::safe_web_search::require(user, plugin, tool)?;
     validate_tool(&plugin.name, tool)?;
     validate_input(&tool.parameters, args)?;
     anyhow::ensure!(

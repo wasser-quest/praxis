@@ -13,6 +13,7 @@ struct TaskState {
     id: String,
     workspace: Mutex<Option<std::path::PathBuf>>,
     registry: Mutex<Option<RegistryPin>>,
+    pub(super) safe_search: Mutex<Option<super::safe_web_search::Activation>>,
     verification: Mutex<super::action_contracts::VerificationState>,
     token: CancellationToken,
     tools: Mutex<HashSet<String>>,
@@ -44,6 +45,7 @@ pub fn begin(user: &str) -> anyhow::Result<TaskGuard> {
                 id,
                 workspace: Mutex::new(None),
                 registry: Mutex::new(None),
+                safe_search: Mutex::new(None),
                 token: CancellationToken::new(),
                 tools: Mutex::new(HashSet::new()),
                 show_thinking: std::sync::atomic::AtomicBool::new(false),
@@ -58,6 +60,18 @@ pub fn begin(user: &str) -> anyhow::Result<TaskGuard> {
             })
         }
     }
+}
+
+pub(super) fn with_safe_search<T>(
+    user: &str,
+    task_id: &str,
+    f: impl FnOnce(&mut Option<super::safe_web_search::Activation>) -> anyhow::Result<T>,
+) -> anyhow::Result<T> {
+    let task = TASKS.get(user).ok_or_else(|| anyhow::anyhow!("Safe web search requires an active task"))?;
+    anyhow::ensure!(!task.token.is_cancelled(), "Task cancelled");
+    anyhow::ensure!(task.id == task_id, "Safe search task ownership changed");
+    let mut activation = task.safe_search.lock().map_err(|_| anyhow::anyhow!("Safe web search lock unavailable"))?;
+    f(&mut activation)
 }
 
 pub fn task_id(user: &str) -> Option<String> {

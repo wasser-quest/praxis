@@ -169,6 +169,13 @@ const BUNDLED_ASSETS: &[Asset] = &[
     asset!("plugins/brave_search/README.md"),
     asset!("plugins/brave_search/skills/safe_web_search/skill.json"),
     asset!("plugins/brave_search/skills/safe_web_search/skill.poml"),
+    asset!("plugins/mcp/plugin.json"),
+    asset!("plugins/mcp/bridge.py"),
+    asset!("plugins/mcp/servers.py", executable),
+    asset!("plugins/mcp/tools.py", executable),
+    asset!("plugins/mcp/call.py", executable),
+    asset!("plugins/mcp/README.md"),
+    asset!("plugins/mcp/servers.example.json"),
 ];
 
 // First-party compatibility packages shipped with the full distribution.

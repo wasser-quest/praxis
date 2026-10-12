@@ -19,6 +19,25 @@ Never place the key in context, POML, tool arguments or Git. The plugin declares
 only its own credential. No key is bundled or provisioned. Brave requests may
 incur charges according to your subscription; tests use loopback fixtures only.
 
+## Mandatory safe-search skill
+
+Praxis automatically loads `safe_web_search` as a task-local system-policy
+layer before inference whenever this plugin is installed. It stays active while
+web results are consumed, and is removed when the task finishes, fails or is
+cancelled. The user's persistent skill selection is never replaced.
+
+The host rejects Brave execution unless the skill was loaded and included in a
+successful model phase. Missing/changed skill files, disabled `use_skill`, and
+insufficient context budget fail closed. Direct registry calls cannot bypass
+this check; both chat and agent/Decision-IR paths use the same host gate.
+
+This is a Praxis capability boundary, not an OS-wide internet filter. Operator
+scripts, arbitrary custom plugins, external MCP servers and direct HTTP clients
+are outside that boundary. Keep Brave credentials in encrypted plugin secrets,
+not a globally inherited environment, when those other capabilities are enabled.
+Skill activation also does not guarantee factual accuracy or eliminate prompt
+injection; result text remains untrusted evidence.
+
 ## Use
 
 First call `search_tools` with `{"query":"brave web search","limit":1}`.

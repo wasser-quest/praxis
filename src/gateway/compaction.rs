@@ -72,7 +72,7 @@ pub async fn summarize(state:&GatewayState,user:&str,messages:&[Message],previou
             vision_provider:None,vision_model:None,thinking:Some(ThinkingMode::Off),
         };
         let cancel=super::task_control::cancellation(user).unwrap_or_default();
-        let response=state.llm.get().chat_controlled(request,ctx.settings.provider.as_deref(),None,&cancel).await?;
+        let response=state.llm.get().chat_controlled(request,ctx.settings.provider.as_deref(),Some(user),&cancel).await?;
         anyhow::ensure!(response.tool_calls.is_none(),"Compaction must not execute tools");
         summary=response.content.unwrap_or_default();
         anyhow::ensure!(!summary.trim().is_empty() && !summary.contains(super::task_control::TEMPLATE_OMITTED_MARKER),"Compaction did not produce a valid handoff");

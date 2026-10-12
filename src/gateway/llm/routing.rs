@@ -155,6 +155,10 @@ impl LLMRouter {
         trace: Option<&crate::gateway::telemetry::CallTrace>,
     ) -> anyhow::Result<ChatResponse> {
         self.policy.validate()?;
+        let safe_search = match user {
+            Some(user) => crate::gateway::safe_web_search::apply(user, &mut request)?,
+            None => None,
+        };
         let started = Instant::now();
         let deadline = started + Duration::from_millis(self.policy.total_timeout_ms);
         let base_provider = provider.unwrap_or(&self.default_provider);
@@ -365,6 +369,9 @@ impl LLMRouter {
                                 label(name), attempts + 1, max_attempts,
                             ));
                             continue;
+                        }
+                        if let (Some(user), Some(delivery)) = (user, safe_search.as_ref()) {
+                            crate::gateway::safe_web_search::delivered(user, delivery)?;
                         }
                         response.usage = usage;
                         if user.is_some_and(crate::gateway::task_control::template_omitted) && response.tool_calls.is_none() {

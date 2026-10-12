@@ -55,6 +55,7 @@ pub(crate) async fn check_task(
 ) -> anyhow::Result<()> {
     super::task_control::check_registry(user, &state.plugins)?;
     let root = std::path::Path::new(&state.config.root_dir);
+    super::safe_web_search::prepare(&state.db, &state.plugins, root, user, input).await?;
     let mut original = state.db.load_context(user)?;
     if original.settings.sm_file.is_none() && original.sm_file.is_none() {
         original.sm_file = workflow_default.map(str::to_owned);

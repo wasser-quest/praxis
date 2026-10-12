@@ -90,7 +90,8 @@ pub(super) fn fit_body(body: &mut Value, window: u64, output: u64) -> Result<boo
                     .as_array_mut()
                     .and_then(|messages| messages.iter_mut().find(|m| m["role"] == "system"))
                 {
-                    system["content"] = MINIMAL_SYSTEM.into();
+                    system["content"] = crate::gateway::safe_web_search::budget_system(
+                        system["content"].as_str().unwrap_or(""), MINIMAL_SYSTEM).into();
                     template_omitted = true;
                     continue;
                 }

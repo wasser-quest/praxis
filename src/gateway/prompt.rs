@@ -373,7 +373,11 @@ pub async fn build_context(
             "Active skill cannot load: use_skill is disabled"
         );
         let skill = crate::skills::lookup_skill(db, &root.join("skills"), name)?;
-        let parameters = skill.parameters_for_task(&value, input)?;
+        let mut skill_context = value.clone();
+        if name == "safe_web_search" {
+            skill_context["question"] = json!(input);
+        }
+        let parameters = skill.parameters_for_task(&skill_context, input)?;
         value["active_skill_instructions"] =
             json!(crate::skills::execute_skill(&skill, &parameters).await?);
     }
@@ -385,6 +389,8 @@ pub async fn render_system(
     ctx: &Context,
     input: &str,
 ) -> anyhow::Result<String> {
+    super::safe_web_search::prepare(&state.db, &state.plugins,
+        Path::new(&state.config.root_dir), &ctx.user_id, input).await?;
     let value = build_context(
         &state.db,
         ctx,

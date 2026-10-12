@@ -748,6 +748,10 @@ impl PluginRegistry {
                 anyhow::bail!("Capability cannot shadow a built-in tool");
             };
         anyhow::ensure!(
+            !crate::gateway::safe_web_search::required(plugin, tool),
+            "Brave requires host-issued safe_web_search execution"
+        );
+        anyhow::ensure!(
             !matches!(&tool.handler, PluginHandler::Service(_)),
             "Native services require a host-issued invocation context"
         );
@@ -780,6 +784,18 @@ impl PluginRegistry {
         else {
             anyhow::bail!("Capability cannot shadow a built-in tool");
         };
+        if crate::gateway::safe_web_search::required(plugin, tool) {
+            crate::tools::catalog::require_enabled(db, &crate::tools::catalog::ToolOwner::Plugin { plugin, tool }, name)?;
+            anyhow::ensure!(crate::db::tools::tool_enabled(db, "use_skill")?, "Mandatory safe_web_search cannot load: use_skill is disabled");
+            crate::gateway::safe_web_search::require(user, plugin, tool)?;
+            if !matches!(&tool.handler, PluginHandler::Service(_) | PluginHandler::Builtin { .. }) {
+                return if tool.contract.is_some() {
+                    contracts::execute(plugin, tool, user, call, args, context, secrets).await
+                } else {
+                    Self::execute_uncontracted(plugin, tool, name, args, context, secrets).await
+                };
+            }
+        }
         let PluginHandler::Service(adapter) = &tool.handler else {
             // `builtin` handlers run a host-owned operation under the identity
             // this dispatcher was issued. The package supplies the tool; the
@@ -899,6 +915,18 @@ impl PluginRegistry {
             crate::tools::catalog::owner(self, tool_name)? else {
                 anyhow::bail!("Capability cannot shadow a built-in tool");
             };
+        anyhow::ensure!(!crate::gateway::safe_web_search::required(plugin, tool), "Brave requires host-issued safe_web_search execution");
+        Self::execute_uncontracted(plugin, tool, tool_name, args, context, secrets).await
+    }
+
+    async fn execute_uncontracted(
+        plugin: &Plugin,
+        tool: &PluginTool,
+        tool_name: &str,
+        args: &serde_json::Value,
+        context: Option<&serde_json::Value>,
+        secrets: Option<&HashMap<String, String>>,
+    ) -> anyhow::Result<String> {
         anyhow::ensure!(tool.contract.is_none(), "Contracted tools require task-owned execution");
         match &tool.handler {
             PluginHandler::Service(_) => {
@@ -967,6 +995,8 @@ async fn execute_script(
     let input = serde_json::to_string(args)?;
 
     let mut cmd = tokio::process::Command::new(interpreter);
+    // Timeout or task cancellation must not leave a Brave/script request running.
+    cmd.kill_on_drop(true);
     cmd.arg(path)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())

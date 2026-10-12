@@ -66,14 +66,29 @@ pub(crate) fn reduce(body: &mut Value) -> bool {
     if users.len() >= 2 {
         messages.drain(users[0]..users[1]);
         if let Some(system) = messages.iter_mut().find(|m|m["role"]=="system") {
-            let text = system["content"].as_str().unwrap_or("");
             let notice = "[Context budget: older complete turns omitted from this request; saved history is unchanged.]";
-            if !text.contains(notice) { system["content"] = format!("{text}\n{notice}").into(); }
+            if let Some(parts) = system["content"].as_array_mut() {
+                if !parts.iter().any(|p| p["text"].as_str().is_some_and(|text| text.contains(notice))) {
+                    parts.push(json!({"type":"text", "text":notice}));
+                }
+            } else {
+                let text = system["content"].as_str().unwrap_or("");
+                if !text.contains(notice) { system["content"] = format!("{text}\n{notice}").into(); }
+            }
         }
         return true;
     }
     false
 }
+fn system_text(content: &Value) -> String {
+    if let Some(text) = content.as_str() {
+        return text.to_owned();
+    }
+    content.as_array().map(|parts| parts.iter()
+        .filter_map(|part| part["text"].as_str())
+        .collect::<Vec<_>>().join("\n")).unwrap_or_default()
+}
+
 impl LlamaCppProvider {
     async fn budget_json(&self, path: &str, body: Option<Value>) -> anyhow::Result<Value> {
         let url = format!("{}{}",self.base_url.trim_end_matches('/'),path);
@@ -99,7 +114,8 @@ impl LlamaCppProvider {
             if !reduce(&mut body) {
                 if !template_omitted {
                     if let Some(system) = body["messages"].as_array_mut().and_then(|messages| messages.iter_mut().find(|m|m["role"]=="system")) {
-                        system["content"] = MINIMAL_SYSTEM.into();
+                        system["content"] = crate::gateway::safe_web_search::budget_system(
+                            &system_text(&system["content"]), MINIMAL_SYSTEM).into();
                         template_omitted = true;
                         continue;
                     }
@@ -113,6 +129,21 @@ impl LlamaCppProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn structured_system_policy_survives_turn_reduction_and_fallback() {
+        let policy = format!("{}mandatory rules{}", crate::gateway::safe_web_search::BEGIN, crate::gateway::safe_web_search::END);
+        let mut body = json!({"messages":[
+            {"role":"system","content":[{"type":"text","text":policy}]},
+            {"role":"user","content":"old"}, {"role":"assistant","content":"reply"},
+            {"role":"user","content":"new"}
+        ]});
+        assert!(reduce(&mut body));
+        let text = system_text(&body["messages"][0]["content"]);
+        assert!(text.contains("mandatory rules"));
+        let minimal = crate::gateway::safe_web_search::budget_system(&text, MINIMAL_SYSTEM);
+        assert!(minimal.contains("mandatory rules"));
+    }
+
     #[test]
     fn budget_previews_preserve_durable_reference_and_current_tool_pair() {
         let source = format!("{}\n[Saved tool response] output_id=out_00000000000000000000000000000000 \nmetadata", "large 漢🙂 ".repeat(1000));

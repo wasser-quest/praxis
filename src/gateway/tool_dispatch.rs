@@ -110,6 +110,16 @@ async fn dispatch_at_depth(
             if super::task_control::cancellation(user_id).is_some_and(|token| token.is_cancelled()) {
                 break 'step Step::Text("Error: task cancelled; tool not executed".into());
             }
+            if let crate::tools::catalog::ToolOwner::Plugin { plugin, tool } = &owner {
+                if crate::gateway::safe_web_search::required(plugin, tool) {
+                    if let Err(error) = (|| -> anyhow::Result<()> {
+                        anyhow::ensure!(crate::db::tools::tool_enabled(db, "use_skill")?, "Mandatory safe_web_search cannot load: use_skill is disabled");
+                        super::safe_web_search::require(user_id, plugin, tool)
+                    })() {
+                        break 'step Step::Text(format!("Error: {error}; tool not executed"));
+                    }
+                }
+            }
             if !matches!(&owner, crate::tools::catalog::ToolOwner::Plugin { tool, .. } if tool.contract.is_some())
             {
                 if let Err(error) = super::action_contracts::before_tool(user_id, &tc.function.name) {

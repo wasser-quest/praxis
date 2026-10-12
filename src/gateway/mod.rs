@@ -29,6 +29,7 @@ pub mod prompt;
 pub mod prompt_change;
 pub mod providers;
 pub mod rate_limiter;
+pub(crate) mod safe_web_search;
 #[cfg(test)]
 mod resource_contract_tests;
 pub(crate) mod receipt_sign;
