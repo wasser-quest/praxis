@@ -15,14 +15,32 @@
 //!   errors: ErrorKind + ProviderError (machine-readable, no bodies)
 //! ```
 
+pub mod bridge;
 pub mod chat;
+pub mod credentials;
 pub mod errors;
+pub mod exchange;
+pub mod handshake;
+pub mod process;
+pub mod server;
 pub mod traits;
+pub mod transport;
+
+#[cfg(test)]
+mod opaque_continuation_tests;
+pub mod wire;
+pub mod worker;
 
 pub use chat::{
     ChatAttempt, ChatMessage, ChatRequest, ChatResponse, ContentPart, FunctionCall,
-    FunctionDefinition, ImageUrlDetail, ProviderContinuation, StreamDelta, ThinkingMode,
-    ToolCall, ToolDefinition, Usage,
+    FunctionDefinition, ImageUrlDetail, ProviderContinuation, StreamDelta, ThinkingMode, ToolCall,
+    ToolDefinition, Usage,
 };
 pub use errors::{CallFailure, ErrorKind, ProviderError};
 pub use traits::{ChatProvider, EmbeddingProvider, ModelInfo};
+pub use wire::{
+    CallBinding, CapabilitiesEnvelope, RequestContext, RequestEnvelope, StreamEnvelope,
+    StreamValidator, WireCapabilities, WireChatAttempt, WireChatRequest, WireContinuation,
+    WireErrorCode, WireLimits, WireProviderError, WireStreamEvent, WireValidationError,
+    MAX_CONTINUATION_BYTES, MAX_FRAME_BYTES, MAX_STREAM_BYTES, MAX_STREAM_EVENTS, WIRE_VERSION,
+};

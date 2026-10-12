@@ -1,6 +1,10 @@
 <poml>
   <role>You are Praxis, a patient language instructor. Follow the learner's current request over saved preferences. For French preserve accents; for Japanese prefer natural script, kana when helpful, romaji only on request.</role>
   <let name="persona_blueprint" src="../blueprints/language_instructor.json" />
+  <let name="current_request" value="typeof user_prompt === 'string' ? user_prompt : ''" />
+  <cp caption="Current learner request" if="current_request.trim()">
+    <p>{{current_request}}</p>
+  </cp>
   <let name="tutor" value="typeof custom_data === 'object' && custom_data ? custom_data.language_learning || {} : {}" />
   <let name="mem" value="typeof memory === 'object' && memory ? memory : {}" />
   <let name="vars" value="mem.variables || {}" />

@@ -6,6 +6,11 @@
 //! the configured `allow|ask|deny` policy, bounded execution, a clean
 //! environment, atomic publication and a recorded hash so a swapped script
 //! cannot silently run later.
+#[path = "asset_safety.rs"]
+mod asset_safety;
+#[path = "asset_lock.rs"]
+mod asset_lock;
+
 use crate::plugins::{validate_hooks, Plugin};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -481,6 +486,8 @@ pub async fn install(request: &InstallRequest<'_>) -> anyhow::Result<InstallRepo
     );
     let manifest_bytes = std::fs::read(&manifest_path)?;
     let plugin: Plugin = serde_json::from_slice(&manifest_bytes)?;
+    // Check original assets before copying can hide a source hardlink.
+    asset_safety::check_sources(request.source, &plugin.provides.assets)?;
     // Parsing a manifest does not validate hook paths; do it before any copy.
     let source_root = request.source.canonicalize()?;
     let hooks = validate_hooks(&source_root, plugin.hooks.clone())?;
@@ -612,6 +619,7 @@ pub async fn upgrade(request: &UpgradeRequest<'_>) -> anyhow::Result<InstallRepo
     );
     let manifest_bytes = std::fs::read(&manifest_path)?;
     let plugin: Plugin = serde_json::from_slice(&manifest_bytes)?;
+    asset_safety::check_sources(request.source, &plugin.provides.assets)?;
     let source_root = request.source.canonicalize()?;
     let hooks = validate_hooks(&source_root, plugin.hooks.clone())?;
     preflight_requires(request.plugins_dir, &plugin.requires)?;
@@ -699,8 +707,9 @@ pub async fn upgrade(request: &UpgradeRequest<'_>) -> anyhow::Result<InstallRepo
         }
     }
     // The manifest change includes its placed assets: apply the new set and
-    // prune the ones it no longer declares. Any failure restores the previous
-    // directory AND its assets, so a manifest change is all-or-nothing.
+    // prune the ones it no longer declares. On failure, restore the previous
+    // plugin directory and attempt asset recovery. Asset publication is per-file;
+    // this best-effort recovery does not guarantee a cross-file transaction.
     let previous = crate::plugins::load_installed_plugin(&backup).ok();
     let assets = match apply_assets(&dest, &plugin, request.data_dir, request.root) {
         Ok(assets) => assets,
@@ -709,22 +718,10 @@ pub async fn upgrade(request: &UpgradeRequest<'_>) -> anyhow::Result<InstallRepo
             let _ = std::fs::rename(&backup, &dest);
             if let Some(previous) = previous {
                 let _ = apply_assets(&dest, &previous, request.data_dir, request.root);
-                // Files the failed manifest introduced are owned by neither
-                // revision; drop them while they still hold its bytes.
-                for asset in &plugin.provides.assets {
-                    if previous.provides.assets.contains(asset) {
-                        continue;
-                    }
-                    let placed = request.root.join(asset);
-                    let introduced = request.source.join(asset);
-                    if placed.is_file()
-                        && introduced.is_file()
-                        && sha256_bytes(&std::fs::read(&placed).unwrap_or_default())
-                            == sha256_bytes(&std::fs::read(&introduced).unwrap_or_default())
-                    {
-                        let _ = std::fs::remove_file(&placed);
-                    }
-                }
+                // Do not infer ownership of newly declared paths from bytes:
+                // they may be pre-existing untracked operator files. A partial
+                // publication can leave new files behind; cleanup needs a real
+                // transaction journal, not a speculative hash-based deletion.
             }
             return Err(error);
         }
@@ -1110,35 +1107,56 @@ fn asset_record_path(data_dir: &Path) -> PathBuf {
     data_dir.join("plugin_assets.json")
 }
 
-type AssetRecords = serde_json::Map<String, serde_json::Value>;
+type AssetRecords = BTreeMap<String, BTreeMap<String, String>>;
 
 fn load_asset_records(data_dir: &Path) -> anyhow::Result<AssetRecords> {
+    asset_safety::check(&asset_record_path(data_dir))?;
     match std::fs::read_to_string(asset_record_path(data_dir)) {
-        Ok(data) => Ok(serde_json::from_str(&data)?),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(serde_json::Map::new()),
+        Ok(data) => {
+            let records: AssetRecords = serde_json::from_str(&data)?;
+            // Validate every owner, not just the plugin being changed, before
+            // any asset mutation or ownership-record publication.
+            for (owner, assets) in &records {
+                for (asset, hash) in assets {
+                    asset_safety::relative(asset).map_err(|error| {
+                        anyhow::anyhow!("Invalid asset ownership path for '{owner}': '{asset}': {error}")
+                    })?;
+                    anyhow::ensure!(
+                        hash.len() == 64
+                            && hash.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f')),
+                        "Invalid asset ownership SHA256 for '{owner}': '{asset}'"
+                    );
+                }
+            }
+            Ok(records)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(AssetRecords::new()),
         Err(error) => Err(error.into()),
     }
 }
 
 fn save_asset_records(data_dir: &Path, records: &AssetRecords) -> anyhow::Result<()> {
-    std::fs::create_dir_all(data_dir)?;
     let path = asset_record_path(data_dir);
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_string_pretty(records)?)?;
-    std::fs::rename(tmp, path)?;
-    Ok(())
+    let replace = asset_safety::check(&path)?;
+    asset_safety::publish(&path, &serde_json::to_vec_pretty(records)?, replace)
 }
 
 fn owned_assets(records: &AssetRecords, name: &str) -> BTreeMap<String, String> {
-    records
-        .get(name)
-        .and_then(|value| serde_json::from_value::<BTreeMap<String, String>>(value.clone()).ok())
-        .unwrap_or_default()
+    // Only a missing owner defaults to empty; loaded maps are fully validated.
+    records.get(name).cloned().unwrap_or_default()
 }
 
 /// Copy a package's declared assets into `assets_root`, mirroring their
 /// package-relative paths. A destination that differs from the last owned
 /// revision is an operator edit and is kept. Returns what changed.
+///
+/// All sources, destinations (including pruned assets) and the ownership-record
+/// path are preflighted before publication. Each file is published atomically,
+/// but this is NOT a cross-file transaction: an I/O failure during publication,
+/// pruning or record saving can leave some files changed and old ownership
+/// hashes. No rollback is promised. An OS lock serializes ownership updates
+/// across cooperating owners/processes sharing data_dir. Directories must not be concurrently swapped
+/// by another process (see asset_safety).
 pub fn apply_assets(
     plugin_dir: &Path,
     plugin: &Plugin,
@@ -1146,28 +1164,35 @@ pub fn apply_assets(
     assets_root: &Path,
 ) -> anyhow::Result<AssetsReport> {
     let mut report = AssetsReport::default();
-    let mut records = load_asset_records(data_dir)?;
-    let mut owned = owned_assets(&records, &plugin.name);
-    // Read every declared asset before writing any: a manifest change is
-    // applied completely or not at all.
+    // Validate package paths before creating a data directory or lock file.
+    for asset in &plugin.provides.assets {
+        let relative = asset_safety::relative(asset)?;
+        asset_safety::check(&plugin_dir.join(relative))?;
+        asset_safety::check(&assets_root.join(relative))?;
+    }
+    // Source failures cannot partially publish a manifest change.
     let mut declared = Vec::new();
     for asset in &plugin.provides.assets {
-        let relative = Path::new(asset);
-        anyhow::ensure!(
-            relative.is_relative()
-                && relative
-                    .components()
-                    .all(|c| matches!(c, std::path::Component::Normal(_))),
-            "Asset must be a path inside its package"
-        );
+        let relative = asset_safety::relative(asset)?;
+        asset_safety::check(&plugin_dir.join(relative))?;
         let bytes = std::fs::read(plugin_dir.join(relative))
             .map_err(|error| anyhow::anyhow!("Asset '{asset}' is missing from the package: {error}"))?;
         declared.push((asset.clone(), bytes));
     }
+    // Hold the shared lock across the entire ownership read/modify/write,
+    // including publication and pruning. Helpers do not acquire it recursively.
+    let _lock = asset_lock::AssetLock::acquire(data_dir)?;
+    let mut records = load_asset_records(data_dir)?;
+    let mut owned = owned_assets(&records, &plugin.name);
+    // Recorded paths are untrusted too, including paths no longer declared.
+    for asset in owned.keys() {
+        asset_safety::check(&assets_root.join(asset_safety::relative(asset)?))?;
+    }
     for (asset, bytes) in &declared {
         let hash = sha256_bytes(bytes);
         let dest = assets_root.join(asset);
-        if dest.exists() {
+        let replace = asset_safety::check(&dest)?;
+        if replace {
             let current = sha256_bytes(&std::fs::read(&dest)?);
             let ours = owned.get(asset).is_some_and(|known| known == &current);
             if !ours {
@@ -1175,10 +1200,7 @@ pub fn apply_assets(
                 continue;
             }
         }
-        if let Some(parent) = dest.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(&dest, bytes)?;
+        asset_safety::publish(&dest, bytes, replace)?;
         owned.insert(asset.clone(), hash);
         report.written.push(asset.clone());
     }
@@ -1191,8 +1213,9 @@ pub fn apply_assets(
             continue;
         }
         let dest = assets_root.join(&asset);
-        if dest.is_file() {
+        if asset_safety::check(&dest)? {
             if sha256_bytes(&std::fs::read(&dest)?) == hash {
+                asset_safety::check(&dest)?;
                 std::fs::remove_file(&dest)?;
                 report.removed.push(asset.clone());
             } else {
@@ -1204,25 +1227,33 @@ pub fn apply_assets(
     if owned.is_empty() {
         records.remove(&plugin.name);
     } else {
-        records.insert(plugin.name.clone(), serde_json::to_value(&owned)?);
+        records.insert(plugin.name.clone(), owned);
     }
     save_asset_records(data_dir, &records)?;
     Ok(report)
 }
 
 /// Remove assets this package owns whose bytes still match the recorded
-/// revision. Operator-edited files are kept.
+/// revision. Operator-edited files are kept. All paths are preflighted, but an
+/// I/O failure during removal or record saving can leave a partially removed set.
+/// The same concurrent-directory-swap limitation as apply_assets applies.
 pub fn remove_assets(
     data_dir: &Path,
     assets_root: &Path,
     name: &str,
 ) -> anyhow::Result<AssetsReport> {
     let mut report = AssetsReport::default();
+    let _lock = asset_lock::AssetLock::acquire(data_dir)?;
     let mut records = load_asset_records(data_dir)?;
-    for (asset, hash) in owned_assets(&records, name) {
+    let owned = owned_assets(&records, name);
+    for asset in owned.keys() {
+        asset_safety::check(&assets_root.join(asset_safety::relative(asset)?))?;
+    }
+    for (asset, hash) in owned {
         let dest = assets_root.join(&asset);
-        if dest.is_file() {
+        if asset_safety::check(&dest)? {
             if sha256_bytes(&std::fs::read(&dest)?) == hash {
+                asset_safety::check(&dest)?;
                 std::fs::remove_file(&dest)?;
                 report.removed.push(asset);
             } else {
@@ -1234,6 +1265,14 @@ pub fn remove_assets(
     save_asset_records(data_dir, &records)?;
     Ok(report)
 }
+
+#[cfg(test)]
+#[path = "asset_lock_tests.rs"]
+mod asset_lock_tests;
+
+#[cfg(test)]
+#[path = "asset_safety_tests.rs"]
+mod asset_safety_tests;
 
 #[cfg(test)]
 mod tests {

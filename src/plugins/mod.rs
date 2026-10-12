@@ -3,6 +3,12 @@ mod contract_tests;
 #[cfg(all(test, unix))]
 mod source_contract_tests;
 pub mod contracts;
+pub mod contributions;
+pub mod activation;
+pub mod provider_binding;
+pub mod registry_chat;
+#[cfg(test)]
+mod contribution_tests;
 pub mod build;
 pub mod lifecycle;
 pub mod migrations;
@@ -13,6 +19,8 @@ mod executable;
 mod comfyui_tests;
 #[cfg(test)]
 mod media_tests;
+#[cfg(test)]
+mod script_environment_tests;
 #[cfg(test)]
 mod migration_tests;
 
@@ -175,6 +183,12 @@ impl WebDeclaration {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProvidesDeclaration {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub providers: Vec<contributions::ProcessContribution>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub channels: Vec<contributions::ProcessContribution>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub media: Vec<contributions::ProcessContribution>,
     /// External tool schema file relative to the package. When set, inline
     /// `tools` must be empty.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -194,6 +208,7 @@ pub struct ProvidesDeclaration {
 impl ProvidesDeclaration {
     pub fn is_empty(&self) -> bool {
         self.tools.is_none()
+            && self.providers.is_empty() && self.channels.is_empty() && self.media.is_empty()
             && self.routes.is_empty()
             && self.ui.is_empty()
             && self.assets.is_empty()
@@ -209,11 +224,19 @@ impl ProvidesDeclaration {
             .chain(self.ui.iter().map(|value| ("ui", value.as_str())))
             .chain(self.assets.iter().map(|value| ("asset", value.as_str())))
             .chain(self.migrations.iter().map(|value| ("migration", value.as_str())))
+            .chain(self.providers.iter().map(|value| ("provider", value.id.as_str())))
+            .chain(self.channels.iter().map(|value| ("channel", value.id.as_str())))
+            .chain(self.media.iter().map(|value| ("media", value.id.as_str())))
     }
 
     pub fn validate(&self, owner: &str) -> anyhow::Result<()> {
+        let mut claimed = std::collections::HashSet::new();
         for (kind, name) in self.claims() {
             anyhow::ensure!(valid_provides_name(name), "Invalid {kind} name '{name}'");
+            anyhow::ensure!(claimed.insert((kind, name)), "Duplicate {kind} '{name}'");
+        }
+        for (kind, declarations) in [("provider", &self.providers), ("channel", &self.channels), ("media", &self.media)] {
+            for declaration in declarations { declaration.validate(kind)?; }
         }
         if let Some(tools) = &self.tools {
             let path = Path::new(tools);
@@ -516,6 +539,11 @@ impl PluginRegistry {
                     files.push((key.into(), path));
                 }
             }
+            for (kind, declarations) in [("provider", &plugin.provides.providers), ("channel", &plugin.provides.channels), ("media", &plugin.provides.media)] {
+                for declaration in declarations {
+                    implementations.push((format!("{}/{kind}/{}", plugin.name, declaration.id), declaration.implementation_digest()?));
+                }
+            }
             for (key, path) in files {
                 implementations.push((format!("{}/{}", plugin.name, key), file_digest(path)?));
             }
@@ -540,6 +568,10 @@ impl PluginRegistry {
     /// Keep the previous registry unchanged if a package ID or tool conflicts.
     pub fn try_register(&mut self, plugin: Plugin) -> anyhow::Result<()> {
         anyhow::ensure!(!self.plugins.contains_key(&plugin.name), "Plugin owner_conflict: duplicate package '{}'", plugin.name);
+        plugin.provides.validate(&plugin.name)?;
+        for (kind, declarations) in [("provider", &plugin.provides.providers), ("channel", &plugin.provides.channels), ("media", &plugin.provides.media)] {
+            for declaration in declarations { declaration.validate_registration(plugin.role, &plugin.secrets, kind)?; }
+        }
         for tool in &plugin.tools { contracts::validate_tool(&plugin.name, tool)?; }
         let mut candidate = self.clone();
         candidate.register(plugin);
@@ -995,6 +1027,39 @@ async fn execute_script(
     let input = serde_json::to_string(args)?;
 
     let mut cmd = tokio::process::Command::new(interpreter);
+    // v1 script launch policy: inherit only these operator-controlled runtime,
+    // path and noncredential compatibility inputs, never the whole host env.
+    // Keep cwd unchanged (the install root); DATA_DIR remains relative to it,
+    // and Python resolves package-local imports alongside the script. PATH is
+    // needed both for interpreter lookup and helpers such as system_info's ps.
+    // VM_* preserves ComfyUI's VM-only shared-file restriction; Brave's host
+    // policy must not disappear when clearing the environment.
+    //
+    // No wildcard prefixes, provider/admin tokens, proxies, loader overrides
+    // or Python injection variables. Environment-only API-key fallbacks and
+    // arbitrary MCP env_from mappings intentionally no longer inherit values:
+    // credentials must be resolved by the host into declared PLUGIN_SECRETS.
+    // This is credential isolation, not filesystem/network isolation; trusted
+    // PATH, directory and endpoint settings remain operator responsibilities.
+    const INHERITED_SCRIPT_ENV: &[&str] = &[
+        "PATH", "HOME", "USERPROFILE", "SystemRoot", "SYSTEMROOT", "WINDIR",
+        "LANG", "LC_ALL", "TMPDIR", "TEMP", "TMP",
+        "ROOT_DIR", "WORKSPACE_DIR", "DATA_DIR", "VM_ENABLED", "VM_MODE",
+        "ELEVENLABS_VOICE_ID", "ELEVENLABS_TTS_MODEL", "ELEVENLABS_API_BASE",
+        "ELEVENLABS_TTS_TIMEOUT_SECONDS",
+        "OPENROUTER_IMAGE_MODEL", "OPENROUTER_IMAGE_API_BASE", "OPENROUTER_IMAGE_TIMEOUT_SECONDS",
+        "MINIMAX_IMAGE_MODEL", "MINIMAX_VISION_MODEL", "MINIMAX_BASE_URL", "MINIMAX_TIMEOUT_SECONDS",
+        "MIMO_API_BASE",
+        "COMFYUI_BASE_URL", "COMFYUI_USER", "COMFYUI_WORKFLOW_TIMEOUT_SECONDS", "COMFYUI_MAX_FILE_BYTES",
+        "BRAVE_SEARCH_API_BASE", "BRAVE_SEARCH_ALLOWED_HOSTS", "BRAVE_SEARCH_NONPUBLIC_HOSTS",
+        "PRAXIS_MCP_CONFIG",
+    ];
+    cmd.env_clear();
+    for key in INHERITED_SCRIPT_ENV {
+        if let Some(value) = std::env::var_os(key) {
+            cmd.env(key, value);
+        }
+    }
     // Timeout or task cancellation must not leave a Brave/script request running.
     cmd.kill_on_drop(true);
     cmd.arg(path)
@@ -1142,8 +1207,17 @@ pub fn load_plugins_from_dir(dir: &Path) -> anyhow::Result<Vec<Plugin>> {
 
 pub(crate) fn load_plugin_from_manifest(manifest_path: &Path, plugin_dir: &Path) -> anyhow::Result<Plugin> {
     let data = std::fs::read_to_string(manifest_path)?;
-    let manifest: PluginManifest = serde_json::from_str(&data)?;
+    let mut manifest: PluginManifest = serde_json::from_str(&data)?;
     manifest.provides.validate(&manifest.name)?;
+    for (kind, declarations) in [("provider", &mut manifest.provides.providers), ("channel", &mut manifest.provides.channels), ("media", &mut manifest.provides.media)] {
+        for declaration in declarations {
+            declaration.resolve(plugin_dir, manifest.role, &manifest.secrets, kind)?;
+            declaration.source = Some(contributions::ContributionSource {
+                manifest: manifest_path.canonicalize()?,
+                package_dir: plugin_dir.canonicalize()?,
+            });
+        }
+    }
     validate_assets(plugin_dir, &manifest.provides.assets)?;
     // Declared migrations must resolve to readable SQL scripts inside the package.
     migrations::load(plugin_dir, &manifest.provides.migrations)?;

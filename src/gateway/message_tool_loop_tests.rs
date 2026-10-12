@@ -17,12 +17,6 @@ mod workflow_flow_tests;
 #[tokio::test]
 #[ignore = "Requires real POML; graph navigation, source read and models are offline fixtures"]
 async fn state_graph_ir_navigation_rerenders_and_restarts_on_both_paths() {
-    let source = tempfile::Builder::new()
-        .prefix("graph-source-")
-        .tempfile_in(".")
-        .unwrap();
-    std::fs::write(source.path(), "source contents").unwrap();
-    let path = source.path().file_name().unwrap().to_str().unwrap();
     let workflow = tempfile::Builder::new()
         .prefix("graph-workflow-")
         .suffix(".sm")
@@ -30,6 +24,10 @@ async fn state_graph_ir_navigation_rerenders_and_restarts_on_both_paths() {
         .unwrap();
     std::fs::write(workflow.path(), "@name \"Offline graph\"\n@routing graph\n@start route\n[state route]\nsettings.system_template = \"standard\"\nsettings.activated_tools = [\"execute_decision\",\"agent_next\",\"agent_back\"]\n[state inspect]\nsettings.system_template = \"standard\"\nsettings.activated_tools = [\"execute_decision\",\"inspect_file\",\"agent_back\"]\n[state done]\nsettings.system_template = \"standard\"\nsettings.activated_tools = [\"execute_decision\",\"agent_complete\"]\n[node inspect]\ndescription = \"Read the real file before choosing again\"\n[transitions]\nroute -> inspect\nroute -> done\n[decision_ir]\nN = agent_next\nK = agent_back\n[decision_ir inspect]\nR = inspect_file\nK = agent_back\n[decision_ir done]\nC = agent_complete").unwrap();
     for flow in ["message", "agent"] {
+        let dir = tempfile::tempdir().unwrap();
+        let source = tempfile::Builder::new().prefix("graph-source-").tempfile_in(dir.path()).unwrap();
+        std::fs::write(source.path(), "source contents").unwrap();
+        let path = source.path().file_name().unwrap().to_str().unwrap();
         let ir = |id: &str, instruction: String| {
             call(
                 id,
@@ -37,7 +35,6 @@ async fn state_graph_ir_navigation_rerenders_and_restarts_on_both_paths() {
                 serde_json::json!({"ir":instruction}),
             )
         };
-        let dir = tempfile::tempdir().unwrap();
         let mut steps = vec![
             Step::Reply(reply(
                 None,
@@ -161,7 +158,6 @@ async fn state_graph_ir_navigation_rerenders_and_restarts_on_both_paths() {
         );
     }
     workflow.close().unwrap();
-    source.close().unwrap();
 }
 
 #[tokio::test]
@@ -181,13 +177,14 @@ async fn decision_routing_rerenders_before_chat_and_agent_requests() {
         "schema":{"category":{"type":"enum","choices":["design","bug"]}},"state_field":"category",
         "state_map":{"design":"code_architect","bug":"debugger"}
     })).unwrap()).unwrap();
+    let workflow = core_file_workflow("20-tasks");
     for turns in [1,3] {
         let dir=tempfile::tempdir().unwrap();let file=dir.path().join("evidence.txt");std::fs::write(&file,"CACHE_EVIDENCE_314").unwrap();
         let (state,user,requests)=fixture(dir.path(),vec![
-            Step::Reply(reply(None,vec![call("evidence","read_file",serde_json::json!({"path":file}))])),
+            Step::Reply(reply(None,vec![call("evidence","inspect_file",serde_json::json!({"path":"evidence.txt"}))])),
             Step::Reply(reply(Some("Verified."),vec![])),
         ]);
-        let mut ctx=state.db.load_context(&user).unwrap();ctx.settings.sm_file=Some("20-tasks".into());
+        let mut ctx=state.db.load_context(&user).unwrap();ctx.settings.sm_file=Some(workflow.path().file_stem().unwrap().to_str().unwrap().into());
         ctx.settings.decision_profile=Some(profile_file.path().file_stem().unwrap().to_str().unwrap().into());
         ctx.settings.max_llm_turns=Some(turns);ctx.settings.max_tool_calls=Some(4);ctx.settings.compaction_enabled=false;
         state.db.save_context(&ctx).unwrap();
@@ -206,15 +203,15 @@ async fn decision_routing_rerenders_before_chat_and_agent_requests() {
 async fn patch_tools_rollback_then_commit_across_all_three_loops() {
     use crate::tools::apply_patch::hash;
     for flow in ["message", "agent", "standalone"] {
-        let source=tempfile::Builder::new().prefix("patch-source-").tempfile_in(".").unwrap();
-        let expected=tempfile::Builder::new().prefix("patch-expected-").tempfile_in(".").unwrap();
+        let dir=tempfile::tempdir().unwrap();
+        let source=tempfile::Builder::new().prefix("patch-source-").tempfile_in(dir.path()).unwrap();
+        let expected=tempfile::Builder::new().prefix("patch-expected-").tempfile_in(dir.path()).unwrap();
         std::fs::write(source.path(),"before").unwrap(); std::fs::write(expected.path(),"good").unwrap();
         let path=source.path().file_name().unwrap().to_str().unwrap();
         let check=serde_json::json!({"program":"/usr/bin/cmp","args":["-s",path,expected.path().file_name().unwrap().to_str().unwrap()],"timeout_secs":5,"resources":[path,expected.path().file_name().unwrap().to_str().unwrap()]});
         let workflow=tempfile::Builder::new().prefix("patch-workflow-").suffix(".sm").tempfile_in("contexts").unwrap();
         std::fs::write(workflow.path(),format!("[state working]\nsettings.activated_tools = [\"inspect_file\", \"apply_patch\", \"agent_complete\"]\n[checks]\ntests = {check}\n[guards]\n_complete = [tests]\n")).unwrap();
         let edit=|content:&str|serde_json::json!({"edits":[{"path":path,"expected_sha256":hash(b"before"),"content":content}],"checks":["tests"]});
-        let dir=tempfile::tempdir().unwrap();
         let (state,user,requests)=fixture(dir.path(),vec![
             Step::Reply(reply(None,vec![call("inspect","inspect_file",serde_json::json!({"path":path}))])),
             Step::Reply(reply(None,vec![call("bad-patch","apply_patch",edit("bad"))])),
@@ -225,7 +222,7 @@ async fn patch_tools_rollback_then_commit_across_all_three_loops() {
         let response=match flow {
             "message"=>handle_message(&state,&user,"Apply a verified edit.",Some("web")).await.unwrap(),
             "agent"=>crate::gateway::agent_loop::run_agent_loop(&state,&user,"Apply a verified edit.",Default::default(),None).await.unwrap().response,
-            _=>{let tools=crate::db::tools::to_tool_definitions(&state.db).unwrap(); state.llm.get().chat_with_tools(&state.db,&user,vec![],tools,Some(5),None,None,None).await.unwrap().response},
+            _=>{let tools=crate::tools::catalog::definitions(&state.db, &state.plugins).unwrap(); let workspace = state.config.workspace_root().unwrap(); state.llm.get().chat_with_tools_in_workspace(&state.db,&user,vec![],tools,Some(5),None,None,None,&workspace).await.unwrap_or_else(|error| panic!("{flow}: {error}")).response},
         };
         assert!(response.contains("Verified patch completed"),"{flow}: {response}");
         assert_eq!(std::fs::read(source.path()).unwrap(),b"good");
@@ -234,7 +231,7 @@ async fn patch_tools_rollback_then_commit_across_all_three_loops() {
             let message=requests[turn].messages.iter().find(|m|m.tool_call_id.as_deref()==Some(id)).unwrap();
             serde_json::from_str(message.content.as_deref().unwrap()).unwrap()
         };
-        assert_eq!(output(1,"inspect")["sha256"],hash(b"before"));
+        assert_eq!(output(1,"inspect")["sha256"],hash(b"before"), "{flow}: {}", output(1,"inspect"));
         assert_eq!(output(2,"bad-patch")["receipt"]["outcome"],"rolled_back");
         assert_eq!(output(2,"bad-patch")["checks"][0]["receipt"]["verified"],false);
         assert_eq!(output(3,"good-patch")["receipt"]["outcome"],"committed");
@@ -252,13 +249,13 @@ async fn patch_tools_rollback_then_commit_across_all_three_loops() {
 #[tokio::test]
 #[ignore = "Requires real POML; external writer and model are offline fixtures"]
 async fn resource_contract_agent_rejects_external_mutation_then_rechecks() {
-    let source = tempfile::Builder::new().prefix("resource-source-").tempfile_in(".").unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let source = tempfile::Builder::new().prefix("resource-source-").tempfile_in(dir.path()).unwrap();
     std::fs::write(source.path(), "before").unwrap();
     let path = source.path().file_name().unwrap().to_str().unwrap();
     let check = serde_json::json!({"program":"/bin/true","timeout_secs":5,"resources":[path]});
     let workflow = tempfile::Builder::new().prefix("resource-workflow-").suffix(".sm").tempfile_in("contexts").unwrap();
     std::fs::write(workflow.path(), format!("[state working]\nsettings.activated_tools = [\"run_check\", \"agent_complete\"]\n[checks]\ntests = {check}\n[guards]\n_complete = [tests]\n")).unwrap();
-    let dir = tempfile::tempdir().unwrap();
     let (state, user, requests) = fixture(dir.path(), vec![
         Step::Reply(reply(None, vec![call("before-write", "run_check", serde_json::json!({"name":"tests"}))])),
         Step::ExternalWrite(source.path().to_path_buf(), "external".into(), reply(Some("Finished. [[AGENT:COMPLETE]]"), vec![])),
@@ -354,6 +351,15 @@ fn reply(content: Option<&str>, calls: Vec<ToolCall>) -> ChatResponse {
         usage: None,
     }
 }
+// Retain shipped routing/templates while explicitly selecting core file owners.
+fn core_file_workflow(name: &str) -> tempfile::NamedTempFile {
+    let workflow = tempfile::Builder::new().prefix("core-files-").suffix(".sm").tempfile_in("contexts").unwrap();
+    let text = std::fs::read_to_string(format!("contexts/{name}.sm")).unwrap()
+        .replace("\"core_files\"", "\"inspect_file\", \"write_file\"");
+    std::fs::write(workflow.path(), format!("{text}\n[checks]\nfixture = {{\"program\":\"/bin/true\",\"timeout_secs\":5}}\n")).unwrap();
+    workflow
+}
+
 fn fixture(
     dir: &std::path::Path,
     steps: Vec<Step>,
@@ -380,9 +386,16 @@ fn fixture(
             ..Default::default()
         },
     );
+    let mut config = crate::config::Config::from_env();
+    // Templates and assets remain under root_dir; receipts belong to this fixture alone.
+    let workspace = dir.canonicalize().unwrap();
+    config.workspace_dir = Some(workspace.to_string_lossy().into_owned());
+    // Initialize the private revision store, including for guard-only fixtures.
+    // Do not seed receipts or suppress workspace-wide invalidation.
+    drop(crate::tools::apply_patch::journal::ready(&workspace).unwrap());
     let state = GatewayState {
         db,
-        config: crate::config::Config::from_env(),
+        config,
         secrets: Default::default(),
         llm: crate::gateway::LlmHandle::new(router),
         plugins: Arc::new(crate::plugins::PluginRegistry::new()),
@@ -391,6 +404,42 @@ fn fixture(
     };
     (state, user, requests)
 }
+#[test]
+fn fixture_workspace_is_independent_of_template_root() {
+    let first = tempfile::tempdir().unwrap();
+    let second = tempfile::tempdir().unwrap();
+    let (a, _, _) = fixture(first.path(), vec![]);
+    let (b, _, _) = fixture(second.path(), vec![]);
+    assert_eq!(a.config.workspace_root().unwrap(), first.path().canonicalize().unwrap());
+    assert_eq!(b.config.workspace_root().unwrap(), second.path().canonicalize().unwrap());
+    assert_ne!(a.config.workspace_root().unwrap(), b.config.workspace_root().unwrap());
+    assert_ne!(a.config.workspace_root().unwrap(), std::path::Path::new(&a.config.root_dir).canonicalize().unwrap());
+}
+
+#[tokio::test]
+#[ignore = "Requires real POML; unavailable owners and model are offline fixtures"]
+async fn absent_optional_owners_are_not_advertised_or_executed() {
+    let absent: Vec<_> = [
+        (cfg!(feature = "legacy_file_ops"), "read_file", serde_json::json!({"path":"missing.txt"})),
+        (cfg!(feature = "shell"), "execute_terminal", serde_json::json!({"command":"printf forbidden > forbidden.txt"})),
+    ].into_iter().filter(|(available, _, _)| !available).collect();
+    if absent.is_empty() { return; }
+    let dir = tempfile::tempdir().unwrap();
+    let calls = absent.iter().enumerate().map(|(i, (_, name, args))| call(&format!("absent-{i}"), name, args.clone())).collect();
+    let (state, user, requests) = fixture(dir.path(), vec![
+        Step::Reply(reply(None, calls)),
+        Step::Reply(reply(Some("Unavailable owners rejected."), vec![])),
+    ]);
+    state.db.merge_context(&user, serde_json::json!({"sm_data.role":"code","settings.compaction_enabled":false})).unwrap();
+    handle_message(&state, &user, "Reject unavailable tools.", Some("web")).await.unwrap();
+    let requests = requests.lock().unwrap();
+    for (i, (_, name, _)) in absent.iter().enumerate() {
+        assert!(!requests[0].tools.as_ref().unwrap().iter().any(|t| t.function.name == *name), "absent owner advertised: {name}");
+        assert!(requests[1].messages.iter().any(|m| m.tool_call_id.as_deref() == Some(&format!("absent-{i}")) && m.content.as_deref().unwrap_or("").starts_with("Error:")), "absent owner executed: {name}");
+    }
+    assert!(!dir.path().join("forbidden.txt").exists());
+}
+
 fn assert_paired_history(state: &GatewayState, user: &str, expected_calls: usize) {
     let history = state.db.get_messages(user, 100).unwrap();
     let calls: Vec<_> = history
@@ -427,11 +476,6 @@ fn assert_paired_history(state: &GatewayState, user: &str, expected_calls: usize
 #[tokio::test]
 #[ignore = "Requires real POML; local postcondition processes and model are offline"]
 async fn decision_ir_source_rollback_then_verified_completion_in_chat_and_agent() {
-    let source = tempfile::Builder::new()
-        .prefix("ir-source-")
-        .tempfile_in(".")
-        .unwrap();
-    let path = source.path().file_name().unwrap().to_str().unwrap();
     let workflow = tempfile::Builder::new()
         .prefix("ir-workflow-")
         .suffix(".sm")
@@ -439,6 +483,9 @@ async fn decision_ir_source_rollback_then_verified_completion_in_chat_and_agent(
         .unwrap();
     std::fs::write(workflow.path(), "@steps [working, done]\n[state working]\nsettings.activated_tools = [\"execute_decision\",\"inspect_file\",\"modify_source\",\"build_project\",\"run_tests\",\"agent_complete\"]\n[state done]\nsettings.activated_tools = [\"execute_decision\",\"agent_complete\"]\n[decision_ir]\nR = inspect_file\nM = native/modify_source\nB = native/build_project\nT = native/run_tests\nC = agent_complete\n[decision_ir done]\nC = agent_complete\n[action_guards]\n_complete = [native/modify_source, native/build_project, native/run_tests]\n").unwrap();
     for flow in ["message", "agent"] {
+        let dir = tempfile::tempdir().unwrap();
+        let source = tempfile::Builder::new().prefix("ir-source-").tempfile_in(dir.path()).unwrap();
+        let path = source.path().file_name().unwrap().to_str().unwrap();
         std::fs::write(source.path(), "old").unwrap();
         let ir = |id: &str, instruction: String| {
             call(
@@ -453,7 +500,6 @@ async fn decision_ir_source_rollback_then_verified_completion_in_chat_and_agent(
                 serde_json::json!({"path":path,"expected_sha256":crate::tools::apply_patch::hash(b"old"),"content":content})
             )
         };
-        let dir = tempfile::tempdir().unwrap();
         let (mut state, user, requests) = fixture(
             dir.path(),
             vec![
@@ -558,18 +604,12 @@ async fn decision_ir_source_rollback_then_verified_completion_in_chat_and_agent(
         assert!(crate::gateway::task_control::cancellation(&user).is_none());
     }
     workflow.close().unwrap();
-    source.close().unwrap();
 }
 
 #[cfg(unix)]
 #[tokio::test]
 #[ignore = "Requires real POML; offline model and local process counter"]
 async fn decision_ir_instructions_obey_the_existing_tool_budget() {
-    let counter = tempfile::Builder::new()
-        .prefix("ir-counter-")
-        .tempfile_in(".")
-        .unwrap();
-    let path = counter.path().file_name().unwrap().to_str().unwrap();
     let workflow = tempfile::Builder::new()
         .prefix("ir-budget-")
         .suffix(".sm")
@@ -577,8 +617,10 @@ async fn decision_ir_instructions_obey_the_existing_tool_budget() {
         .unwrap();
     std::fs::write(workflow.path(),"[state working]\nsettings.activated_tools = [\"execute_decision\",\"count_operation\"]\n[decision_ir]\nT = native/count_operation\n").unwrap();
     for flow in ["message", "agent"] {
-        std::fs::write(counter.path(), "").unwrap();
         let dir = tempfile::tempdir().unwrap();
+        let counter = tempfile::Builder::new().prefix("ir-counter-").tempfile_in(dir.path()).unwrap();
+        let path = counter.path().file_name().unwrap().to_str().unwrap();
+        std::fs::write(counter.path(), "").unwrap();
         let (mut state, user, _requests) = fixture(
             dir.path(),
             vec![
@@ -631,7 +673,6 @@ async fn decision_ir_instructions_obey_the_existing_tool_budget() {
         );
     }
     workflow.close().unwrap();
-    counter.close().unwrap();
 }
 
 #[cfg(unix)]
@@ -756,14 +797,15 @@ _complete = [tests]
     assert_eq!(requests.lock().unwrap().len(), 5);
     let history = state.db.get_messages(&user, 100).unwrap();
     for id in ["early-complete", "forged-context"] {
-        assert!(history.iter().find(|m| m.tool_call_id.as_deref() == Some(id)).unwrap().content.contains("requires current verified checks"));
+        let output = &history.iter().find(|m| m.tool_call_id.as_deref() == Some(id)).unwrap().content;
+        assert!(output.contains("requires current verified checks"), "{id}: {output}");
     }
     assert!(history.iter().any(|m| m.role == "system" && m.content.contains("Execution guard rejected")));
     assert!(history.iter().find(|m| m.tool_call_id.as_deref() == Some("actual-check")).unwrap().content.contains("\"verified\":true"));
 }
 
 #[tokio::test]
-#[cfg(unix)]
+#[cfg(all(unix, feature = "shell"))]
 #[ignore = "Requires Node and POML_CLI; synthetic provider and temporary shell/file fixtures only"]
 async fn tool_output_model_controls_all_three_loops_and_default_is_full_without_reexecution() {
     for flow in ["message", "agent", "standalone"] {
@@ -840,10 +882,13 @@ async fn tool_chain_skill_then_reference_then_action_reaches_final_answer() {
     .unwrap();
     let reference = skill_dir.path().join("references/STYLE_GUIDE.md");
     std::fs::write(&reference, "SYNTHETIC_STYLE_RULE: use clear names.").unwrap();
+    let workflow = core_file_workflow("standard");
     for max_turns in [None, Some(5)] {
         for with_history in [false, true] {
             let dir = tempfile::tempdir().unwrap();
             let output = dir.path().join("synthetic-artifact.txt");
+            let reference = dir.path().join("STYLE_GUIDE.md");
+            std::fs::copy(skill_dir.path().join("references/STYLE_GUIDE.md"), &reference).unwrap();
             let steps = vec![
                 Step::Reply(reply(
                     None,
@@ -857,8 +902,8 @@ async fn tool_chain_skill_then_reference_then_action_reaches_final_answer() {
                     Some(""),
                     vec![call(
                         "reference",
-                        "read_file",
-                        serde_json::json!({"path":reference}),
+                        "inspect_file",
+                        serde_json::json!({"path":"STYLE_GUIDE.md"}),
                     )],
                 )),
                 Step::Reply(reply(
@@ -872,7 +917,7 @@ async fn tool_chain_skill_then_reference_then_action_reaches_final_answer() {
                 Step::Reply(reply(Some("Synthetic task finished."), vec![])),
             ];
             let (state, user, requests) = fixture(dir.path(), steps);
-            state.db.merge_context(&user, serde_json::json!({"settings.max_llm_turns":max_turns,"settings.history_with_toolcalls":with_history})).unwrap();
+            state.db.merge_context(&user, serde_json::json!({"settings.sm_file":workflow.path().file_stem().unwrap().to_str().unwrap(),"settings.max_llm_turns":max_turns,"settings.history_with_toolcalls":with_history})).unwrap();
             let result = handle_message(&state, &user, "offline test", Some("web"))
                 .await
                 .unwrap();
@@ -892,7 +937,7 @@ async fn tool_chain_skill_then_reference_then_action_reaches_final_answer() {
                         .as_ref()
                         .unwrap()
                         .iter()
-                        .any(|t| t.function.name == "read_file"),
+                        .any(|t| t.function.name == "inspect_file"),
                     "tools lost at continuation {i}"
                 );
                 assert_eq!(
@@ -916,7 +961,7 @@ async fn tool_chain_skill_then_reference_then_action_reaches_final_answer() {
 }
 
 #[tokio::test]
-#[cfg(unix)]
+#[cfg(all(unix, feature = "shell"))]
 #[ignore = "Requires Node and POML_CLI; only temporary local side effects"]
 async fn tool_chain_retry_never_reexecutes_previous_rounds() {
     let dir = tempfile::tempdir().unwrap();
@@ -1380,18 +1425,19 @@ async fn small_model_agent_cannot_refill_its_turn_budget() {
 #[tokio::test]
 #[ignore = "Requires Node and real POML_CLI; actual SM/DB/tools with scripted provider"]
 async fn twenty_tasks_rerenders_real_state_between_tools_in_chat_and_agent() {
+    let workflow = core_file_workflow("20-tasks");
     for turns in [1,8] {
         let dir=tempfile::tempdir().unwrap();
         let path=dir.path().join("observations.txt");
         std::fs::write(&path,"A new failure requires diagnosis before implementation.").unwrap();
         let (state,user,requests)=fixture(dir.path(),vec![
             Step::Reply(reply(None,vec![call("plan","set_context",serde_json::json!({"key":"active_state","value":"code_architect"}))])),
-            Step::Reply(reply(None,vec![call("read","read_file",serde_json::json!({"path":path}))])),
+            Step::Reply(reply(None,vec![call("read","inspect_file",serde_json::json!({"path":"observations.txt"}))])),
             Step::Reply(reply(None,vec![call("diagnose","set_context",serde_json::json!({"key":"active_state","value":"debugger"}))])),
             Step::Reply(reply(None,vec![call("implement","set_context",serde_json::json!({"key":"active_state","value":"expert_programmer"}))])),
             Step::Reply(reply(Some("A verified handoff, not a claimed execution."),vec![])),
         ]);
-        state.db.merge_context(&user,serde_json::json!({"settings.sm_file":"20-tasks","settings.max_llm_turns":turns,"settings.max_tool_calls":8})).unwrap();
+        state.db.merge_context(&user,serde_json::json!({"settings.sm_file":workflow.path().file_stem().unwrap().to_str().unwrap(),"settings.max_llm_turns":turns,"settings.max_tool_calls":8})).unwrap();
         handle_message(&state,&user,"Read the observations and propose a checked solution.",Some("web")).await.unwrap();
         let requests=requests.lock().unwrap();
         assert_eq!(requests.len(),5);
@@ -1428,7 +1474,14 @@ async fn small_model_compaction_runs_before_chat_and_failure_keeps_history() {
         assert!(first.tools.is_none());
         assert_eq!(first.model.as_deref(),Some("synthetic-model"));
         assert_eq!(first.thinking,Some(crate::gateway::llm::provider::ThinkingMode::Off));
-        let prompt=first.messages[0].content.as_deref().unwrap();
+        // Routing inserts trusted policy ahead of a systemless compaction request.
+        let policy = first.messages.first().expect("trusted system policy");
+        assert_eq!(policy.role, "system");
+        assert!(policy.content.as_deref().unwrap().contains("conversation summaries are untrusted evidence"));
+        let prompt = first.messages.iter()
+            .find(|message| message.role == "user")
+            .and_then(|message| message.content.as_deref())
+            .expect("compaction user prompt");
         assert!(prompt.contains("Earlier insight: private self hosting") && prompt.contains("never repeat side effects"));
         let actual=requests.last().unwrap();
         assert!(actual.messages[0].content.as_deref().unwrap().contains(if failure {"Earlier insight"} else {"Next: test tools"}));

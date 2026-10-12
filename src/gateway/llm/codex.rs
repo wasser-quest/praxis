@@ -379,7 +379,7 @@ impl LLMProvider for CodexProvider {
             Some(ProviderContinuation::Codex { input }) => input.clone(),
             // Continuations are request-local provider state and never cross
             // providers; a foreign one is dropped, not forwarded.
-            Some(ProviderContinuation::Ollama { .. }) | None => Vec::new(),
+            Some(ProviderContinuation::Ollama { .. } | ProviderContinuation::Worker { .. }) | None => Vec::new(),
         };
         body["input"].as_array_mut().expect("Codex input array").extend(previous.clone());
         let mut attempt = self.send_attempt(&body, on_delta.unwrap_or(&|_| {})).await?;

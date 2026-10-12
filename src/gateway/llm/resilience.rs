@@ -159,6 +159,29 @@ pub async fn interruptible<T>(
     }
 }
 
+/// Registry workers own explicit termination/reaping. Signal their child scope
+/// and await the invocation's cleanup rather than dropping its provider future.
+/// The bridge itself bounds termination; late callbacks are suppressed by caller.
+pub(super) async fn cooperative<T>(
+    deadline: Instant,
+    parent: &CancellationToken,
+    child: &CancellationToken,
+    work: impl Future<Output = T>,
+) -> Result<T, ProviderError> {
+    tokio::pin!(work);
+    let error = tokio::select! {
+        biased;
+        _ = parent.cancelled() => ProviderError::new(ErrorKind::Cancelled),
+        _ = tokio::time::sleep_until(deadline) => ProviderError::new(ErrorKind::Deadline),
+        result = &mut work => return Ok(result),
+    };
+    child.cancel();
+    // Poll to completion: the transport's cancellation path terminates and waits
+    // for the one-shot child, including readiness/credential delivery failures.
+    let _ = work.await;
+    Err(error)
+}
+
 pub fn progress(user: Option<&str>, message: &str) {
     if let Some(user) = user {
         crate::runtime::events::send(user, "feedback", message);

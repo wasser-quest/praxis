@@ -5,6 +5,9 @@ pub mod error;
 pub(super) mod http;
 pub mod resilience;
 mod routing;
+mod registry_routing;
+#[cfg(all(test, unix))]
+mod registry_routing_tests;
 pub mod llamacpp;
 pub mod mimo;
 pub mod minimax;
@@ -175,18 +178,37 @@ impl LLMRouter {
         &self,
         db: &crate::db::Database,
         user_id: &str,
-        mut messages: Vec<provider::ChatMessage>,
+        messages: Vec<provider::ChatMessage>,
         tools: Vec<provider::ToolDefinition>,
         max_iterations: Option<i32>,
         feedback_tx: Option<tokio::sync::mpsc::UnboundedSender<String>>,
         provider: Option<&str>,
         model: Option<&str>,
     ) -> anyhow::Result<ChatWithToolsResult> {
+        let workspace = crate::config::Config::from_env().workspace_root()?;
+        self.chat_with_tools_in_workspace(db, user_id, messages, tools,
+            max_iterations, feedback_tx, provider, model, &workspace).await
+    }
+
+    /// Explicit host-selected project root; policy and tool receipts share it.
+    pub async fn chat_with_tools_in_workspace(
+        &self,
+        db: &crate::db::Database,
+        user_id: &str,
+        mut messages: Vec<provider::ChatMessage>,
+        tools: Vec<provider::ToolDefinition>,
+        max_iterations: Option<i32>,
+        feedback_tx: Option<tokio::sync::mpsc::UnboundedSender<String>>,
+        provider: Option<&str>,
+        model: Option<&str>,
+        workspace: &std::path::Path,
+    ) -> anyhow::Result<ChatWithToolsResult> {
         let _task = crate::gateway::task_control::begin(user_id)?;
+        crate::gateway::task_control::pin_workspace(user_id, workspace)?;
         let context = db.load_context(user_id)?;
         let workflow = crate::sm::load_file(crate::gateway::prompt::workflow_name(&context))
             .map_err(|e| anyhow::anyhow!("Cannot load verification policy: {e}"))?;
-        crate::gateway::action_contracts::bind(user_id, crate::gateway::prompt::workflow_name(&context), &workflow, std::path::Path::new("."))?;
+        crate::gateway::action_contracts::bind(user_id, crate::gateway::prompt::workflow_name(&context), &workflow, workspace)?;
         let mut tools = tools;
         for tool in &mut tools { crate::tools::tool_output::augment_definition(tool); }
         if !tools.is_empty()

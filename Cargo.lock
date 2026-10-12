@@ -3698,6 +3698,9 @@ dependencies = [
  "praxis-legacy-file-ops",
  "praxis-plugin-api",
  "praxis-provider-api",
+ "praxis-provider-http",
+ "praxis-provider-ollama",
+ "praxis-provider-openai",
  "praxis-sandbox",
  "praxis-shell",
  "praxis-vision",
@@ -3843,9 +3846,57 @@ version = "1.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "libc",
  "reqwest",
  "serde",
  "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
+name = "praxis-provider-http"
+version = "0.1.0"
+dependencies = [
+ "httpdate",
+ "praxis-provider-api",
+ "reqwest",
+ "serde_json",
+ "tokio",
+ "wiremock",
+]
+
+[[package]]
+name = "praxis-provider-ollama"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "base64",
+ "futures-util",
+ "praxis-provider-api",
+ "praxis-provider-http",
+ "reqwest",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
+ "wiremock",
+]
+
+[[package]]
+name = "praxis-provider-openai"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "praxis-provider-api",
+ "praxis-provider-http",
+ "reqwest",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "wiremock",
 ]
 
 [[package]]

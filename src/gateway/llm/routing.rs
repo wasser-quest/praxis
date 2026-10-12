@@ -41,8 +41,31 @@ impl LLMRouter {
 
     /// The trusted session/workflow may select a usable provider even when the
     /// installation default has not been configured yet. No network request.
+    /// Registry checks here are nonblocking metadata/credential readiness, not
+    /// filesystem authorization; use the async preflight before execution.
     pub fn validate_request_configuration(&self, provider: Option<&str>) -> anyhow::Result<()> {
-        Self::validate_provider_inventory(&self.policy, &self.default_provider, &self.fallback_providers, &self.provider_names(), provider)
+        Self::validate_provider_inventory(&self.policy, &self.default_provider, &self.fallback_providers, &self.provider_names(), provider)?;
+        for name in std::iter::once(provider.unwrap_or(&self.default_provider)).chain(self.fallback_providers.iter().map(String::as_str)) {
+            if let Some(binding) = self.find_provider(name)?.as_any().downcast_ref::<super::registry_routing::RegistryRoute>() {
+                binding.validate()?;
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn validate_request_configuration_async(
+        &self,
+        provider: Option<&str>,
+        deadline: Instant,
+        cancel: &CancellationToken,
+    ) -> anyhow::Result<()> {
+        Self::validate_provider_inventory(&self.policy, &self.default_provider, &self.fallback_providers, &self.provider_names(), provider)?;
+        for name in std::iter::once(provider.unwrap_or(&self.default_provider)).chain(self.fallback_providers.iter().map(String::as_str)) {
+            if let Some(binding) = self.find_provider(name)?.as_any().downcast_ref::<super::registry_routing::RegistryRoute>() {
+                binding.validate_async(deadline, cancel).await?;
+            }
+        }
+        Ok(())
     }
 
     pub(crate) fn validate_provider_inventory(
@@ -201,7 +224,12 @@ impl LLMRouter {
             if attempts >= max_attempts {
                 break;
             }
-            let p = self.find_provider(name)?;
+            let configured = self.find_provider(name)?;
+            let bound = configured.as_any().downcast_ref::<super::registry_routing::RegistryRoute>()
+                .map(|binding| binding.bind(cancel));
+            // One identity/revision for all retries and opaque continuations of
+            // this logical call; native providers retain their existing path.
+            let p = configured;
             let gate = &self.gates[name];
             let _admission = match gate.admit() {
                 Ok(permit) => permit,
@@ -253,11 +281,14 @@ impl LLMRouter {
                 let attempt_start = Instant::now();
                 let attempt_deadline = deadline
                     .min(attempt_start + Duration::from_millis(self.policy.request_timeout_ms));
+                let attempt_cancel = bound.as_ref().map(|call| call.cancel.child_token());
                 let mut stream = StreamAttempt::new(user);
                 let trace_id = trace.map(|t| t.attempt(&req, name, attempts as u64)).transpose()?;
                 let generation = crate::gateway::telemetry::Generation::new();
                 if let Some(user) = user { crate::runtime::events::send(user, "stream_start", "{}"); }
                 let on_delta = |delta: StreamDelta| {
+                    if cancel.is_cancelled() || Instant::now() >= attempt_deadline
+                        || attempt_cancel.as_ref().is_some_and(CancellationToken::is_cancelled) { return; }
                     generation.delta(user, trace_id, &delta);
                     if let Some(user) = user {
                         match &delta {
@@ -287,12 +318,25 @@ impl LLMRouter {
                     max_output_tokens = ?req.max_tokens, streaming = user.is_some(),
                     timeout_ms = attempt_deadline.duration_since(attempt_start).as_millis() as u64,
                     "LLM request metadata (content omitted)");
-                let call = p.chat_attempt(
-                    req.clone(), continuation.as_ref(),
-                    if user.is_some() { Some(&on_delta) } else { None },
-                );
+                let call = async {
+                    let callback = if user.is_some() { Some(&on_delta as &(dyn Fn(StreamDelta) + Send + Sync)) } else { None };
+                    if let (Some(bound), Some(token)) = (&bound, &attempt_cancel) {
+                        if has_images || req.vision_provider.is_some() || req.vision_model.is_some() {
+                            return Err(ProviderError::new(ErrorKind::Unsupported));
+                        }
+                        let adapter = bound.attempt(attempt_deadline, token).await?;
+                        adapter.chat_attempt(req.clone(), continuation.as_ref(), callback).await
+                    } else {
+                        p.chat_attempt(req.clone(), continuation.as_ref(), callback).await
+                    }
+                };
                 let mut reported_response = None;
-                let result = match interruptible(attempt_deadline, cancel, call).await {
+                let outcome = if let Some(token) = &attempt_cancel {
+                    resilience::cooperative(attempt_deadline, cancel, token, call).await
+                } else {
+                    interruptible(attempt_deadline, cancel, call).await
+                };
+                let result = match outcome {
                     Ok(Ok(attempt)) => {
                         // Keep usage/finish metadata even when validation rejects
                         // a cutoff response. Failed output is never executed.
@@ -329,8 +373,7 @@ impl LLMRouter {
                             validate_response(attempt.response).map(|response| ChatAttempt { response, continuation: None })
                         }
                     },
-                    Ok(Err(error)) => Err(error),
-                    Err(mut error) => {
+                    Ok(Err(mut error)) | Err(mut error) => {
                         if error.kind == ErrorKind::Deadline && attempt_deadline < deadline {
                             error.kind = ErrorKind::Timeout;
                         }
@@ -475,7 +518,7 @@ impl LLMRouter {
     }
 
     pub async fn health_check(&self) -> bool {
-        if self.validate_configuration().is_err() {
+        if self.validate_request_configuration_async(None, Instant::now() + Duration::from_millis(self.policy.request_timeout_ms), &CancellationToken::new()).await.is_err() {
             return false;
         }
         let Ok(provider) = self.find_provider(&self.default_provider) else {

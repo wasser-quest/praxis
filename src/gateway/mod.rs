@@ -138,7 +138,10 @@ impl LlmHandle {
             RouterGeneration::Configured { router, .. } => router.get().is_some(),
         }
     }
-    pub fn swap(&self, router: llm::LLMRouter) {
+    pub fn swap(&self, mut router: llm::LLMRouter) {
+        if let RouterGeneration::Ready(previous) = &*self.snapshot() {
+            router.retain_registry_from(previous);
+        }
         match self.0.write() {
             Ok(mut guard) => *guard = Arc::new(RouterGeneration::Ready(Arc::new(router))),
             Err(poisoned) => {
@@ -178,16 +181,25 @@ pub fn management_state(
     config.validate()?;
     config.workspace_root()?;
     crate::tools::catalog::validate(&plugins)?;
-    let llm = LlmHandle::configured(
-        providers::effective_config(&config, &secrets),
-        secrets.clone(),
-    );
+    let plugins = Arc::new(plugins);
+    let effective = providers::effective_config(&config, &secrets);
+    // Installation/enabling is not activation. Capture explicit operator opt-in
+    // once at startup; subsequent native login rebuilds retain this binding.
+    let llm = match std::env::var("PRAXIS_REGISTRY_CHAT_PROVIDER") {
+        Ok(id) => {
+            let mut router = llm::LLMRouter::new(&effective, &secrets);
+            router.enable_registry(plugins.clone(), std::path::PathBuf::from(&config.data_dir), id)?;
+            LlmHandle::new(router)
+        }
+        Err(std::env::VarError::NotPresent) => LlmHandle::configured(effective, secrets.clone()),
+        Err(_) => anyhow::bail!("Invalid registry chat opt-in"),
+    };
     Ok(GatewayState {
         db,
         config,
         secrets,
         llm,
-        plugins: Arc::new(plugins),
+        plugins,
         event_tx: crate::event_channel::get_event_tx().unwrap_or_else(crate::event_channel::init),
         start_time: std::time::Instant::now(),
     })

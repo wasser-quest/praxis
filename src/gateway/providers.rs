@@ -204,9 +204,8 @@ pub fn setup_hints(state: &GatewayState, provider: &str, model: &str) -> Vec<Str
 fn rebuild_router(state: &GatewayState, secrets: &crate::db::secrets::Secrets) -> Option<String> {
     let config = effective_config(&state.config, secrets);
     let router = super::llm::LLMRouter::new(&config, secrets);
-    let warning = router.validate_configuration().err().map(|e| format!("Router warning: {e}"));
     state.llm.swap(router);
-    warning
+    state.llm.get().validate_configuration().err().map(|e| format!("Router warning: {e}"))
 }
 
 fn commit(state: &GatewayState, provider: &str, changes: crate::db::secrets::Secrets) -> anyhow::Result<(bool, Option<String>)> {

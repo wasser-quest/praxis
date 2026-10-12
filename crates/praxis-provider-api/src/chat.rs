@@ -154,8 +154,11 @@ impl Usage {
     pub fn from_counts(input: &serde_json::Value, output: &serde_json::Value) -> Option<Self> {
         let prompt_tokens = Self::counter(input)?;
         let completion_tokens = Self::counter(output)?;
-        Some(Self { prompt_tokens, completion_tokens,
-            total_tokens: prompt_tokens.checked_add(completion_tokens)? })
+        Some(Self {
+            prompt_tokens,
+            completion_tokens,
+            total_tokens: prompt_tokens.checked_add(completion_tokens)?,
+        })
     }
 
     pub fn counter(value: &serde_json::Value) -> Option<u32> {
@@ -176,7 +179,9 @@ impl Usage {
         // Preserve a supplied valid total; reject inconsistent/invalid samples.
         if let Some(total) = value.get("total_tokens").filter(|v| !v.is_null()) {
             let total = Self::counter(total)?;
-            if total < usage.total_tokens { return None; }
+            if total < usage.total_tokens {
+                return None;
+            }
             usage.total_tokens = total;
         }
         Some(usage)
@@ -188,11 +193,20 @@ impl Usage {
 /// opaque and must not appear in diagnostics.
 #[derive(Clone)]
 pub enum ProviderContinuation {
-    Codex { input: Vec<serde_json::Value> },
+    /// Host-carried worker state. Never decode in the host, persist to history,
+    /// or rebind to a fallback provider, generation or logical call.
+    Worker {
+        state: crate::wire::WireContinuation,
+    },
+    Codex {
+        input: Vec<serde_json::Value>,
+    },
     /// Ollama: raw chat messages replayed on the next attempt — the preserved
     /// reasoning step plus an explicit continue instruction. Same contract as
     /// `Codex`: never history, never displayed, never forwarded to a fallback.
-    Ollama { messages: Vec<serde_json::Value> },
+    Ollama {
+        messages: Vec<serde_json::Value>,
+    },
 }
 impl std::fmt::Debug for ProviderContinuation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -202,8 +216,11 @@ impl std::fmt::Debug for ProviderContinuation {
 impl ProviderContinuation {
     pub fn estimated_tokens(&self) -> u64 {
         match self {
+            Self::Worker { state } => state.estimated_tokens(),
             Self::Codex { input } => serde_json::to_vec(input).map_or(0, |s| s.len() as u64 / 3),
-            Self::Ollama { messages } => serde_json::to_vec(messages).map_or(0, |s| s.len() as u64 / 3),
+            Self::Ollama { messages } => {
+                serde_json::to_vec(messages).map_or(0, |s| s.len() as u64 / 3)
+            }
         }
     }
 }
@@ -220,8 +237,16 @@ pub struct ChatAttempt {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum StreamDelta {
     TemplateOmitted,
-    Text { text: String },
-    Reasoning { text: String },
-    ToolCall { index: usize, id: Option<String>, name: Option<String>, arguments: Option<String> },
+    Text {
+        text: String,
+    },
+    Reasoning {
+        text: String,
+    },
+    ToolCall {
+        index: usize,
+        id: Option<String>,
+        name: Option<String>,
+        arguments: Option<String>,
+    },
 }
-

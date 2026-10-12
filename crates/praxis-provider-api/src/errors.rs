@@ -82,7 +82,10 @@ impl ProviderError {
         }
     }
     pub fn with_cause(kind: ErrorKind, cause: &'static str) -> Self {
-        Self { cause: Some(cause), ..Self::new(kind) }
+        Self {
+            cause: Some(cause),
+            ..Self::new(kind)
+        }
     }
     pub fn from_reqwest(error: reqwest::Error) -> Self {
         let error = error.without_url();
@@ -200,7 +203,10 @@ impl From<serde_json::Error> for ProviderError {
     /// A payload the provider and the client do not agree on is never retried
     /// as transport: it is an invalid response.
     fn from(_: serde_json::Error) -> Self {
-        Self::with_cause(ErrorKind::InvalidResponse, "provider payload is not valid JSON")
+        Self::with_cause(
+            ErrorKind::InvalidResponse,
+            "provider payload is not valid JSON",
+        )
     }
 }
 
@@ -223,11 +229,19 @@ impl fmt::Display for CallFailure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "LLM request failed after {} attempt(s)", self.attempts)?;
         for (index, (provider, error)) in self.failures.iter().enumerate() {
-            write!(f, "{} {provider}: {error}", if index == 0 { ":" } else { ";" })?;
+            write!(
+                f,
+                "{} {provider}: {error}",
+                if index == 0 { ":" } else { ";" }
+            )?;
         }
         // The final attempt normally IS the terminal error. Do not print the
         // same generic diagnosis twice; retain distinct queue/deadline errors.
-        if self.failures.last().is_none_or(|(_, error)| error != &self.terminal) {
+        if self
+            .failures
+            .last()
+            .is_none_or(|(_, error)| error != &self.terminal)
+        {
             write!(f, ": {}", self.terminal)?;
         }
         Ok(())

@@ -119,6 +119,22 @@ pub fn update_runtime_secrets(update: impl FnOnce(&mut Secrets) -> bool) -> anyh
     persist_if_unlocked(current)
 }
 
+/// Fallible authoritative snapshot for registry authorization. Never turn a
+/// poisoned store into successful anonymous authorization.
+pub(crate) fn registry_chat_snapshot(names: &[String]) -> Result<Secrets, praxis_provider_api::ProviderError> {
+    let guard = SECRETS.try_read()
+        .map_err(|_| praxis_provider_api::ProviderError::new(praxis_provider_api::ErrorKind::Configuration))?;
+    let mut scoped = Secrets::default();
+    if let Some(current) = guard.as_ref() {
+        for name in names {
+            if let Some(value) = current.plugin_secret(name) {
+                scoped.custom.insert(name.clone(), value.to_owned());
+            }
+        }
+    }
+    Ok(scoped)
+}
+
 pub fn get_secrets() -> Secrets {
     SECRETS
         .read()

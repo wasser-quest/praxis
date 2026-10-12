@@ -157,6 +157,23 @@ impl DiscordBot {
     }
 }
 
+/// Use the same scoped, startup-authenticated HTTP client as other deliveries.
+async fn upload_file(
+    http: &serenity::http::Http,
+    channel: serenity::all::ChannelId,
+    file_path: &str,
+    file_name: &str,
+) -> anyhow::Result<()> {
+    let attachment = serenity::builder::CreateAttachment::bytes(
+        tokio::fs::read(file_path).await?,
+        file_name,
+    );
+    channel
+        .send_files(http, [attachment], serenity::builder::CreateMessage::new())
+        .await?;
+    Ok(())
+}
+
 /// Listen for events from the event channel and handle them
 async fn listen_for_events(host: Arc<dyn host::ChannelHost>, http: Arc<serenity::http::Http>) {
     // Wait a bit for the host event feed to be initialized
@@ -212,30 +229,10 @@ async fn listen_for_events(host: Arc<dyn host::ChannelHost>, http: Arc<serenity:
                     continue;
                 };
 
-                let req = reqwest::Client::new();
-                let file_bytes = tokio::fs::read(&file_path).await.unwrap_or_default();
-                let part = reqwest::multipart::Part::bytes(file_bytes).file_name(file_name.clone());
-                let form = reqwest::multipart::Form::new().part("file", part);
-
-                let bot_token = std::env::var("DISCORD_BOT_TOKEN").unwrap_or_default();
-                let url = format!("https://discord.com/api/v10/channels/{}/messages", send_to);
-
-                if let Ok(resp) = req
-                    .post(&url)
-                    .header("Authorization", format!("Bot {}", bot_token))
-                    .multipart(form)
-                    .send()
-                    .await
-                {
-                    if resp.status().is_success() {
-                        tracing::info!("File {} sent to channel {}", file_name, send_to);
-                    } else {
-                        tracing::error!(
-                            "Failed to send file: {} - {}",
-                            resp.status(),
-                            resp.text().await.unwrap_or_default()
-                        );
-                    }
+                match upload_file(&http, send_to, &file_path, &file_name).await {
+                    Ok(()) => tracing::info!("File {} sent to channel {}", file_name, send_to),
+                    // Remote error text and local paths are not safe log payloads.
+                    Err(_) => tracing::error!("Discord file delivery failed"),
                 }
             }
             Ok(host::ChannelEvent::AgentFeedback { user_id, message }) => {
@@ -321,10 +318,9 @@ async fn listen_for_events(host: Arc<dyn host::ChannelHost>, http: Arc<serenity:
                     let _ = tx.send((user_id, audio_data));
                 }
             }
-            Ok(_) => {}
-            Err(e) => {
-                tracing::error!("Event channel error: {}", e);
-                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                tracing::warn!("Discord delivery stream lagged; skipped {} events", skipped);
             }
         }
     }
@@ -423,6 +419,9 @@ pub async fn start_with_host(
     tracing::info!("Discord bot connecting...");
     bot.start_with_token(&token, application_id).await
 }
+
+#[cfg(test)]
+mod security_lifecycle_tests;
 
 #[cfg(test)]
 mod discord_tests {

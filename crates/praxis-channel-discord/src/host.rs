@@ -11,11 +11,21 @@ use std::path::Path;
 use tokio::sync::{broadcast, mpsc};
 
 /// The scoped credentials a channel may receive. Nothing else is exposed.
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct DiscordCredentials {
     pub bot_token: Option<String>,
     pub application_id: Option<String>,
     pub elevenlabs_api_key: Option<String>,
+}
+
+impl std::fmt::Debug for DiscordCredentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DiscordCredentials")
+            .field("bot_token", &self.bot_token.as_ref().map(|_| "[REDACTED]"))
+            .field("application_id", &self.application_id.as_ref().map(|_| "[REDACTED]"))
+            .field("elevenlabs_api_key", &self.elevenlabs_api_key.as_ref().map(|_| "[REDACTED]"))
+            .finish()
+    }
 }
 
 /// A completed pairing between a channel account and an internal user.
