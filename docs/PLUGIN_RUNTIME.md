@@ -148,7 +148,7 @@ Plugin scripts and shell commands run through `praxis_sandbox::Sandbox::from_env
 with the filter installed in `pre_exec` (`src/plugins/mod.rs`,
 `crates/praxis-shell/src/lib.rs`). What is actually applied in the child:
 
-* resource limits — `RLIMIT_AS` (1 GiB default), `RLIMIT_CPU`, `RLIMIT_NOFILE`,
+* resource limits — `RLIMIT_AS` (64 GiB virtual-address-space default, allowing Node/V8 and POML WebAssembly reservations without allocating that much RAM), `RLIMIT_CPU`, `RLIMIT_NOFILE`,
   `RLIMIT_FSIZE`, `RLIMIT_NPROC`, all operator-set via `PRAXIS_SANDBOX_*` and never
   widen-able by a tool argument;
 * `no_new_privs` plus a syscall deny-list (kernel control, cross-process

@@ -39,7 +39,9 @@ impl Default for Sandbox {
             // Generous enough for a normal build, tight enough that a runaway
             // process cannot exhaust the host. CPU is left unset because a
             // background job is allowed to run for a long time.
-            address_space_bytes: Some(1024 * 1024 * 1024),
+            // Node/V8 and POML's WebAssembly dependencies reserve large virtual
+            // regions. This is an address-space ceiling, not allocated RAM.
+            address_space_bytes: Some(64 * 1024 * 1024 * 1024),
             cpu_seconds: None,
             open_files: Some(256),
             file_bytes: Some(32 * 1024 * 1024),
@@ -381,7 +383,7 @@ mod tests {
     #[test]
     fn the_budget_is_operator_policy_with_a_working_default() {
         let sandbox = Sandbox::default();
-        assert_eq!(sandbox.address_space_bytes, Some(1024 * 1024 * 1024));
+        assert_eq!(sandbox.address_space_bytes, Some(64 * 1024 * 1024 * 1024));
         assert_eq!(sandbox.open_files, Some(256));
         assert_eq!(sandbox.file_bytes, Some(32 * 1024 * 1024));
         assert_eq!(sandbox.processes, Some(2048));

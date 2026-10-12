@@ -60,6 +60,12 @@ pub(super) async fn execute(
             "TMP",
             "SystemRoot",
             "WINDIR",
+            "PRAXIS_SANDBOX_ADDRESS_SPACE_MB",
+            "PRAXIS_SANDBOX_CPU_SECONDS",
+            "PRAXIS_SANDBOX_OPEN_FILES",
+            "PRAXIS_SANDBOX_FILE_BYTES_MB",
+            "PRAXIS_SANDBOX_PROCESSES",
+            "PRAXIS_SANDBOX_WRITE_DIRS",
         ] {
             if let Some(value) = std::env::var_os(name) {
                 command.env(name, value);

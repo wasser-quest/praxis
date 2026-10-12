@@ -64,6 +64,30 @@ async fn executable_receives_only_declared_secrets_and_replaces_inherited_envelo
 }
 
 #[tokio::test]
+async fn executable_preserves_operator_sandbox_configuration() {
+    let names = [
+        "PRAXIS_SANDBOX_ADDRESS_SPACE_MB",
+        "PRAXIS_SANDBOX_CPU_SECONDS",
+        "PRAXIS_SANDBOX_OPEN_FILES",
+        "PRAXIS_SANDBOX_FILE_BYTES_MB",
+        "PRAXIS_SANDBOX_PROCESSES",
+        "PRAXIS_SANDBOX_WRITE_DIRS",
+    ];
+    let (_dir, registry) = fixture(
+        "import json, os, sys\nr=json.load(sys.stdin)\nprint(json.dumps({'protocol_version':1,'result':json.dumps({n:os.environ.get(n) for n in r['arguments']['names']})}))",
+        5,
+    );
+    let output = registry
+        .execute_tool("fixture_echo", &json!({"names":names}), None, None)
+        .await
+        .unwrap();
+    let data: serde_json::Value = serde_json::from_str(&output).unwrap();
+    for name in names {
+        assert_eq!(data[name], json!(std::env::var(name).ok()), "{name}");
+    }
+}
+
+#[tokio::test]
 async fn executable_rejects_bad_protocol_and_nonzero_exit() {
     for script in [
         "print('{\"protocol_version\":2,\"result\":\"false success\"}')",
