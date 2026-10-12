@@ -485,19 +485,21 @@ async fn clear_chat_view(
 /// the message history with the recent kept rows. Same logic as the
 /// WebSocket /compact command.
 async fn compact_messages(
-    State(state): State<Arc<DashboardState>>,
+    State(_state): State<Arc<DashboardState>>,
     Path(user_id): Path<String>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    let gw = crate::gateway::state_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+) -> axum::response::Response {
+    let Some(gw) = crate::gateway::state_ref() else {
+        return (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({"success":false,"error":"Gateway unavailable; history unchanged"}))).into_response();
+    };
     tracing::info!(user_id = %user_id, "[MESSAGES] compacting history");
     match crate::gateway::ws_handler::compact_history(gw, &user_id).await {
-        Ok(summary) => Ok(Json(serde_json::json!({
+        Ok(summary) => Json(serde_json::json!({
             "success": true,
             "summary": summary,
-        }))),
+        })).into_response(),
         Err(e) => {
             tracing::error!(user_id = %user_id, error = %e, "[MESSAGES] compact failed");
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"success":false,"error":format!("{}; history unchanged", e)}))).into_response()
         }
     }
 }

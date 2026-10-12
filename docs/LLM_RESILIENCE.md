@@ -25,6 +25,36 @@ Die Änderungen hier sind Quellcodeänderungen. Sie ersetzen weder die laufende 
 - Limiter gelten pro Router/Prozess und Endpoint-Origin/Zugang; konfigurierte Alias-Provider mit gleichem Origin und Key teilen denselben Gate. Alle Modelle dieses Zugangs teilen die Limits. Andere Praxis-Prozesse oder direkte Ollama-Clients werden **nicht** mitgezählt. Der bestehende eingehende HTTP-Limiter bleibt davon unabhängig.
 - Request-Limits verteilen Starts gleichmäßig, ohne große Bursts. Optionale TPM-Limits reservieren geschätzte Eingabe- plus maximale Ausgabetokens für jeden Versuch und gleichen mit tatsächlicher Usage ab, soweit vorhanden. Das ist eine Näherung, kein Modell-Tokenizer; Bilder werden pauschal geschätzt. Fehlgeschlagene Versuche behalten vorsichtshalber ihre Reservierung. Ein einzelner zu großer Request wird abgewiesen, statt endlos auf Tokenkapazität zu warten.
 
+### Compaction und llama.cpp-Kontextdruck
+
+`settings.compaction_enabled`, `settings.compaction_token_limit` und
+`settings.history_token_limit` sind im Dashboard unter Context → History &
+compaction editierbar. Explizite Schwellen werden nicht mehr auf die Hälfte des
+History-Budgets gekürzt. Auto-Compaction kann auf späteren Agent-Turns erneut
+laufen; derselbe fehlgeschlagene Prefix wird innerhalb der Aufgabe erst bei
+geändertem Prefix oder Settings erneut versucht. `/compact` erhält vollständige
+Turns und speichert Summary/History atomar; Fehlerantworten sind JSON.
+
+llama.cpp verwendet native `/props`, `/apply-template` und `/tokenize`, sofern
+verfügbar. `LLAMACPP_CONTEXT_SIZE` (mindestens 256) kann eine fehlende
+Kontextgrößenangabe ersetzen; es ist kein History-Limit. Fehlende Tokenizer-APIs
+werden nicht durch falsche Byte-als-Token-Ablehnungen ersetzt. Ein eindeutig als
+Kontextüberlauf erkanntes HTTP 400 erlaubt vor jeglicher Stream-Ausgabe genau
+einen zusätzlichen Completion-POST mit verkleinertem Request: ältere Turns und
+Tool-Previews werden reduziert, Ausgabe auf höchstens 128 Tokens begrenzt und
+die Persona nötigenfalls durch eine offen gekennzeichnete Minimalversion ersetzt.
+Mandatory Safe-Search-Policy bleibt erhalten. Dieser Adapter-interne zusätzliche
+POST liegt innerhalb des logischen Request-Zeitlimits, wird aber nicht als eigener
+Router-Rate-Limit-Versuch gezählt. Andere HTTP-400-Parameter-/Modellfehler werden
+nicht wiederholt; Tool-Effekte werden niemals erneut ausgeführt. Ein irreduzibel
+zu großer aktueller Turn oder eine zu große Pflicht-Policy endet weiter mit einem
+Kontextfehler, nicht mit heimlichem Abschneiden der Sicherheitsregeln.
+
+Thinking-/Tool-Vorschauen im Web sind separate, gelabelte Streaming-Nachrichten.
+Thinking benötigt `settings.show_thinking=true` (oder `/show_thinking on`);
+native Deltas liefert derzeit insbesondere llama.cpp, Ollama und Codex. Anbieter
+ohne solche Deltas können durch eine UI-Änderung kein Live-Thinking liefern.
+
 ### Streaming und Nebenwirkungen
 
 Automatische Wiederholung findet ausschließlich **unterhalb der Tool-Ausführung** statt. Bereits ausgeführte Terminalbefehle, Dateiänderungen und Uploads werden durch einen LLM-Retry nicht erneut ausgeführt. Im Gateway bleiben Assistant-Toolcalls und Tool-Ergebnisse in der vorhandenen SQLite-Historie; auch wegen Abbruch/Limit/Validierung übersprungene Agent-Tools erhalten einen gespeicherten Ergebnisdatensatz.

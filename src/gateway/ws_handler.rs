@@ -225,51 +225,18 @@ pub async fn compact_history(
     state: &crate::gateway::GatewayState,
     user_id: &str,
 ) -> anyhow::Result<String> {
-    let mut ctx = state.db.load_context(user_id)?;
-    let summary = crate::gateway::agent_loop::generate_compaction_summary(
-        state,
-        user_id,
-        ctx.settings.compaction_template.as_deref(),
-    )
-    .await?;
-    ctx.settings.compaction_enabled = true;
-    ctx.settings.compaction_summary = summary.clone();
-    state.db.save_context(&ctx)?;
-
-    let keep_budget = ctx.settings.history_token_limit.unwrap_or(32000) / 2;
-    if let Ok((recent, _)) = state
-        .db
-        .get_chat_messages_with_token_budget(user_id, keep_budget)
-    {
-        let mut valid_tool_call_ids: std::collections::HashSet<String> =
-            std::collections::HashSet::new();
-        for msg in &recent {
-            if let Some(ref tcs) = msg.tool_calls {
-                for tc in tcs {
-                    valid_tool_call_ids.insert(tc.id.clone());
-                }
-            }
-        }
-        let filtered: Vec<_> = recent
-            .into_iter()
-            .filter(|msg| {
-                if msg.is_discord_mirror() {
-                    true
-                } else if msg.role == "tool" {
-                    msg.tool_call_id
-                        .as_ref()
-                        .map(|id| valid_tool_call_ids.contains(id))
-                        .unwrap_or(false)
-                } else {
-                    true
-                }
-            })
-            .collect();
-
-        state.db.retain_chat_messages(user_id, &filtered)?;
-        tracing::info!(user_id = %user_id, kept = filtered.len(), "Manual compaction: kept recent messages, deleted older ones");
-    }
-
+    let _task = super::task_control::begin(user_id)?;
+    let ctx = state.db.load_context(user_id)?;
+    let (messages, _) = state.db.get_messages_with_token_budget(user_id, usize::MAX)?;
+    let Some(last_user) = messages.iter().rposition(|m| m.role == "user").filter(|index| *index > 0) else {
+        anyhow::bail!("No older complete turns to compact; the current turn is preserved");
+    };
+    super::safe_web_search::prepare(&state.db, &state.plugins, std::path::Path::new(&state.config.root_dir),
+        user_id, "Summarize earlier conversation turns without executing tools").await?;
+    let prefix = &messages[..last_user];
+    let summary = super::compaction::summarize(state, user_id, prefix,
+        &ctx.settings.compaction_summary, ctx.settings.compaction_template.as_deref()).await?;
+    state.db.commit_compaction(user_id, &ctx.session_id, &ctx.settings.compaction_summary, &summary, prefix)?;
     Ok(summary)
 }
 

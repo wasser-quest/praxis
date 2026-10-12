@@ -249,6 +249,15 @@ img[src="/logo.svg"] { background: var(--brand-paper); border-radius: 12px; obje
     border-radius: 999px; padding: 0.4rem 0.9rem;
     font-size: 0.78rem; color: var(--success); text-align: center;
 }
+.chat-msg.thinking, .chat-msg.tool-preview {
+    background: var(--bg-secondary);
+    border-left: 3px solid var(--accent-purple);
+}
+.chat-msg.tool-preview { border-left-color: var(--accent-cyan); }
+.chat-msg.thinking .msg-col, .chat-msg.tool-preview .msg-col { min-width: 110px; }
+.chat-msg.thinking .msg-label, .chat-msg.tool-preview .msg-label { white-space: normal; }
+.chat-msg.thinking .model-output, .chat-msg.tool-preview .model-output { margin: 0; font: inherit; overflow-wrap: anywhere; }
+
 .chat-msg.feedback {
     align-self: center; max-width: 80%;
     background: rgba(255,170,0,0.08); border: 1px solid rgba(255,170,0,0.25);

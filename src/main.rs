@@ -774,16 +774,17 @@ async fn run_services(
         tracing::warn!("This build has no Discord support; rebuild with the discord feature to enable the bot");
     }
     #[cfg(feature = "discord")]
-    if enable_discord && !minimal {
+    if praxis::channels::should_start_discord(&feature_plugins, enable_discord, minimal) {
         let discord_db = db.clone();
         let discord_secrets = secrets.clone();
+        let declared = feature_plugins.get("discord_service").expect("enabled package checked").secrets.clone();
         let discord_root = std::path::PathBuf::from(&config.root_dir);
         tokio::spawn(async move {
             // Scoped credentials: the channel receives only what it declares.
             let credentials = praxis::discord::host::DiscordCredentials {
-                bot_token: discord_secrets.discord_bot_token.clone(),
-                application_id: None,
-                elevenlabs_api_key: discord_secrets.elevenlabs_api_key.clone(),
+                bot_token: declared.iter().any(|key| key == "discord_bot_token").then(|| discord_secrets.discord_bot_token.clone()).flatten(),
+                application_id: std::env::var("DISCORD_APPLICATION_ID").ok(),
+                elevenlabs_api_key: declared.iter().any(|key| key == "elevenlabs_api_key").then(|| discord_secrets.elevenlabs_api_key.clone()).flatten(),
             };
             let host = match praxis::channels::KernelChannelHost::new(discord_db, discord_root) {
                 Ok(host) => std::sync::Arc::new(host),
@@ -796,7 +797,9 @@ async fn run_services(
                 tracing::error!("Discord error: {}", e);
             }
         });
-        tracing::info!("Discord bot starting...");
+        tracing::info!("Discord package starting...");
+    } else if enable_discord && !minimal {
+        tracing::info!("Discord package missing or disabled; no channel started");
     }
 
     if let Some(report) = change_report(std::path::Path::new(&config.root_dir)) {

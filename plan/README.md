@@ -53,8 +53,15 @@ optional workflow packs add assets rather than replacing the core interpreter.
   ship installable asset packs; `plugins/minimax_image` packages the MiniMax
   image provider; `crates/praxis-comfyui` and `crates/praxis-gpu-router` are
   provider crates with scoped settings; Discord and voice/audio compile behind
-  `discord`/`voice` with `serenity` optional. The channel ingress seam and the
-  Discord/voice package manifests remain.
+  `discord`/`voice` with `serenity` optional. Discord uses the `ChannelHost`
+  ingress seam. Native Discord startup now requires an installed, enabled
+  `discord_service` package and host consent (not minimal / `--no-discord`);
+  new bundled manifests default disabled. Its credentials are host-issued,
+  scoped to declared secrets, and its application ID is passed explicitly.
+  Enable with `praxis plugin enable discord_service`, then restart; disable
+  also requires restart in this native compatibility slice. Existing operator
+  manifests are preserved. Independent channel workers/hot shutdown, voice
+  package activation and independently installed chat providers remain open.
 - [ ] PR 7: minimal distribution, compatibility preset and dependency cleanup.
 - [x] PR 8a: lifecycle hooks (`allow|ask|deny`), staged install/uninstall,
   script hashing, install record and example plugins. See

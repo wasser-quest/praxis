@@ -2,10 +2,12 @@
 //! complete successful summary; failed inference never deletes conversation rows.
 use super::{GatewayState, llm::provider::{ChatMessage, ChatRequest, ThinkingMode}};
 use crate::db::messages::Message;
+use sha2::{Digest, Sha256};
 
 pub fn threshold(settings: &crate::db::contexts::ContextSettings) -> usize {
-    settings.compaction_token_limit.unwrap_or(8_000)
-        .min(settings.history_token_limit.unwrap_or(crate::db::messages::DEFAULT_HISTORY_TOKENS) / 2).max(1)
+    settings.compaction_token_limit.unwrap_or_else(||
+        8_000.min(settings.history_token_limit.unwrap_or(crate::db::messages::DEFAULT_HISTORY_TOKENS) / 2)
+    ).max(1)
 }
 
 pub async fn before_request(state: &GatewayState, user: &str) -> anyhow::Result<()> {
@@ -13,10 +15,12 @@ pub async fn before_request(state: &GatewayState, user: &str) -> anyhow::Result<
     if !ctx.settings.compaction_enabled { return Ok(()); }
     let (messages,tokens) = state.db.get_messages_with_token_budget(user,usize::MAX)?;
     let threshold = threshold(&ctx.settings);
-    if tokens <= threshold { return Ok(()); }
+    if tokens < threshold { return Ok(()); }
     let Some(last_user) = messages.iter().rposition(|m|m.role == "user").filter(|i|*i>0) else { return Ok(()) };
-    if !super::task_control::claim_compaction(user) { return Ok(()); }
     let prefix = &messages[..last_user];
+    let revision = format!("{}:{:x}", prefix.last().and_then(|m| m.id).unwrap_or(0), Sha256::digest(serde_json::to_vec(&ctx.settings)?));
+    if super::task_control::compaction_failed_for(user, &revision) { return Ok(()); }
+    let Some(_compaction) = super::task_control::acquire_compaction(user) else { return Ok(()); };
     compaction_event(state, &ctx, "running", tokens)?;
     crate::runtime::events::send(user,"feedback","Compacting older complete turns; keeping the current request and tool chain.");
     match summarize(state,user,prefix,&ctx.settings.compaction_summary,ctx.settings.compaction_template.as_deref()).await {
@@ -26,6 +30,7 @@ pub async fn before_request(state: &GatewayState, user: &str) -> anyhow::Result<
             crate::runtime::events::send(user,"feedback","Compaction saved: goal, key insights and handoff. Current turn and saved tool outputs preserved.");
         }
         Err(error) => {
+            super::task_control::mark_compaction_failed(user, revision);
             compaction_event(state, &ctx, "failed", tokens)?;
             tracing::warn!(user_id=user,error=%error,"Compaction failed; history unchanged");
             crate::runtime::events::send(user,"feedback","Auto-compaction failed; no history was deleted. Safe request budgeting remains active.");
@@ -79,4 +84,29 @@ pub async fn summarize(state:&GatewayState,user:&str,messages:&[Message],previou
     }
     anyhow::ensure!(!summary.trim().is_empty(),"No compaction summary");
     Ok(summary)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn explicit_threshold_is_not_silently_halved() {
+        let mut settings = crate::db::contexts::ContextSettings::default();
+        settings.history_token_limit = Some(12_000);
+        assert_eq!(super::threshold(&settings), 6_000);
+        settings.compaction_token_limit = Some(10_000);
+        assert_eq!(super::threshold(&settings), 10_000);
+    }
+
+    #[test]
+    fn compaction_admission_is_released_for_later_agent_turns() {
+        let user = format!("compact-{}", uuid::Uuid::new_v4());
+        let _task = super::super::task_control::begin(&user).unwrap();
+        let guard = super::super::task_control::acquire_compaction(&user).unwrap();
+        assert!(super::super::task_control::acquire_compaction(&user).is_none());
+        drop(guard);
+        assert!(super::super::task_control::acquire_compaction(&user).is_some());
+        super::super::task_control::mark_compaction_failed(&user, "prefix-1".into());
+        assert!(super::super::task_control::compaction_failed_for(&user, "prefix-1"));
+        assert!(!super::super::task_control::compaction_failed_for(&user, "prefix-2"));
+    }
 }

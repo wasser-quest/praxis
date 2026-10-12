@@ -233,6 +233,39 @@ impl LlamaCppProvider {
         body
     }
 
+    // Only retry confirmed context overflow, before any streaming output.
+    // Each retry changes the request; no tool is executed or replayed here.
+    async fn send_fitted(&self, body: &mut serde_json::Value, omitted: &mut bool) -> Result<reqwest::Response, ProviderError> {
+        for attempt in 0..2 {
+            let response = self.post_body(body).send().await.map_err(ProviderError::from_reqwest)?;
+            match super::http::checked(response).await {
+                Ok(response) => return Ok(response),
+                Err(error) if error.kind == super::error::ErrorKind::ContextWindow && attempt == 0 => {
+                    let mut changed = false;
+                    for _ in 0..1024 {
+                        if !budget::reduce(body) { break; }
+                        changed = true;
+                    }
+                    if !*omitted {
+                        if let Some(system) = body["messages"].as_array_mut().and_then(|messages| messages.iter_mut().find(|m| m["role"] == "system")) {
+                            system["content"] = crate::gateway::safe_web_search::budget_system(&budget::system_text(&system["content"]), budget::MINIMAL_SYSTEM).into();
+                            *omitted = true;
+                            changed = true;
+                        }
+                    }
+                    if body["max_tokens"].as_u64().is_some_and(|n| n > 128) {
+                        body["max_tokens"] = serde_json::json!(128);
+                        changed = true;
+                    }
+                    if changed { continue; }
+                    return Err(error);
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        Err(ProviderError::new(super::error::ErrorKind::ContextWindow))
+    }
+
     fn post_body(&self, body: &serde_json::Value) -> reqwest::RequestBuilder {
         let mut req = self.client.post(format!("{}/v1/chat/completions", self.base_url.trim_end_matches('/'))).json(body);
 
@@ -260,17 +293,17 @@ impl LlamaCppProvider {
 #[async_trait]
 impl LLMProvider for LlamaCppProvider {
     async fn chat_stream_events(&self, request: ChatRequest, on_delta: &(dyn Fn(StreamDelta) + Send + Sync)) -> Result<ChatResponse, ProviderError> {
-        let (mut body, omitted) = self.fit_body(self.request_body(request)).await?;
-        if omitted { on_delta(StreamDelta::TemplateOmitted); }
+        let (mut body, mut omitted) = self.fit_body(self.request_body(request)).await?;
         body["stream"] = serde_json::json!(true);
         body["stream_options"] = serde_json::json!({"include_usage":true});
-        let response = self.post_body(&body).send().await.map_err(super::error::ProviderError::from_reqwest)?;
+        let response = self.send_fitted(&mut body, &mut omitted).await?;
+        if omitted { on_delta(StreamDelta::TemplateOmitted); }
         stream::receive(response, on_delta).await
     }
 
     async fn chat(&self, request: ChatRequest) -> Result<ChatResponse, ProviderError> {
-        let (body, omitted) = self.fit_body(self.request_body(request)).await?;
-        let resp = self.post_body(&body).send().await.map_err(super::error::ProviderError::from_reqwest)?;
+        let (mut body, mut omitted) = self.fit_body(self.request_body(request)).await?;
+        let resp = self.send_fitted(&mut body, &mut omitted).await?;
         let data = super::http::json(resp).await?;
         let choice = &data["choices"][0];
         let message = &choice["message"];

@@ -20,6 +20,7 @@ struct TaskState {
     show_thinking: std::sync::atomic::AtomicBool,
     template_omitted: std::sync::atomic::AtomicBool,
     compaction_claimed: std::sync::atomic::AtomicBool,
+    compaction_failed: Mutex<Option<String>>,
     decision_entry_claimed: std::sync::atomic::AtomicBool,
 }
 struct RegistryPin {
@@ -51,6 +52,7 @@ pub fn begin(user: &str) -> anyhow::Result<TaskGuard> {
                 show_thinking: std::sync::atomic::AtomicBool::new(false),
                 template_omitted: std::sync::atomic::AtomicBool::new(false),
                 compaction_claimed: std::sync::atomic::AtomicBool::new(false),
+                compaction_failed: Mutex::new(None),
                 decision_entry_claimed: std::sync::atomic::AtomicBool::new(false),
             });
             entry.insert(state.clone());
@@ -218,6 +220,30 @@ pub fn claim_decision_entry(user: &str) -> bool {
             .swap(true, std::sync::atomic::Ordering::Relaxed)
     })
 }
+pub fn compaction_failed_for(user: &str, revision: &str) -> bool {
+    TASKS.get(user).is_some_and(|task| task.compaction_failed.lock().ok().is_some_and(|failed| failed.as_deref() == Some(revision)))
+}
+
+pub fn mark_compaction_failed(user: &str, revision: String) {
+    if let Some(task) = TASKS.get(user) {
+        if let Ok(mut failed) = task.compaction_failed.lock() { *failed = Some(revision); }
+    }
+}
+
+pub struct CompactionGuard { user: String, task: String }
+impl Drop for CompactionGuard {
+    fn drop(&mut self) {
+        if let Some(task) = TASKS.get(&self.user).filter(|task| task.id == self.task) {
+            task.compaction_claimed.store(false, std::sync::atomic::Ordering::Release);
+        }
+    }
+}
+
+pub fn acquire_compaction(user: &str) -> Option<CompactionGuard> {
+    let task = task_id(user)?;
+    claim_compaction(user).then(|| CompactionGuard { user: user.into(), task })
+}
+
 pub fn claim_compaction(user: &str) -> bool {
     TASKS.get(user).is_some_and(|task| {
         !task

@@ -18,7 +18,7 @@ pub fn limits(db: &Database, ctx: &Context) -> anyhow::Result<Value> {
     Ok(
         json!({"history_tokens_estimate":tokens,"history_limit":ctx.settings.history_token_limit.unwrap_or(crate::db::messages::DEFAULT_HISTORY_TOKENS),
         "compaction_enabled":ctx.settings.compaction_enabled,"compaction_threshold":threshold,
-        "compaction_due":ctx.settings.compaction_enabled && tokens > threshold && older_turns && !claimed,
+        "compaction_due":ctx.settings.compaction_enabled && tokens >= threshold && older_turns && !claimed,
         "compaction_attempted_this_task":claimed,
         "older_complete_turns":older_turns,"model_context_limit":null,"estimate":true}),
     )
@@ -162,8 +162,9 @@ mod tests {
         )
         .unwrap();
         let l = limits(&db, &ctx).unwrap();
-        assert_eq!(l["compaction_threshold"], 50);
+        assert_eq!(l["compaction_threshold"], 1000);
         assert_eq!(l["compaction_due"], false);
+        ctx.settings.compaction_token_limit = Some(50);
         db.add_message(
             "telemetry",
             &crate::db::messages::Message::assistant("done".into()),

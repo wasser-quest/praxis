@@ -82,7 +82,13 @@ pub fn payload_error(status: u16, data: &Value) -> ProviderError {
         .and_then(|s| u16::try_from(s).ok())
         .filter(|s| (400..=599).contains(s));
     let status = embedded_status.unwrap_or(status);
-    let kind = if matches!(code, "exceed_context_size_error" | "context_length_exceeded" | "context_window_exceeded") {
+    // Some llama.cpp versions/proxies use invalid_request_error with only a
+    // message describing overflow. Inspect it, but never expose it in errors.
+    let message = data.pointer("/error/message").and_then(Value::as_str).unwrap_or("").to_ascii_lowercase();
+    let context_overflow = status == 400 && ["exceeds the available context", "exceeds the context", "context size exceeded",
+        "context window exceeded", "context length exceeded", "too many tokens", "prompt is too long",
+        "n_keep is larger than n_ctx", "exceed_context_size"].iter().any(|phrase| message.contains(phrase));
+    let kind = if context_overflow || matches!(code, "exceed_context_size_error" | "context_length_exceeded" | "context_window_exceeded") {
         ErrorKind::ContextWindow
     } else if status == 402
         || matches!(

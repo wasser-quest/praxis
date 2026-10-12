@@ -273,7 +273,8 @@ fn draw_transcript(f: &mut Frame, app: &mut App, area: Rect) {
                 // Fold to a point, not to nothing: the reader keeps a preview of
                 // what the tool did and can expand the rest.
                 let content = match b {
-                    Bubble::Tool { content, .. } | Bubble::ToolResult { content, .. } => content.as_str(),
+                    Bubble::Tool { content, .. } => content.as_str(),
+                    Bubble::ToolResult { display, .. } => display.as_str(),
                     _ => "",
                 };
                 let total = content.split('\n').count();
@@ -1176,7 +1177,8 @@ mod tests {
         let (mut app, _dir) = dummy_app();
         app.show_sidebar = false;
         let raw = (0..12).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
-        app.transcript.push(Bubble::ToolResult {display: raw.clone(), name: "read".into(), content: raw});
+        let receipt = serde_json::json!({"output_id":"saved", "stdout":raw}).to_string();
+        app.transcript.push(Bubble::ToolResult {display: raw, name: "read".into(), content: receipt});
         app.folded_bubbles.insert(0);
         let mut terminal = Terminal::new(TestBackend::new(60, 22)).unwrap();
         terminal.draw(|f| draw(f, &mut app)).unwrap();

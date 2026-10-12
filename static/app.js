@@ -340,8 +340,10 @@ async function chatCompactCommand() {
     addChatMessage('system', '⏳ Compacting conversation…');
     try {
         const res = await apiFetch(`/api/messages/${encodeURIComponent(chatUserId)}/compact`, { method: 'POST' });
-        const data = await res.json();
-        if (data.error) { addChatMessage('feedback', '/compact failed: ' + data.error); return; }
+        const raw = await res.text();
+        let data;
+        try { data = raw ? JSON.parse(raw) : {}; } catch (_) { throw new Error(`Server returned a non-JSON response (HTTP ${res.status}); history unchanged`); }
+        if (!res.ok || data.error || data.success !== true) { addChatMessage('feedback', '/compact failed: ' + (data.error || `HTTP ${res.status}; history unchanged`)); return; }
         const summary = String(data.summary || '').slice(0, 400);
         addChatMessage('system', `✅ Compacted. Summary saved.\n${summary}`);
         await loadChatHistory();
@@ -963,8 +965,11 @@ function startChatStream() {
     let reasoningMsg = null;
     let reasoningText = '';
     let toolPreviews = new Map();
-    const previewText = (node, text) => {
+    const previewText = (node, text, label, live = true) => {
+        const header = node?.querySelector('.msg-label');
+        if (header && label) header.textContent = label;
         const el = node?.querySelector('.msg-content');
+        if (el) el.classList.toggle('stream-live', live);
         if (el) {
             let box = el.querySelector('pre.model-output');
             if (!box) { box = document.createElement('pre'); box.className = 'model-output'; box.style.whiteSpace = 'pre-wrap'; el.replaceChildren(box); }
@@ -982,8 +987,8 @@ function startChatStream() {
             try {
                 const text = JSON.parse(e.data).data || '';
                 reasoningText = event === 'reasoning' ? text : reasoningText + text;
-                if (!reasoningMsg) reasoningMsg = addChatMessage('feedback', 'Thinking');
-                previewText(reasoningMsg, 'Thinking\n' + reasoningText);
+                if (!reasoningMsg) reasoningMsg = addChatMessage('thinking', '');
+                previewText(reasoningMsg, reasoningText, 'Thinking · model reasoning', event !== 'reasoning');
             } catch (err) { console.error('[SSE reasoning]', err); }
         });
     }
@@ -993,16 +998,17 @@ function startChatStream() {
             const delta = JSON.parse(JSON.parse(e.data).data);
             let preview = toolPreviews.get(delta.index);
             if (!preview) {
-                preview = { name: '', args: '', node: addChatMessage('feedback', 'Tool call — generating, not executed') };
+                preview = { name: '', args: '', node: addChatMessage('tool-preview', '') };
                 toolPreviews.set(delta.index, preview);
             }
             preview.name += delta.name || ''; preview.args += delta.arguments || '';
-            previewText(preview.node, `Tool call — generating, not executed\n${preview.name}\n${preview.args}`);
+            previewText(preview.node, preview.args, `${preview.name || 'Tool call'} · generating, not executed`);
         } catch (err) { console.error('[SSE tool preview]', err); }
     });
     es.addEventListener('stream_end', () => {
         if (!current()) return;
-        for (const p of toolPreviews.values()) previewText(p.node, `Tool call — received; execution reported separately\n${p.name}\n${p.args}`);
+        if (reasoningMsg) previewText(reasoningMsg, reasoningText, 'Thinking · model reasoning', false);
+        for (const p of toolPreviews.values()) previewText(p.node, p.args, `${p.name || 'Tool call'} · received, not yet executed`, false);
     });
     es.addEventListener('generation', (e) => {
         if (!current()) return;
@@ -1035,7 +1041,10 @@ function startChatStream() {
         } catch (err) { console.error('[SSE usage error]', err); }
     });
     es.addEventListener('stream_abort', () => {
-        if (current()) for (const p of toolPreviews.values()) previewText(p.node, `Tool call — aborted, not executed\n${p.name}\n${p.args}`);
+        if (current()) {
+            if (reasoningMsg) previewText(reasoningMsg, reasoningText, 'Thinking · aborted generation', false);
+            for (const p of toolPreviews.values()) previewText(p.node, p.args, `${p.name || 'Tool call'} · aborted, not executed`, false);
+        }
         if (!current()) return;
         // A failed/cancelled generation is never a completed reply. Remove its
         // provisional bubble so a subsequent call cannot append duplicate text.
@@ -1628,6 +1637,11 @@ function addChatMessage(type, content, extra = null) {
             </div>
             <div class="msg-content markdown">${renderMarkdown(content)}</div>
         </div>`;
+    } else if (type === 'thinking' || type === 'tool-preview') {
+        div.innerHTML = `<div class="msg-row"><div class="msg-col">
+            <span class="msg-label">${type === 'thinking' ? 'Thinking · model reasoning' : 'Tool call · generating, not executed'}</span>
+            </div><div class="msg-content stream-live"></div></div>`;
+        div.querySelector('.msg-content').textContent = content;
     } else if (type === 'tool') {
         const args = extra || '';
         div.innerHTML = `<div class="msg-row">
@@ -2222,6 +2236,12 @@ async function viewContext(userId) {
                     <div class="data-item"><span class="name">Active State</span><span class="meta">${escapeHtml(ctx.active_state || '-')}</span></div>
                     <div class="data-item"><span class="name">Active Templates</span><span class="meta">${(ctx.active_templates || []).join(', ') || '-'}</span></div>
                 </div>
+                <h3>History &amp; compaction</h3>
+                <label><input type="checkbox" id="ctx-compaction-enabled" ${ctx.settings?.compaction_enabled ? 'checked' : ''}> Automatic compaction</label>
+                <label>Compact at (estimated tokens)<input type="number" id="ctx-compaction-limit" min="1" step="1" placeholder="Automatic default" value="${ctx.settings?.compaction_token_limit ?? ''}"></label>
+                <label>History context (estimated tokens)<input type="number" id="ctx-history-limit" min="1" step="1" placeholder="32000" value="${ctx.settings?.history_token_limit ?? ''}"></label>
+                <small>These are history budgets, not the model's full context window. The current tool chain and required safety policy are preserved.</small>
+                <button class="btn btn-primary" id="ctx-save-budgets">Save budgets</button>
                 <h3>Settings</h3><div class="data-list" style="margin-bottom:1rem;max-height:200px;overflow-y:auto">${settingsHtml}</div>
                 <h3>Custom Data</h3><div class="data-list" style="margin-bottom:1rem">${customDataHtml}</div>
                 <h3>SM Data</h3><div class="data-list" style="margin-bottom:1rem">${smDataHtml}</div>
@@ -2235,6 +2255,22 @@ async function viewContext(userId) {
                     <button class="btn btn-secondary" style="width:auto" id="ctx-cancel-btn">Cancel</button>
                 </div>
             </div>`);
+        document.getElementById('ctx-save-budgets').onclick = async () => {
+            try {
+                const readLimit = id => {
+                    const raw = document.getElementById(id).value.trim();
+                    if (!raw) return null;
+                    const n = Number(raw);
+                    if (!Number.isSafeInteger(n) || n < 1) throw new Error('Budgets must be positive whole token counts');
+                    return n;
+                };
+                const settings = { compaction_enabled: document.getElementById('ctx-compaction-enabled').checked,
+                    compaction_token_limit: readLimit('ctx-compaction-limit'), history_token_limit: readLimit('ctx-history-limit') };
+                const result = await apiFetch(`/api/contexts/${encodeURIComponent(userId)}`, { method: 'PUT', body: JSON.stringify({settings}) });
+                if (!result.ok) throw new Error('Could not save budgets: ' + await result.text());
+                viewContext(userId);
+            } catch (error) { alert(error.message); }
+        };
         document.getElementById('ctx-edit-btn').onclick = () => {
             document.getElementById('context-view-mode').style.display = 'none';
             document.getElementById('context-edit-mode').style.display = 'block';

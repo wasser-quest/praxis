@@ -80,7 +80,7 @@ pub(crate) fn reduce(body: &mut Value) -> bool {
     }
     false
 }
-fn system_text(content: &Value) -> String {
+pub(super) fn system_text(content: &Value) -> String {
     if let Some(text) = content.as_str() {
         return text.to_owned();
     }
@@ -101,16 +101,23 @@ impl LlamaCppProvider {
     }
     pub(super) async fn fit_body(&self, mut body: Value) -> anyhow::Result<(Value, bool)> {
         let props = self.budget_json("/props", None).await?;
-        let Some(ctx) = props.pointer("/default_generation_settings/n_ctx").and_then(Value::as_u64).filter(|n|*n>=256) else { return Ok((body, false)) };
+        let ctx = props.pointer("/default_generation_settings/n_ctx")
+            .or_else(|| props.get("n_ctx"))
+            .and_then(Value::as_u64).filter(|n| *n >= 256)
+            .or_else(|| std::env::var("LLAMACPP_CONTEXT_SIZE").ok()?.parse::<u64>().ok().filter(|n| *n >= 256));
+        let Some(ctx) = ctx else { return Ok((body, false)) };
         let output = body["max_tokens"].as_u64().filter(|n|*n>0).unwrap_or(4096).min(ctx/4).max(1);
         body["max_tokens"] = json!(output);
         let mut template_omitted = false;
-        for _ in 0..34 {
+        for _ in 0..1024 {
             let rendered = self.budget_json("/apply-template", Some(body.clone())).await?;
-            let Some(prompt) = rendered["prompt"].as_str() else { return Ok((body, template_omitted)) };
-            let tokens = self.budget_json("/tokenize", Some(json!({"content":prompt,"add_special":true,"parse_special":true}))).await?;
-            let Some(tokens) = tokens["tokens"].as_array() else { return Ok((body, template_omitted)) };
-            if (tokens.len() as u64).saturating_add(output).saturating_add(64) <= ctx { return Ok((body, template_omitted)); }
+            // Byte estimates are not token counts. A proxy lacking native
+            // preflight must reach send_fitted's confirmed-overflow recovery,
+            // not reject valid requests or discard policy on an estimate.
+            let Some(prompt) = rendered["prompt"].as_str() else { return Ok((body, template_omitted)); };
+            let tokenized = self.budget_json("/tokenize", Some(json!({"content":prompt,"add_special":true,"parse_special":true}))).await?;
+            let Some(tokens) = tokenized["tokens"].as_array().map(|tokens| tokens.len() as u64) else { return Ok((body, template_omitted)); };
+            if tokens.saturating_add(output).saturating_add(64) <= ctx { return Ok((body, template_omitted)); }
             if !reduce(&mut body) {
                 if !template_omitted {
                     if let Some(system) = body["messages"].as_array_mut().and_then(|messages| messages.iter_mut().find(|m|m["role"]=="system")) {
@@ -129,6 +136,31 @@ impl LlamaCppProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn proxy_context_overflow_recovers_before_output_without_dropping_policy() {
+        use crate::gateway::llm::provider::LLMProvider as _;
+        use wiremock::{Mock, MockServer, ResponseTemplate, matchers::{method, path}};
+        let server = MockServer::start().await;
+        Mock::given(method("POST")).and(path("/v1/chat/completions"))
+            .respond_with(|request: &wiremock::Request| {
+                let body: Value = serde_json::from_slice(&request.body).unwrap();
+                if body["messages"].as_array().unwrap().len() > 2 {
+                    ResponseTemplate::new(400).set_body_json(json!({"error":{"type":"invalid_request_error", "message":"prompt exceeds the available context size"}}))
+                } else {
+                    assert!(body["messages"][0]["content"].as_str().unwrap().contains("mandatory rules"));
+                    ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"content":"recovered"},"finish_reason":"stop"}]}))
+                }
+            }).mount(&server).await;
+        let provider = LlamaCppProvider::new(None, "test".into(), server.uri());
+        let policy = format!("persona{}mandatory rules{}", crate::gateway::safe_web_search::BEGIN, crate::gateway::safe_web_search::END);
+        let request = serde_json::from_value(json!({"messages":[
+            {"role":"system","content":policy}, {"role":"user","content":"old"},
+            {"role":"assistant","content":"reply"}, {"role":"user","content":"current"}], "max_tokens":128})).unwrap();
+        assert!(provider.chat(request).await.unwrap().content.unwrap().starts_with("recovered"));
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(requests.iter().filter(|r| r.url.path() == "/v1/chat/completions").count(), 2);
+    }
+
     #[test]
     fn structured_system_policy_survives_turn_reduction_and_fallback() {
         let policy = format!("{}mandatory rules{}", crate::gateway::safe_web_search::BEGIN, crate::gateway::safe_web_search::END);

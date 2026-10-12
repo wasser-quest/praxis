@@ -101,10 +101,7 @@ impl DiscordBot {
             .parse::<u64>()
             .context("DISCORD_APPLICATION_ID must be a number")?;
 
-        tracing::info!(
-            "Discord bot starting with token: {}...",
-            &token[..std::cmp::min(10, token.len())]
-        );
+        tracing::info!("Discord bot starting (legacy environment configuration)");
         self.start_with_token(&token, application_id).await
     }
 
@@ -416,13 +413,11 @@ pub async fn start_with_host(
         .bot_token
         .clone()
         .filter(|token| !token.trim().is_empty())
-        .or_else(|| std::env::var("DISCORD_BOT_TOKEN").ok())
-        .context("DISCORD_BOT_TOKEN not set. Run 'praxis onboard --interactive' to configure.")?;
+        .context("Discord package bot credential is missing; configure its scoped secret")?;
 
-    let application_id = std::env::var("DISCORD_APPLICATION_ID")
-        .context("DISCORD_APPLICATION_ID not set")?
-        .parse::<u64>()
-        .context("DISCORD_APPLICATION_ID must be a number")?;
+    let application_id = credentials.application_id.as_deref()
+        .context("Discord package application_id is missing; configure DISCORD_APPLICATION_ID in the host")?
+        .parse::<u64>().context("Discord package application_id must be a number")?;
 
     let bot = DiscordBot::new(host, Some(&gateway_url), credentials).await?;
     tracing::info!("Discord bot connecting...");

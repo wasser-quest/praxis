@@ -11,6 +11,16 @@ use serde_json::Value;
 use std::path::{Path, PathBuf};
 use tokio::sync::{broadcast, mpsc};
 
+#[cfg(test)]
+#[path = "channel_activation_tests.rs"]
+mod activation_tests;
+
+/// Native compatibility host: package presence and operator enablement own
+/// channel activation. A linked Discord crate alone grants no ingress.
+pub fn should_start_discord(plugins: &crate::plugins::PluginRegistry, requested: bool, minimal: bool) -> bool {
+    requested && !minimal && plugins.get("discord_service").is_some_and(|package| package.enabled)
+}
+
 pub struct KernelChannelHost {
     db: crate::db::Database,
     root: PathBuf,

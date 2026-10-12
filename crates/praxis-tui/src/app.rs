@@ -243,6 +243,8 @@ pub struct App {
 
     // Output folding state: indices of folded bubbles.
     pub folded_bubbles: std::collections::HashSet<usize>,
+    command_call_indices: std::collections::HashMap<String, usize>,
+    linked_tool_bubbles: std::collections::HashMap<usize, usize>,
     /// A folded bubble keeps its first `fold_preview` lines visible. Folding is
     /// a summary the reader can still scan, not a hiding.
     pub fold_preview: usize,
@@ -297,6 +299,8 @@ impl App {
             session_generation_ms: 0,
             last_response_usage: None,
             folded_bubbles: std::collections::HashSet::new(),
+            command_call_indices: std::collections::HashMap::new(),
+            linked_tool_bubbles: std::collections::HashMap::new(),
             fold_preview: DEFAULT_FOLD_PREVIEW,
             fold_auto: DEFAULT_FOLD_AUTO,
         }
@@ -367,6 +371,17 @@ impl App {
         let anchor = selection.mark.map(|(a, _)| a).unwrap_or(next);
         selection.cursor = next;
         selection.mark = Some((anchor.min(next), anchor.max(next)));
+    }
+
+    fn toggle_tool_fold(&mut self, index: usize) {
+        let folded = !self.folded_bubbles.contains(&index);
+        if !matches!(self.transcript.get(index), Some(Bubble::Tool { .. } | Bubble::ToolResult { .. })) { return; }
+        // Link authoritative call IDs, never neighboring tool names: tool-only
+        // model generations intentionally have no visible assistant bubble.
+        let paired = self.linked_tool_bubbles.get(&index).copied();
+        for i in std::iter::once(index).chain(paired) {
+            if folded { self.folded_bubbles.insert(i); } else { self.folded_bubbles.remove(&i); }
+        }
     }
 
     fn auto_fold(&mut self, index: usize, content: &str) {
@@ -537,6 +552,8 @@ impl App {
         self.session_generation_ms = 0;
         self.last_response_usage = None;
         self.folded_bubbles.clear();
+        self.command_call_indices.clear();
+        self.linked_tool_bubbles.clear();
     }
 
     /// Refresh the transcript from the gateway. Idempotent — uses `seen_keys`
@@ -566,6 +583,7 @@ impl App {
                 name: format!("{} — command", call.function.name),
                 content: content.clone(),
             });
+            self.command_call_indices.insert(call.id.clone(), index);
             self.auto_fold(index, &content);
         }
     }
@@ -641,9 +659,17 @@ impl App {
             if m.role == "assistant" { self.stream_history.push(self.transcript.len()); }
             let index = self.transcript.len();
             self.transcript.push(bubble);
+            if m.role == "tool" {
+                if let Some(command) = m.tool_call_id.as_ref().and_then(|id| self.command_call_indices.remove(id)) {
+                    self.linked_tool_bubbles.insert(command, index);
+                    self.linked_tool_bubbles.insert(index, command);
+                    if self.folded_bubbles.contains(&command) { self.folded_bubbles.insert(index); }
+                }
+            }
             if matches!(self.transcript[index], Bubble::Tool { .. } | Bubble::ToolResult { .. }) {
                 let content = match &self.transcript[index] {
-                    Bubble::Tool { content, .. } | Bubble::ToolResult { content, .. } => content.clone(),
+                    Bubble::Tool { content, .. } => content.clone(),
+                    Bubble::ToolResult { display, .. } => display.clone(),
                     _ => String::new(),
                 };
                 self.auto_fold(index, &content);
@@ -709,6 +735,9 @@ impl App {
                     self.flash(format!("clear failed: {e}"));
                 } else {
                     self.transcript.clear();
+                    self.folded_bubbles.clear();
+                    self.command_call_indices.clear();
+                    self.linked_tool_bubbles.clear();
                     self.copy_selection = None;
                     self.pending_clipboard = None;
                     self.seen_keys.clear();
@@ -869,11 +898,7 @@ impl App {
                         }
                     }
                 } else if let Ok(idx) = arg.parse::<usize>() {
-                    if self.folded_bubbles.contains(&idx) {
-                        self.folded_bubbles.remove(&idx);
-                    } else {
-                        self.folded_bubbles.insert(idx);
-                    }
+                    self.toggle_tool_fold(idx);
                 }
             }
             "/help" => {
@@ -1504,11 +1529,7 @@ async fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
                 _ => None,
             });
         if let Some(idx) = last_tool {
-            if app.folded_bubbles.contains(&idx) {
-                app.folded_bubbles.remove(&idx);
-            } else {
-                app.folded_bubbles.insert(idx);
-            }
+            app.toggle_tool_fold(idx);
         }
         return;
     }
@@ -2392,6 +2413,42 @@ mod tests {
         assert_eq!(app.fold_auto, 0);
         app.append_messages(vec![tool_result("read", 12)]);
         assert!(app.folded_bubbles.is_empty(), "auto-fold off keeps arriving results open");
+    }
+
+    #[test]
+    fn consecutive_tool_only_generations_with_reused_ids_fold_independently() {
+        let mut app = dummy_app();
+        let messages = serde_json::from_value(serde_json::json!([
+            {"id":1,"role":"assistant","content":"","tool_calls":[{"id":"reused","function":{"name":"execute_terminal","arguments":"{\"command\":\"one\"}"}}]},
+            {"id":2,"role":"tool","content":"output one","tool_name":"execute_terminal","tool_call_id":"reused"},
+            {"id":3,"role":"assistant","content":"","tool_calls":[{"id":"reused","function":{"name":"execute_terminal","arguments":"{\"command\":\"two\"}"}}]},
+            {"id":4,"role":"tool","content":"output two","tool_name":"execute_terminal","tool_call_id":"reused"}
+        ])).unwrap();
+        app.append_messages(messages);
+        assert_eq!(app.transcript.len(), 4);
+        app.toggle_tool_fold(0);
+        assert!(app.folded_bubbles.contains(&0) && app.folded_bubbles.contains(&1));
+        assert!(!app.folded_bubbles.contains(&2) && !app.folded_bubbles.contains(&3));
+    }
+
+    #[test]
+    fn folding_a_command_also_folds_its_output_but_not_other_turns() {
+        let mut app = dummy_app();
+        app.transcript = vec![
+            Bubble::Assistant { content: "calling".into() },
+            Bubble::Tool { name: "execute_terminal — command".into(), content: "ls".into() },
+            Bubble::ToolResult { name: "execute_terminal".into(), content: "receipt".into(), display: "output".into() },
+            Bubble::Assistant { content: "next turn".into() },
+            Bubble::ToolResult { name: "execute_terminal".into(), content: "other".into(), display: "other".into() },
+        ];
+        app.linked_tool_bubbles.insert(1, 2);
+        app.linked_tool_bubbles.insert(2, 1);
+        app.toggle_tool_fold(1);
+        assert!(app.folded_bubbles.contains(&1));
+        assert!(app.folded_bubbles.contains(&2));
+        assert!(!app.folded_bubbles.contains(&4));
+        app.toggle_tool_fold(2);
+        assert!(app.folded_bubbles.is_empty());
     }
 
     #[tokio::test]
