@@ -3697,6 +3697,7 @@ dependencies = [
  "praxis-gpu-router",
  "praxis-legacy-file-ops",
  "praxis-plugin-api",
+ "praxis-provider-anthropic",
  "praxis-provider-api",
  "praxis-provider-http",
  "praxis-provider-ollama",
@@ -3838,6 +3839,20 @@ dependencies = [
  "tokio",
  "tokio-util",
  "uuid",
+]
+
+[[package]]
+name = "praxis-provider-anthropic"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "praxis-provider-api",
+ "praxis-provider-http",
+ "reqwest",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "wiremock",
 ]
 
 [[package]]

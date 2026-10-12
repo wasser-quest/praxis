@@ -41,6 +41,26 @@ validation. A running filesystem syscall cannot itself be cancelled, and final
 authorization-to-exec remains a race. Additional routing and cleanup checkpoints
 below describe the implemented slice; full PR6 acceptance remains outstanding.
 
+## Current provider scope
+
+Operator-selected migration scope is OpenAI and Anthropic for now. Further chat
+provider migrations are deferred; the already implemented Ollama package remains
+available. This narrows provider coverage, not a claim that every channel/media
+or provider-operation requirement in the original PR6 plan is complete.
+
+## Independent Anthropic package checkpoint
+
+`crates/praxis-provider-anthropic` now contains the extracted adapter and an
+authenticated one-shot worker. The native facade preserves Praxis attribution
+and APIs. Checked private-pipe credential grants precede provider construction;
+validated arguments never carry secrets. Compiled-worker fixtures cover bounded
+JSON, model/system/tool/output-limit forwarding, usage, scoped grants and safe
+errors without retries. Unsupported model-list/embedding operations are not
+advertised. Package validation: 12 tests, strict all-targets Clippy; focused
+core-only native validation: six branding and eight Anthropic tests. Main repeated
+package tests and the full ordinary root suite: **1019 passed, 53 ignored**.
+This addition is not full PR6 completion.
+
 ## Latest combined validation
 
 The offline real-POML message-loop acceptance suites now pass: **24 core-only**
