@@ -142,6 +142,39 @@ To enable inference, use `/login ollama <api_base> <model>` and select
 selected default provider. The management test suite uses temporary local assets,
 empty plugin registries and synthetic providers; it makes no paid inference calls.
 
+## Confainment, and what it does not deny
+
+Plugin scripts and shell commands run through `praxis_sandbox::Sandbox::from_env()`
+with the filter installed in `pre_exec` (`src/plugins/mod.rs`,
+`crates/praxis-shell/src/lib.rs`). What is actually applied in the child:
+
+* resource limits — `RLIMIT_AS` (1 GiB default), `RLIMIT_CPU`, `RLIMIT_NOFILE`,
+  `RLIMIT_FSIZE`, `RLIMIT_NPROC`, all operator-set via `PRAXIS_SANDBOX_*` and never
+  widen-able by a tool argument;
+* `no_new_privs` plus a syscall deny-list (kernel control, cross-process
+  observation, identity change, installing a wider filter);
+* optional landlock write dirs (`PRAXIS_SANDBOX_WRITE_DIRS`; empty means no
+  ruleset).
+
+**There is no network namespace isolation.** A confined plugin can still open a
+socket to any host, including the operator's own services and link-local metadata
+addresses. So the correct claim about a plugin such as `brave_search` is *"the
+plugin does not fetch pages, retry, or follow redirects"* — plugin policy plus
+declared limits — not *"it cannot"*. Where a plugin reports a limit, it must say
+which kind it is: the Brave plugin's `trust.limits` block declares
+`network_reach_denied_by_sandbox: false` rather than implying a denial. Network
+reach is closed only by an actual network policy (a namespace, an outbound proxy,
+or a landlock/seccomp rule set that refuses sockets), which is not currently
+implemented.
+
+The same distinction applies to name-based handling: the Brave plugin drops result
+URLs whose host is an IP literal in a private range **or** a nonpublic name
+(`.local`, `.internal`, `.selfhosted`, `.onion`, `.test`, `.lan`, `.home.arpa`,
+single labels), extendable by the operator through `BRAVE_SEARCH_NONPUBLIC_HOSTS`.
+That is a reported policy shown in `trust.nonpublic_policy`; a name can still
+resolve, so the drop is a refusal to return data, not a guarantee that the host is
+unreachable.
+
 ## Compatibility and remaining work
 
 Most current native tools remain. The shared boundary does not yet reduce them
