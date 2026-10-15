@@ -1,6 +1,6 @@
 //! Exact llama.cpp request preflight. Durable tool snapshots remain untouched.
 use crate::reduction::MAX_PASSES;
-use crate::{error::{ErrorKind, ProviderError}, http, reduction};
+use crate::{error::{ErrorKind, ProviderError}, reduction};
 use serde_json::{json, Value};
 
 pub(crate) use crate::reduction::MINIMAL_SYSTEM;
@@ -21,12 +21,13 @@ impl crate::adapter::LlamaCppProvider {
             Some(key) => request.bearer_auth(key),
             None => request,
         };
-        let response = request.send().await.map_err(ProviderError::from_reqwest)?;
-        // Older OpenAI-compatible servers don't expose native tokenization.
-        if matches!(response.status().as_u16(), 404 | 405) {
+        // The preflight is best effort: older or proxied servers lack these
+        // endpoints, and a failed or oversized probe must not block the chat
+        // call, which reports real errors itself.
+        let Ok(response) = request.send().await else {
             return Ok(Value::Null);
-        }
-        Ok(http::json(response).await?)
+        };
+        Ok(crate::errors::json(response).await.unwrap_or(Value::Null))
     }
 
     pub(crate) async fn fit_body(&self, mut body: Value) -> Result<(Value, bool), ProviderError> {

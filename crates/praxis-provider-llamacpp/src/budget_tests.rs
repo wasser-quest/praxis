@@ -1,5 +1,4 @@
 use crate::adapter::LlamaCppProvider;
-use crate::budget::MIN_CONTEXT;
 use serde_json::json;
 use wiremock::{
     matchers::{method, path},

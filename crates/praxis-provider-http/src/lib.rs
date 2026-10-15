@@ -202,7 +202,15 @@ pub fn payload_error(status: u16, data: &Value) -> ProviderError {
     }
 }
 
-pub async fn checked(mut response: Response) -> Result<Response, ProviderError> {
+pub async fn checked(response: Response) -> Result<Response, ProviderError> {
+    checked_with(response, payload_error).await
+}
+
+/// Error payload classifier: HTTP status plus the bounded, parsed body.
+pub type Classify = fn(u16, &Value) -> ProviderError;
+
+/// `checked` with a provider-specific classifier for error bodies.
+pub async fn checked_with(mut response: Response, classify: Classify) -> Result<Response, ProviderError> {
     if response.status().is_success() {
         return Ok(response);
     }
@@ -223,7 +231,7 @@ pub async fn checked(mut response: Response) -> Result<Response, ProviderError> 
     })
     .await;
     let data = serde_json::from_slice(&body).unwrap_or(Value::Null);
-    let mut error = payload_error(status, &data);
+    let mut error = classify(status, &data);
     metadata(&headers, &mut error);
     Err(error)
 }
@@ -231,7 +239,13 @@ pub async fn checked(mut response: Response) -> Result<Response, ProviderError> 
 pub const MAX_JSON_BYTES: usize = 16 * 1024 * 1024;
 
 pub async fn json(response: Response) -> Result<Value, ProviderError> {
-    let mut response = checked(response).await?;
+    json_with(response, payload_error).await
+}
+
+/// `json` with a provider-specific classifier for error bodies, including
+/// in-band errors returned with a success status.
+pub async fn json_with(response: Response, classify: Classify) -> Result<Value, ProviderError> {
+    let mut response = checked_with(response, classify).await?;
     let status = response.status().as_u16();
     let headers = response.headers().clone();
     if response
@@ -259,7 +273,7 @@ pub async fn json(response: Response) -> Result<Value, ProviderError> {
             .and_then(Value::as_u64)
             .is_some_and(|code| code != 0)
     {
-        let mut error = payload_error(status, &data);
+        let mut error = classify(status, &data);
         metadata(&headers, &mut error);
         return Err(error);
     }

@@ -1,7 +1,7 @@
 //! Native OpenAI/llama.cpp SSE. Tool fragments are previews, not executable calls.
 use crate::{
     error::{ErrorKind, ProviderError},
-    http, provider::*, sse,
+    provider::*, sse,
 };
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -26,7 +26,7 @@ impl Accumulator {
         on_delta: &(dyn Fn(StreamDelta) + Send + Sync),
     ) -> Result<(), ProviderError> {
         if data.get("error").is_some() {
-            return Err(http::payload_error(200, data));
+            return Err(crate::errors::classify(200, data));
         }
         if let Some(usage) = data.get("usage").filter(|usage| usage.is_object()) {
             self.usage = Usage::openai(usage);
@@ -105,7 +105,7 @@ pub(crate) async fn receive(
     response: reqwest::Response,
     on_delta: &(dyn Fn(StreamDelta) + Send + Sync),
 ) -> Result<ChatResponse, ProviderError> {
-    let mut response = http::checked(response).await?;
+    let mut response = crate::errors::checked(response).await?;
     let mut decoder = sse::Decoder::default();
     let mut acc = Accumulator::default();
     let mut done = false;

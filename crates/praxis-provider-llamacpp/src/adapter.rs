@@ -6,7 +6,7 @@
 //! so users can select it explicitly with `PRAXIS_REGISTRY_CHAT_PROVIDER=llamacpp`.
 use crate::{
     error::{ErrorKind, ProviderError},
-    http, provider::*, reduction, stream,
+    errors, provider::*, reduction, stream,
 };
 use async_trait::async_trait;
 use serde_json::Value;
@@ -24,7 +24,7 @@ impl LlamaCppProvider {
             api_key,
             model,
             base_url,
-            client: http::client(),
+            client: crate::http::client(),
         }
     }
 
@@ -175,48 +175,51 @@ impl LlamaCppProvider {
 
     /// Only retry confirmed context overflow, before any streaming output.
     /// Each retry changes the request; no tool is executed or replayed here.
+    /// First the history is reduced (snapshots previewed, old turns dropped);
+    /// only if that is not enough is the persona replaced by the minimal
+    /// system and the output capped.
     async fn send_fitted(
         &self,
         body: &mut Value,
         omitted: &mut bool,
     ) -> Result<reqwest::Response, ProviderError> {
-        for attempt in 0..2 {
+        let mut reduced = false;
+        loop {
             let response = self.post_body(body).send().await.map_err(ProviderError::from_reqwest)?;
-            match http::checked(response).await {
+            let error = match errors::checked(response).await {
                 Ok(response) => return Ok(response),
-                Err(error) if error.kind == ErrorKind::ContextWindow && attempt == 0 => {
-                    let mut changed = false;
-                    for _ in 0..reduction::MAX_PASSES {
-                        if !reduction::reduce(body) {
-                            break;
-                        }
-                        changed = true;
-                    }
-                    if !*omitted {
-                        if let Some(system) = body["messages"]
-                            .as_array_mut()
-                            .and_then(|messages| messages.iter_mut().find(|message| message["role"] == "system"))
-                        {
-                            system["content"] =
-                                reduction::budget_system(&reduction::system_text(&system["content"]), reduction::MINIMAL_SYSTEM)
-                                    .into();
-                            *omitted = true;
-                            changed = true;
-                        }
-                    }
-                    if body["max_tokens"].as_u64().is_some_and(|n| n > 128) {
-                        body["max_tokens"] = serde_json::json!(128);
-                        changed = true;
-                    }
-                    if changed {
-                        continue;
-                    }
-                    return Err(error);
-                }
+                Err(error) if error.kind == ErrorKind::ContextWindow => error,
                 Err(error) => return Err(error),
+            };
+            if !reduced {
+                reduced = true;
+                let mut changed = false;
+                for _ in 0..reduction::MAX_PASSES {
+                    if !reduction::reduce(body) {
+                        break;
+                    }
+                    changed = true;
+                }
+                if changed {
+                    continue;
+                }
+            }
+            if *omitted {
+                return Err(error);
+            }
+            let Some(system) = body["messages"]
+                .as_array_mut()
+                .and_then(|messages| messages.iter_mut().find(|message| message["role"] == "system"))
+            else {
+                return Err(error);
+            };
+            system["content"] =
+                reduction::budget_system(&reduction::system_text(&system["content"]), reduction::MINIMAL_SYSTEM).into();
+            *omitted = true;
+            if body["max_tokens"].as_u64().is_some_and(|n| n > 128) {
+                body["max_tokens"] = serde_json::json!(128);
             }
         }
-        Err(ProviderError::new(ErrorKind::ContextWindow))
     }
 
     fn post_body(&self, body: &Value) -> reqwest::RequestBuilder {
@@ -254,7 +257,7 @@ impl crate::provider::LLMProvider for LlamaCppProvider {
     async fn chat(&self, request: ChatRequest) -> Result<ChatResponse, ProviderError> {
         let (mut body, mut omitted) = self.fit_body(self.request_body(request)).await?;
         let response = self.send_fitted(&mut body, &mut omitted).await?;
-        let data = http::json(response).await?;
+        let data = errors::json(response).await?;
         let choice = &data["choices"][0];
         let message = &choice["message"];
 
@@ -297,8 +300,8 @@ impl crate::provider::LLMProvider for LlamaCppProvider {
             None => self.client.get(&url),
         };
         let response = request.send().await.map_err(ProviderError::from_reqwest)?;
-        let response = http::checked(response).await?;
-        let data = http::json(response).await?;
+        let response = errors::checked(response).await?;
+        let data = errors::json(response).await?;
         let mut models: Vec<ModelInfo> = data["data"]
             .as_array()
             .into_iter()

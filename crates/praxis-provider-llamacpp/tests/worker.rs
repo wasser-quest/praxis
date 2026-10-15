@@ -259,11 +259,7 @@ async fn compiled_worker_bounds_shared_props_json_and_sse_frames() {
     let error = provider_error(invoke(&server, None, &Mutex::new(vec![])).await.unwrap_err());
     assert_eq!(error.kind, praxis_provider_api::ErrorKind::InvalidResponse);
     let requests = server.received_requests().await.unwrap();
+    // props + chat only: the oversized probe is ignored, not retried, and no
+    // template/tokenize preflight is built on it.
     assert_eq!(requests.len(), 2);
-    let body = requests
-        .iter()
-        .find(|request| request.method == "POST")
-        .unwrap()
-        .body_json::<serde_json::Value>();
-    assert!(body.is_err(), "oversized probe is ignored, never parsed or retried");
 }

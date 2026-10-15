@@ -1,6 +1,7 @@
 //! llama.cpp server adapter independent of the kernel, routing, channels and media.
 mod adapter;
 mod budget;
+mod errors;
 mod reduction;
 mod sse;
 mod stream;

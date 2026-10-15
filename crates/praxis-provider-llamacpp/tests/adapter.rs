@@ -79,16 +79,26 @@ async fn exact_preflight_caps_output_and_reports_template_omission() {
         .expect(1)
         .mount(&server)
         .await;
+    // The "rendered prompt" is the system text, so the token count below
+    // depends on whether the persona or the minimal system is being sent.
     Mock::given(method("POST"))
         .and(path("/prefix/apply-template"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"prompt": "rendered"})))
+        .respond_with(|request: &wiremock::Request| {
+            let body = request.body_json::<serde_json::Value>().unwrap();
+            ResponseTemplate::new(200).set_body_json(json!({"prompt": body["messages"][0]["content"]}))
+        })
         .mount(&server)
         .await;
     Mock::given(method("POST"))
         .and(path("/prefix/tokenize"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(
-            json!({"tokens": (0..900).collect::<Vec<u64>>(), "PRIVATE": "x".repeat(2048)}),
-        ))
+        .respond_with(|request: &wiremock::Request| {
+            let body = request.body_json::<serde_json::Value>().unwrap();
+            let minimal = body["content"].as_str().unwrap().contains("could not fit");
+            let count = if minimal { 100 } else { 900 };
+            ResponseTemplate::new(200).set_body_json(
+                json!({"tokens": (0..count).collect::<Vec<u64>>(), "PRIVATE": "x".repeat(2048)}),
+            )
+        })
         .mount(&server)
         .await;
     Mock::given(method("POST"))
@@ -101,7 +111,10 @@ async fn exact_preflight_caps_output_and_reports_template_omission() {
         .await;
     let provider =
         LlamaCppProvider::new(None, "fixture".into(), format!("{}/prefix", server.uri()));
-    let response = provider.chat(request()).await.unwrap();
+    let mut request = request();
+    request.max_tokens = Some(4096);
+    request.messages = vec![serde_json::from_value(json!({"role": "system", "content": "persona"})).unwrap()];
+    let response = provider.chat(request).await.unwrap();
     // 900 tokens + output + margin > 1024, so the ladder ran; output is capped
     // to n_ctx/4 and the minimal system replaced the persona.
     let calls = server.received_requests().await.unwrap();
@@ -116,7 +129,8 @@ async fn exact_preflight_caps_output_and_reports_template_omission() {
         .unwrap()
         .contains("could not fit"));
     assert!(response.content.as_deref().unwrap().contains("--template not rendered context to big--"));
-    assert_eq!(calls.iter().filter(|call| call.url.path().ends_with("/tokenize")).count(), 1);
+    // One measurement of the full request, one of the reduced request.
+    assert_eq!(calls.iter().filter(|call| call.url.path().ends_with("/tokenize")).count(), 2);
 }
 
 #[tokio::test]
@@ -181,17 +195,12 @@ async fn anonymous_worker_path_sends_no_authorization_and_bounded_json_only() {
     let error = provider.chat(request()).await.unwrap_err();
     assert_eq!(error.kind, ErrorKind::InvalidResponse);
     let calls = server.received_requests().await.unwrap();
+    // props + chat only: the oversized probe is ignored, not retried, and no
+    // template/tokenize preflight is built on it.
     assert_eq!(calls.len(), 2);
     for call in &calls {
         assert!(!call.headers.contains_key("authorization"));
     }
-    // Oversized probe is ignored, never parsed or retried.
-    let body = calls
-        .iter()
-        .find(|call| call.method == "POST")
-        .unwrap()
-        .body_json::<serde_json::Value>();
-    assert!(body.is_err(), "oversized payload is not parsed as JSON");
 }
 
 #[tokio::test]
