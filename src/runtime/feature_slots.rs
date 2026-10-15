@@ -1,13 +1,31 @@
-//! Registered feature navigation/page slots.
+//! Registered feature navigation/page slots and built-in feature pages.
 //!
-//! A slot names a feature that can contribute a dashboard page. It exists so a
-//! client can explain how to obtain a page it cannot show right now, instead of
-//! silently hiding the feature. A registration is only a title and a hint: it
-//! grants no authority and, crucially, listing slots never starts, initializes
-//! or contacts a feature service just to draw UI.
+//! A slot names a feature that can contribute a dashboard page. The dashboard
+//! shows only what is active: a slot without a live contribution and a built-in
+//! page whose package is disabled or not compiled in are left out of the
+//! navigation. `praxis plugin list` / `praxis plugin builtins` explain how to get
+//! them. A registration is only a title and a hint: it grants no authority and,
+//! crucially, listing slots never starts, initializes or contacts a feature
+//! service just to draw UI.
 use crate::plugins::PluginRegistry;
 use serde::Serialize;
 use std::collections::BTreeMap;
+use std::path::Path;
+
+/// Built-in dashboard pages that belong to an optional feature, and whether
+/// that feature is active right now. A page that is `false` is hidden.
+pub fn builtin_pages(plugins: &PluginRegistry, data_dir: &Path) -> BTreeMap<&'static str, bool> {
+    let package = |id| crate::tools::packages::enabled(data_dir, id).unwrap_or(true);
+    BTreeMap::from([
+        ("memory", package("memory")),
+        ("cron-jobs", package("cron")),
+        (
+            "pairings",
+            cfg!(feature = "discord") && plugins.get("discord_service").is_some_and(|package| package.enabled),
+        ),
+        ("voice", cfg!(feature = "voice")),
+    ])
+}
 
 /// A first-party feature package that ships (or can be installed) with its own
 /// page. Slots are reported whether or not a live contribution backs them.
@@ -225,5 +243,19 @@ mod tests {
             .unwrap();
         let slots = feature_slots(&plugins);
         assert!(slots.iter().any(|slot| slot.id == "ext" && !slot.present));
+    }
+
+    #[test]
+    fn builtin_pages_follow_package_switches() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugins = PluginRegistry::new();
+        let pages = builtin_pages(&plugins, dir.path());
+        assert_eq!(pages["memory"], true, "packages default to enabled");
+        assert_eq!(pages["pairings"], false, "no discord_service package installed");
+        crate::tools::packages::set(dir.path(), "memory", false).unwrap();
+        crate::tools::packages::set(dir.path(), "cron", false).unwrap();
+        let pages = builtin_pages(&plugins, dir.path());
+        assert_eq!((pages["memory"], pages["cron-jobs"]), (false, false));
+        assert_eq!(pages["voice"], cfg!(feature = "voice"));
     }
 }

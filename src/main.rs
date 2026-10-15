@@ -733,6 +733,11 @@ async fn run_services(
     config.apply_secrets(&secrets);
     config.ensure_generated();
     config.validate()?;
+    // `--minimal` and PRAXIS_MINIMAL mean the same kernel: file tools and
+    // plugin management only, no dashboard, channel, VM, shell, cron or engine.
+    config.minimal |= minimal;
+    let minimal = config.minimal;
+    let enable_dashboard = enable_dashboard && !minimal;
     let workspace = config.workspace_root()?;
     tracing::info!(root = %workspace.display(), "Verified action workspace selected");
     // Management starts with incomplete provider setup. Actual chat/agent entry

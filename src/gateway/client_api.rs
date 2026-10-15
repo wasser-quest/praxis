@@ -17,6 +17,39 @@ pub fn routes() -> Router<GatewayState> {
         .route("/v1/providers", axum::routing::get(providers))
         .route("/v1/providers/login", axum::routing::post(login))
         .route("/v1/graphs/:user", axum::routing::get(graph))
+        .route("/v1/terminal", axum::routing::get(terminal))
+        .route("/v1/terminal/:user/status/:plugin", axum::routing::post(terminal_status))
+        .route("/v1/terminal/:user/command/:name", axum::routing::post(terminal_command))
+}
+/// Status lines and `/` commands that enabled packages add to the TUI.
+async fn terminal(State(s): State<GatewayState>) -> Json<Value> {
+    Json(crate::plugins::terminal::listing(&s.plugins.list()))
+}
+async fn terminal_status(State(s): State<GatewayState>, Path((user, plugin)): Path<(String, String)>) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let plugins = s.plugins.list();
+    let tool = crate::plugins::terminal::status_tool(&plugins, &plugin)
+        .ok_or_else(|| (StatusCode::NOT_FOUND, Json(json!({"error": "no status line for this package"}))))?;
+    let text = run_terminal_tool(&s, &user, tool, json!({})).await?;
+    Ok(Json(json!({"plugin": plugin, "text": crate::plugins::terminal::status_line(&text)})))
+}
+#[derive(serde::Deserialize, Default)]
+struct TerminalInput { #[serde(default)] text: String }
+async fn terminal_command(State(s): State<GatewayState>, Path((user, name)): Path<(String, String)>, body: Option<Json<TerminalInput>>) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let plugins = s.plugins.list();
+    let (plugin, tool) = crate::plugins::terminal::command_tool(&plugins, &name)
+        .ok_or_else(|| (StatusCode::NOT_FOUND, Json(json!({"error": format!("unknown terminal command '/{name}'")}))))?;
+    let input = body.map(|Json(input)| input).unwrap_or_default();
+    let text = run_terminal_tool(&s, &user, tool, json!({"text": input.text})).await?;
+    Ok(Json(json!({"plugin": plugin, "text": crate::plugins::terminal::sanitize(&text, crate::plugins::terminal::MAX_OUTPUT_BYTES)})))
+}
+/// Same path as a model-requested call of the package's tool: catalog owner,
+/// enable switches, declared secrets and the package's sandbox all apply.
+async fn run_terminal_tool(s: &GatewayState, user: &str, tool: &str, args: Value) -> Result<String, (StatusCode, Json<Value>)> {
+    let call = format!("terminal-{}", uuid::Uuid::new_v4().simple());
+    super::tool_dispatch::invoke_guest(&s.plugins, &s.db, user, &call, tool, &args)
+        .await
+        .map(|output| crate::plugins::terminal::result_text(&output))
+        .map_err(|error| (StatusCode::BAD_REQUEST, Json(json!({"error": error.to_string()}))))
 }
 /// Models the selected provider can serve. Listing never selects a provider.
 async fn models(State(s): State<GatewayState>, axum::extract::Query(query): axum::extract::Query<std::collections::HashMap<String, String>>) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
@@ -136,3 +169,7 @@ async fn exec(State(s):State<GatewayState>, Json(command):Json<Command>) -> Resu
     let op=crate::context_cmd::parse(&command.line).map_err(|_|StatusCode::BAD_REQUEST)?;
     Ok(Json(json!({"result":crate::context_cmd::apply(&s.db,&command.user_id,&op)})))
 }
+
+#[cfg(test)]
+#[path = "terminal_tests.rs"]
+mod terminal_tests;

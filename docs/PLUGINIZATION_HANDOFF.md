@@ -134,7 +134,7 @@ Handlers: `builtin`, `http`, `script`, `executable`, `verification`,
 * Host services extracted (`src/services`), Host API v1, feature page slots.
 * Standard dashboard package (`crates/praxis-dashboard`,
   `plugins/dashboard`, `praxis plugin install --build ./plugins/dashboard`).
-* Open: navigation slots for absent features; remove the builtin dashboard
+* Inactive features are hidden from the navigation (§5.8). Open: remove the builtin dashboard
   after a release.
 
 ### PR 5 — tool packages and lifecycle (the bulk of this session)
@@ -268,13 +268,15 @@ Praxis CLI, and writes a MOTD of required changes. The kernel does not link it.
 A feature that can contribute a dashboard page has a **registered slot**
 (`runtime::feature_slots`). A slot is only a title plus a hint: it grants no
 authority and never starts a service. The extension list reports every slot as
-`present` or `hint`ed, covering three sources — a live web binding, an installed
-package whose service is not ready (hint names the service), and a first-party
-feature that is not installed (hint says how to install it). The dashboard then
-keeps the navigation entry instead of hiding the feature and shows the hint
-panel; no page, script or stylesheet is fetched for an absent slot. So “absent”
-means *explained*, never *silently missing*, and drawing the UI never boots a
-VM/media service.
+`present` or not, plus `pages`: the built-in pages that belong to an optional
+feature (`memory`, `cron-jobs`, `pairings`, `voice`) and whether that feature is
+active (package switch, installed channel package, compiled feature).
+
+The dashboard shows **only what is active**: a slot without a live
+contribution gets no navigation entry, and a built-in page or control of an
+inactive feature is hidden. How to get a missing feature is explained by
+`praxis plugin list` and `praxis plugin builtins`, not by placeholder pages.
+Drawing the UI never boots a VM/media service.
 
 ### 5.9 Privileged bundled packages
 
@@ -450,16 +452,20 @@ no VM/UI/media.
   `image`, audio, TLS) after their packages move out.
   Progress: `ratatui`/`crossterm`/`unicode-segmentation` left the kernel with
   the TUI crate, and `serenity` is optional with `songbird`/`whisper-rs`/`vosk`:
-  `cargo tree --no-default-features -p praxis` lists none of them. `image`,
-  audio and TLS follow their providers.
+  `cargo tree --no-default-features -p praxis` lists none of them. `image`
+  is now a dev-dependency only, the unused `png` is gone and `praxis-comfyui`
+  follows the `voice` feature: the core-only tree is 254 crates (was 319).
+  TLS follows the providers.
+- [x] `praxis run --minimal` sets the same minimal kernel as `PRAXIS_MINIMAL`
+  (it previously still started VM/shell/engine/cron and the dashboard); a
+  minimal run starts no dashboard either.
 
 ### G. VM/dashboard loose ends
 
-- [x] Dashboard navigation slots for absent features: the host reports
-  registered `runtime::feature_slots` (live, installed-but-unready and
-  first-party installable) with `present`/`hint`, and the dashboard renders an
-  absent feature as an install/enable hint panel that loads no page and executes
-  no package code. Listing never starts a feature service.
+- [x] Dashboard shows only active features: the host reports registered
+  `runtime::feature_slots` and the built-in `pages` of optional features; the
+  dashboard hides inactive pages and absent slots and executes no package code
+  for them. Listing never starts a feature service.
 - [x] VM upgrade/drain/lifecycle policy for active guests: drain and recovery
       cover active guests (sessions drain on binding drop, guests and disks
       survive, interrupted operations are recorded, nothing is replayed), and

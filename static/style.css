@@ -805,3 +805,6 @@ details summary { cursor:pointer; color:var(--text-secondary); line-height:1.5; 
     .chat-telemetry { gap:5px 12px; padding:9px 12px; font-size:9px; }.chat-telemetry progress { width:45px; }
     #tab-messages > .form-group { flex-wrap:wrap; }
 }
+
+/* Inactive features are hidden; this wins over component display rules. */
+[hidden] { display: none !important; }

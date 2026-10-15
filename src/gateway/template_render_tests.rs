@@ -1,6 +1,6 @@
 //! Renders every shipped template with the in-process renderer, against a
 //! full and an empty context. Broken includes, syntax errors and bad data
-//! imports only fail at render time, so this test catches them (bugs.md #8–#11).
+//! imports only fail at render time, so this test catches them (docs/archive/bugs.md #8–#11).
 use std::path::{Path, PathBuf};
 
 fn shipped_templates(root: &Path) -> Vec<PathBuf> {

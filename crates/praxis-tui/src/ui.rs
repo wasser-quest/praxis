@@ -196,6 +196,12 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
         }
         None => Span::raw(""),
     };
+    let plugin_label = app.plugin_terminal.header_label();
+    let plugin_span = if plugin_label.is_empty() {
+        Span::raw("")
+    } else {
+        Span::styled(plugin_label, Style::default().fg(TEXT_DIM))
+    };
     let session_tokens = if app.session_total_tokens > 0 {
         Span::styled(
             format!(" {} tok ", app.session_total_tokens),
@@ -225,6 +231,7 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
         Span::raw("  "),
         agent,
         context_span,
+        plugin_span,
         usage_span,
         session_tokens,
     ]);

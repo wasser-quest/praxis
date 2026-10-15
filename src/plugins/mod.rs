@@ -13,6 +13,7 @@ pub mod build;
 pub mod lifecycle;
 pub mod migrations;
 pub mod trust;
+pub mod terminal;
 mod executable;
 
 #[cfg(test)]
@@ -203,6 +204,9 @@ pub struct ProvidesDeclaration {
     pub migrations: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub web: Option<WebDeclaration>,
+    /// TUI status line and `/` commands backed by the package's own tools.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal: Option<terminal::TerminalDeclaration>,
 }
 
 impl ProvidesDeclaration {
@@ -214,6 +218,7 @@ impl ProvidesDeclaration {
             && self.assets.is_empty()
             && self.migrations.is_empty()
             && self.web.is_none()
+            && self.terminal.as_ref().is_none_or(terminal::TerminalDeclaration::is_empty)
     }
 
     /// Non-tool ownership claims.
@@ -1256,6 +1261,10 @@ pub(crate) fn load_plugin_from_manifest(manifest_path: &Path, plugin_dir: &Path)
             "provides.web.service '{}' is not a declared service",
             web.service
         );
+    }
+
+    if let Some(terminal) = &manifest.provides.terminal {
+        terminal.validate(&declared_tools)?;
     }
 
     let tools = declared_tools

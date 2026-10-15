@@ -607,7 +607,10 @@ async fn extension(app: &Arc<App>, path: &str, query: &str, request: Request) ->
         if !app.operator(bearer(&request)).await {
             return Some(StatusCode::UNAUTHORIZED.into_response());
         }
-        return Some(Json(json!({"extensions": features["features"]})).into_response());
+        return Some(
+            Json(json!({"extensions": features["features"], "slots": features["slots"], "pages": features["pages"]}))
+                .into_response(),
+        );
     }
     let under = |prefix: &str| path == prefix || path.starts_with(&format!("{prefix}/"));
     let owner_in = |prefix: &str| {

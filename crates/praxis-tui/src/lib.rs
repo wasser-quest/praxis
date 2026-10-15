@@ -25,6 +25,7 @@ mod app;
 mod context_log;
 mod context_meter;
 mod model;
+mod plugin_terminal;
 mod remote;
 mod sessions;
 mod sse;

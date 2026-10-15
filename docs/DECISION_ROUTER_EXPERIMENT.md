@@ -197,7 +197,7 @@ HTTP fixture tests; compatibility tests do not establish routing benefit.
 ## Evidence and remaining work, 2026-10-02
 
 The historical work log records **15/20 expected-label matches** in a classifier
-test. That measures routing labels, not task improvement. `TODO.md` separately
+test. That measures routing labels, not task improvement. `docs/archive/TODO.md` separately
 records a later five-task four-arm checkpoint at
 `/tmp/praxis-live-baseline-9uao6aup/state-experiment-4arm/`. Those raw artifacts
 are unavailable in the current workspace, so the checkpoint has not been

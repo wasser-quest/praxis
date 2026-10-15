@@ -654,9 +654,11 @@ async fn features(State(s): State<Arc<ApiState>>) -> Json<Value> {
     Json(json!({
         "features": descriptors,
         "routes": routes,
-        // Registered slots so a client can explain absent features instead of
-        // hiding them. Read-only: nothing here starts a feature service.
+        // Registered slots (present or not). Read-only: nothing here starts a
+        // feature service.
         "slots": crate::runtime::feature_slots::feature_slots(&s.plugins),
+        // Built-in pages of optional features; a frontend hides inactive ones.
+        "pages": crate::runtime::feature_slots::builtin_pages(&s.plugins, &s.db.data_dir()),
     }))
 }
 

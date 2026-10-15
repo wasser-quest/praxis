@@ -63,6 +63,15 @@ optional workflow packs add assets rather than replacing the core interpreter.
   manifests are preserved. Independent channel workers/hot shutdown, voice
   package activation and independently installed chat providers remain open.
 - [ ] PR 7: minimal distribution, compatibility preset and dependency cleanup.
+  Progress: `praxis run --minimal` and `PRAXIS_MINIMAL` are one switch (the
+  flag previously left VM, shell, engine, cron and the dashboard running);
+  a minimal kernel starts no dashboard, channel, VM, shell, cron or engine.
+  `cargo build --no-default-features` compiles all targets and passes the
+  library tests; its dependency tree shrank from 319 to 254 crates (`image`
+  is test-only, `png` was unused, ComfyUI now follows the `voice` feature).
+  Open: provider crates still link into the kernel (moves with PR 6's
+  installed providers), and bundled tool packages are still listed in a
+  minimal catalog.
 - [x] PR 8a: lifecycle hooks (`allow|ask|deny`), staged install/uninstall,
   script hashing, install record and example plugins. See
   [plugin lifecycle](../docs/PLUGIN_LIFECYCLE.md).

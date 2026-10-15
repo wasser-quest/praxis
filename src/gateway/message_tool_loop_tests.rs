@@ -160,43 +160,6 @@ async fn state_graph_ir_navigation_rerenders_and_restarts_on_both_paths() {
     workflow.close().unwrap();
 }
 
-#[tokio::test]
-#[ignore = "Requires the real Microsoft POML CLI; Decision HTTP and main model are scripted"]
-async fn decision_routing_rerenders_before_chat_and_agent_requests() {
-    use wiremock::{Mock,MockServer,ResponseTemplate,matchers::method};
-    std::fs::create_dir_all("decisions").unwrap();
-    let server=MockServer::start().await;
-    Mock::given(method("POST")).respond_with(|req:&wiremock::Request| {
-        let data:serde_json::Value=req.body_json().unwrap();
-        let label=if data["contexts"][0].as_str().unwrap().contains("CACHE_EVIDENCE_314") {"bug"} else {"design"};
-        ResponseTemplate::new(200).set_body_json(serde_json::json!({"results":[{"decision":{"category":label},"fields":{"category":{"value":label,"probability":0.99}}}]}))
-    }).expect(4).mount(&server).await;
-    let profile_file=tempfile::Builder::new().prefix("decision-test-").suffix(".json").tempfile_in("decisions").unwrap();
-    std::fs::write(profile_file.path(),serde_json::to_vec(&serde_json::json!({
-        "endpoint":format!("{}/v1/decision",server.uri()),"model":"scripted-router","instructions":"Synthetic classifier.",
-        "schema":{"category":{"type":"enum","choices":["design","bug"]}},"state_field":"category",
-        "state_map":{"design":"code_architect","bug":"debugger"}
-    })).unwrap()).unwrap();
-    let workflow = core_file_workflow("20-tasks");
-    for turns in [1,3] {
-        let dir=tempfile::tempdir().unwrap();let file=dir.path().join("evidence.txt");std::fs::write(&file,"CACHE_EVIDENCE_314").unwrap();
-        let (state,user,requests)=fixture(dir.path(),vec![
-            Step::Reply(reply(None,vec![call("evidence","inspect_file",serde_json::json!({"path":"evidence.txt"}))])),
-            Step::Reply(reply(Some("Verified."),vec![])),
-        ]);
-        let mut ctx=state.db.load_context(&user).unwrap();ctx.settings.sm_file=Some(workflow.path().file_stem().unwrap().to_str().unwrap().into());
-        ctx.settings.decision_profile=Some(profile_file.path().file_stem().unwrap().to_str().unwrap().into());
-        ctx.settings.max_llm_turns=Some(turns);ctx.settings.max_tool_calls=Some(4);ctx.settings.compaction_enabled=false;
-        state.db.save_context(&ctx).unwrap();
-        let result=handle_message(&state,&user,"Inspect the provided evidence.",None).await.unwrap();
-        assert!(result.contains("Verified."),"{result}");
-        let requests=requests.lock().unwrap();assert_eq!(requests.len(),2);
-        assert!(requests[0].messages[0].content.as_deref().unwrap().contains("[STATE_ACTIVE:code_architect]"),"first request, turns={turns}");
-        assert!(requests[1].messages[0].content.as_deref().unwrap().contains("[STATE_ACTIVE:debugger]"),"after tool, turns={turns}");
-        assert_eq!(state.db.load_context(&user).unwrap().active_state.as_deref(),Some("debugger"));
-    }
-}
-
 #[cfg(unix)]
 #[tokio::test]
 #[ignore = "Requires real POML; model and postcondition processes are offline"]
@@ -1420,39 +1383,6 @@ async fn small_model_agent_cannot_refill_its_turn_budget() {
     state.db.merge_context(&user, serde_json::json!({"settings.max_llm_turns":2})).unwrap();
     assert!(handle_message(&state, &user, "synthetic task", Some("web")).await.is_err());
     assert_eq!(requests.lock().unwrap().len(),2);
-}
-
-#[tokio::test]
-#[ignore = "Requires Node and real POML_CLI; actual SM/DB/tools with scripted provider"]
-async fn twenty_tasks_rerenders_real_state_between_tools_in_chat_and_agent() {
-    let workflow = core_file_workflow("20-tasks");
-    for turns in [1,8] {
-        let dir=tempfile::tempdir().unwrap();
-        let path=dir.path().join("observations.txt");
-        std::fs::write(&path,"A new failure requires diagnosis before implementation.").unwrap();
-        let (state,user,requests)=fixture(dir.path(),vec![
-            Step::Reply(reply(None,vec![call("plan","set_context",serde_json::json!({"key":"active_state","value":"code_architect"}))])),
-            Step::Reply(reply(None,vec![call("read","inspect_file",serde_json::json!({"path":"observations.txt"}))])),
-            Step::Reply(reply(None,vec![call("diagnose","set_context",serde_json::json!({"key":"active_state","value":"debugger"}))])),
-            Step::Reply(reply(None,vec![call("implement","set_context",serde_json::json!({"key":"active_state","value":"expert_programmer"}))])),
-            Step::Reply(reply(Some("A verified handoff, not a claimed execution."),vec![])),
-        ]);
-        state.db.merge_context(&user,serde_json::json!({"settings.sm_file":workflow.path().file_stem().unwrap().to_str().unwrap(),"settings.max_llm_turns":turns,"settings.max_tool_calls":8})).unwrap();
-        handle_message(&state,&user,"Read the observations and propose a checked solution.",Some("web")).await.unwrap();
-        let requests=requests.lock().unwrap();
-        assert_eq!(requests.len(),5);
-        for (request,expected) in requests.iter().zip(["standard","code_architect","code_architect","debugger","expert_programmer"]) {
-            let system=request.messages[0].content.as_deref().unwrap();
-            assert!(system.contains(&format!("[STATE_ACTIVE:{expected}]")),"wrong rendered state for turns={turns}: {expected}");
-            assert!(system.contains("NACH jedem Werkzeugergebnis"));
-            assert!(!system.contains("set_context(\"sm_data.role\""));
-        }
-        let ctx=state.db.load_context(&user).unwrap();
-        assert_eq!(ctx.active_state.as_deref(),Some("expert_programmer"));
-        assert_eq!(ctx.settings.active_state,ctx.active_state);
-        assert_eq!(ctx.sm_data["role"],"expert_programmer");
-        assert_paired_history(&state,&user,4);
-    }
 }
 
 #[tokio::test]

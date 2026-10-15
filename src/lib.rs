@@ -4,6 +4,8 @@ pub mod sm;
 pub mod sse;
 pub mod config;
 #[cfg(feature = "voice")]
+// ComfyUI speech synthesis belongs to the voice layer.
+#[cfg(feature = "voice")]
 pub mod comfyui;
 pub mod context_cmd;
 #[cfg(feature = "dashboard")]

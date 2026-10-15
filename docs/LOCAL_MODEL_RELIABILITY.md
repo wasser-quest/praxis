@@ -78,7 +78,7 @@ Coverage is explicitly limited: `read_file`, `search_tools`, `memory_profile_lis
 
 **2026-10-02 continuation:** the runner now supports fixed/entry/continuous/Decision
 with frozen inputs, resumable plans and runtime-confirmed route/file evidence.
-The later five-task checkpoint recorded in `TODO.md` is historical; its raw
+The later five-task checkpoint recorded in `docs/archive/TODO.md` is historical; its raw
 artifacts are unavailable here. Private model endpoints were unreachable, so
 there is no new live quality result. See the [current protocol and remaining
 work](DECISION_ROUTER_EXPERIMENT.md). The entries below retain their original

@@ -12,23 +12,10 @@
             if(!response.ok) return;
             const data = await response.json();
             if(current !== generation) return;
-            // Registered slots without a live contribution explain how to get
-            // the feature. They own no page and never execute package code.
-            const slots=new Map();
-            for(const slot of data.slots || []) {
-                const id=slot && typeof slot.id==='string' ? slot.id : '';
-                if(!/^[a-zA-Z0-9_-]{1,64}$/.test(id) || slot.present) continue;
-                slots.set(id,{
-                    title: typeof slot.title==='string' && slot.title ? slot.title : id,
-                    hint: typeof slot.hint==='string' && slot.hint ? slot.hint : 'Install the package to use this feature.'
-                });
-            }
-            // A placeholder must neither block a real contribution nor outlive it.
-            for(const [id,entry] of [...entries]) {
-                if(!entry.absent || slots.has(id)) continue;
-                if(active===id) { api.hideAll(); actions.showTab('overview'); }
-                remove(id,entry);
-            }
+            // Only active features are shown: built-in pages of a disabled or
+            // absent package are hidden, and slots without a live contribution
+            // get no entry at all (`praxis plugin list` explains how to add them).
+            api.applyPages(data.pages || {});
             const live = new Set();
             for(const descriptor of data.extensions || []) {
                 const id=descriptor.id;
@@ -46,21 +33,19 @@
                 document.querySelector('.content').appendChild(panel);
                 entries.set(id,{descriptor,nav,panel,hooks:null,promise:null,mounted:false,script:null,style:null});
             }
-            for(const [id,entry] of entries) if(!live.has(id) && !entry.absent) { if(active===id) { api.hideAll(); actions.showTab('overview'); } remove(id,entry); }
-            for(const [id,slot] of slots) {
-                if(live.has(id) || entries.has(id) || document.getElementById(`tab-${id}`)) continue;
-                const nav=document.createElement('li'); nav.dataset.tab=id; nav.textContent=slot.title;
-                nav.classList.add('absent'); nav.title=slot.hint;
-                nav.addEventListener('click',()=>actions.showTab(id));
-                document.querySelector('.nav-links').appendChild(nav);
-                const panel=document.createElement('div'); panel.id=`tab-${id}`; panel.classList.add('tab'); panel.classList.add('absent');
-                panel.textContent=slot.hint;
-                document.querySelector('.content').appendChild(panel);
-                entries.set(id,{descriptor:null,nav,panel,hooks:null,promise:null,mounted:false,script:null,style:null,absent:true});
+            for(const [id,entry] of entries) if(!live.has(id)) { if(active===id) { api.hideAll(); actions.showTab('overview'); } remove(id,entry); }
+        },
+        applyPages(pages) {
+            for(const element of document.querySelectorAll('[data-page], .nav-links li[data-tab]')) {
+                const page=element.dataset.page || element.dataset.tab;
+                if(!Object.prototype.hasOwnProperty.call(pages,page)) continue;
+                const on=pages[page]!==false;
+                element.hidden=!on;
+                if(!on && element.matches('.nav-links li.active')) actions.showTab('overview');
             }
         },
         async show(id) {
-            const entry=entries.get(id); if(!entry || entry.absent) return;
+            const entry=entries.get(id); if(!entry) return;
             active=id;
             if(!entry.promise) entry.promise=(async()=>{
                 const response=await actions.apiGet(entry.descriptor.page);

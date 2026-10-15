@@ -85,6 +85,8 @@ async fn list(State(state): State<Arc<DashboardState>>, request: Request) -> Res
         // Registered feature slots, including those with no live contribution.
         // Listing them is read-only and never starts a feature service.
         "slots": crate::runtime::feature_slots::feature_slots(&state.plugins),
+        // Built-in pages of optional features; inactive ones are hidden.
+        "pages": crate::runtime::feature_slots::builtin_pages(&state.plugins, &state.db.data_dir()),
     }))
     .into_response()
 }

@@ -243,6 +243,8 @@ pub struct App {
     pub last_response_usage: Option<super::streaming::UsageInfo>,
     /// Fill of the model's context window after the last request.
     pub context_meter: Option<super::context_meter::ContextMeter>,
+    /// Status lines and `/` commands contributed by installed packages.
+    pub plugin_terminal: super::plugin_terminal::PluginTerminal,
 
     // Output folding state: indices of folded bubbles.
     pub folded_bubbles: std::collections::HashSet<usize>,
@@ -302,6 +304,7 @@ impl App {
             session_generation_ms: 0,
             last_response_usage: None,
             context_meter: None,
+            plugin_terminal: Default::default(),
             folded_bubbles: std::collections::HashSet::new(),
             command_call_indices: std::collections::HashMap::new(),
             linked_tool_bubbles: std::collections::HashMap::new(),
@@ -530,6 +533,19 @@ impl App {
                 }
             }
             "loop_guard" => self.flash(super::context_meter::loop_guard_notice(data)),
+            "plugin_terminal" => {
+                if let Ok(listing) = serde_json::from_str(data) {
+                    let (sources, commands) = super::plugin_terminal::parse_listing(&listing);
+                    self.plugin_terminal.set_listing(&sources, commands);
+                }
+            }
+            "plugin_status" => {
+                if let Ok(value) = serde_json::from_str::<serde_json::Value>(data) {
+                    if let (Some(plugin), Some(text)) = (value["plugin"].as_str(), value["text"].as_str()) {
+                        self.plugin_terminal.set_status(plugin, text);
+                    }
+                }
+            }
             "agent_start" => self.agent_active = true,
             "agent_stop" => { self.agent_active = false; self.live.tools.clear(); }
             "usage" => {
@@ -942,6 +958,8 @@ impl App {
                     .map(|c| format!("  {} — {}", c.name, c.desc))
                     .collect::<Vec<_>>()
                     .join("\n");
+                let plugin_lines = self.plugin_terminal.help_lines();
+                let body = if plugin_lines.is_empty() { body } else { format!("{body}\n\nPackage commands:\n{plugin_lines}") };
                 self.transcript.push(Bubble::Banner {
                     kind: BannerKind::Info,
                     content: format!(
@@ -961,9 +979,23 @@ impl App {
                 self.should_quit = true;
             }
             _ => {
-                self.flash(format!("unknown command: {name}"));
+                match self.plugin_terminal.command(&name).cloned() {
+                    Some(command) => self.run_plugin_command(&command, &rest).await,
+                    None => self.flash(format!("unknown command: {name}")),
+                }
             }
         }
+    }
+
+    /// A package's `/` command: the gateway runs the package's tool and returns
+    /// plain text, shown like other command output.
+    async fn run_plugin_command(&mut self, command: &super::plugin_terminal::PluginCommand, rest: &str) {
+        let path = format!("/v1/terminal/{}/command/{}", urlencoding::encode(self.active_user_id()), urlencoding::encode(&command.name));
+        let content = match self.remote.request(reqwest::Method::POST, &path, Some(serde_json::json!({"text": rest.trim()}))).await {
+            Ok(value) => format!("[{}] {}", command.plugin, super::plugin_terminal::clean_output(value["text"].as_str().unwrap_or(""))),
+            Err(e) => format!("/{} failed: {e}", command.name),
+        };
+        self.transcript.push(Bubble::System { content });
     }
 
     /// Provider login. Always executed by the gateway (local or remote), because
@@ -1448,11 +1480,13 @@ async fn run_loop<B: ratatui::backend::Backend>(
     let mut stream_user = String::new();
     let mut stream_task: Option<tokio::task::JoinHandle<()>> = None;
     let mut history_task: Option<tokio::task::JoinHandle<()>> = None;
+    let mut plugin_task: Option<tokio::task::JoinHandle<()>> = None;
 
     loop {
         if stream_user != app.active_user_id() {
             if let Some(task) = stream_task.take() { task.abort(); }
             if let Some(task) = history_task.take() { task.abort(); }
+            if let Some(task) = plugin_task.take() { task.abort(); }
             stream_user = app.active_user_id().to_string();
             {
                 let remote = app.remote.clone();
@@ -1477,6 +1511,7 @@ async fn run_loop<B: ratatui::backend::Backend>(
                     }
                 }));
             }
+            plugin_task = Some(tokio::spawn(super::plugin_terminal::poll(app.remote.clone(), stream_user.clone(), stream_tx.clone())));
             stream_task = Some(super::streaming::subscribe(app.gateway_url.clone(), app.gateway_api_key.clone(), stream_user.clone(), stream_tx.clone()));
         }
         app.sync_mouse_capture(&mut io::stdout(), &mut mouse_captured)?;
@@ -1485,6 +1520,7 @@ async fn run_loop<B: ratatui::backend::Backend>(
         if app.should_quit {
             if let Some(task) = stream_task.take() { task.abort(); }
             if let Some(task) = history_task.take() { task.abort(); }
+            if let Some(task) = plugin_task.take() { task.abort(); }
             break;
         }
 

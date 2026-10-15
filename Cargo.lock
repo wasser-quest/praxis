@@ -3709,7 +3709,6 @@ dependencies = [
  "libc",
  "minijinja",
  "once_cell",
- "png",
  "praxis-channel-discord",
  "praxis-comfyui",
  "praxis-gpu-router",

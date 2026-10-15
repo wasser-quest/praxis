@@ -22,7 +22,7 @@ shell = ["dep:praxis-shell"]
 vision = ["dep:praxis-vision"]
 # Voice/audio: transcription, synthesis and their ComfyUI backends; omitted
 # entirely from a core-only host.
-voice = ["dep:praxis-voice"]
+voice = ["dep:praxis-voice", "dep:praxis-comfyui"]
 # Discord channel ingress and its voice glue (pulls the voice layer).
 discord = ["dep:praxis-channel-discord", "voice"]
 # Web dashboard: UI, listener, TLS and its static assets. The runtime,
@@ -46,7 +46,7 @@ praxis-provider-openai = { path = "crates/praxis-provider-openai" }
 praxis-provider-anthropic = { path = "crates/praxis-provider-anthropic" }
 praxis-provider-ollama = { path = "crates/praxis-provider-ollama" }
 praxis-provider-llamacpp = { path = "crates/praxis-provider-llamacpp" }
-praxis-comfyui = { path = "crates/praxis-comfyui" }
+praxis-comfyui = { path = "crates/praxis-comfyui", optional = true }
 praxis-voice = { path = "crates/praxis-voice", optional = true }
 praxis-channel-discord = { path = "crates/praxis-channel-discord", optional = true }
 praxis-gpu-router = { path = "crates/praxis-gpu-router" }
@@ -67,7 +67,6 @@ tracing-attributes = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 tracing-appender = "0.2"
 anyhow = "1"
-png = "0.18"
 axum = { version = "0.7", features = ["ws", "json", "multipart"] }
 axum-server = { version = "0.7", features = ["tls-rustls"], optional = true }
 rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs"] }
@@ -107,9 +106,13 @@ rusqlite = { version = "0.32", features = ["bundled", "vtab"] }
 backon = "1"
 
 
-image = "0.25"
-
 [dev-dependencies]
+# Test fixtures only; the kernel itself decodes no images.
+image = "0.25"
 tokio = { version = "1", features = ["test-util"] }
 wiremock = "0.6"
 tempfile = "3"
+
+[[example]]
+name = "test_voice"
+required-features = ["voice"]

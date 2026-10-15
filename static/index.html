@@ -66,7 +66,7 @@
                         <div class="stat-card"><h3>GPU-Router</h3><p id="gpu-router-state" class="status" title="Slot-States + Budget heute (pgpu)">–</p></div>
                         <div class="stat-card"><h3>Version</h3><p id="version">-</p></div>
                         <div class="stat-card"><h3>Contexts</h3><p id="context-count">0</p></div>
-                        <div class="stat-card"><h3>Pairings</h3><p id="pairing-count">0</p></div>
+                        <div class="stat-card" data-page="pairings"><h3>Pairings</h3><p id="pairing-count">0</p></div>
                         <div class="stat-card"><h3>Pending</h3><p id="pending-count">0</p></div>
                     </div>
                     <div style="margin-top:2rem">
@@ -131,8 +131,8 @@
                                 <div class="chat-input-row">
                                     <button class="btn btn-sm btn-secondary chat-upload-btn" onclick="document.getElementById('chat-file-input').click()" title="Upload files">&#128206;</button>
                                     <input type="file" id="chat-file-input" multiple style="display:none" onchange="chatHandleFiles(this.files)">
-                                    <button class="btn btn-sm btn-secondary" id="chat-mic-btn" onclick="chatToggleMic()" title="Speak to Praxis (speech-to-text)">&#127908;</button>
-                                    <button class="btn btn-sm btn-secondary" id="chat-tts-btn" onclick="chatToggleTts()" title="Read replies aloud (configured TTS provider)" aria-pressed="false">&#128266;</button>
+                                    <button class="btn btn-sm btn-secondary" data-page="voice" id="chat-mic-btn" onclick="chatToggleMic()" title="Speak to Praxis (speech-to-text)">&#127908;</button>
+                                    <button class="btn btn-sm btn-secondary" data-page="voice" id="chat-tts-btn" onclick="chatToggleTts()" title="Read replies aloud (configured TTS provider)" aria-pressed="false">&#128266;</button>
                                     <div style="position:relative;flex:1">
                                         <textarea id="chat-input" class="chat-input" placeholder="Type a message... (try /clear, /start, /stop, /new, /status)" rows="3" onkeydown="chatKeyDown(event)" oninput="chatInput(event)"></textarea>
                                         <div id="slash-commands" class="slash-commands" style="display:none"></div>
