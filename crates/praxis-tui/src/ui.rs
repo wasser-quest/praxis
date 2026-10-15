@@ -183,6 +183,19 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
     } else {
         Span::raw("")
     };
+    let context_span = match &app.context_meter {
+        Some(meter) => {
+            use super::context_meter::Level;
+            let color = match meter.level() {
+                Level::Ok => ACCENT_GREEN,
+                Level::Warn => ACCENT_AMBER,
+                Level::Full => Color::Red,
+                Level::Unknown => TEXT_DIM,
+            };
+            Span::styled(meter.label(), Style::default().fg(color))
+        }
+        None => Span::raw(""),
+    };
     let session_tokens = if app.session_total_tokens > 0 {
         Span::styled(
             format!(" {} tok ", app.session_total_tokens),
@@ -211,6 +224,7 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
         ),
         Span::raw("  "),
         agent,
+        context_span,
         usage_span,
         session_tokens,
     ]);

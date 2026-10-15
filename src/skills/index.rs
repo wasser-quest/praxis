@@ -322,7 +322,7 @@ fn walk(
             continue;
         }
         let folder = entry.path();
-        if folder.join("skill.json").symlink_metadata().is_ok() {
+        if super::is_skill_dir(&folder) {
             visit(&folder)?;
         } else {
             walk(&folder, depth + 1, visit)?;
@@ -349,7 +349,7 @@ pub fn lookup_skill(db: &crate::db::Database, root: &Path, name: &str) -> anyhow
         }
     }
     let canonical = root.join(name);
-    if canonical.join("skill.json").symlink_metadata().is_ok() {
+    if super::is_skill_dir(&canonical) {
         let skill = Skill::from_dir(root, &canonical)?;
         anyhow::ensure!(
             skill.name == name,

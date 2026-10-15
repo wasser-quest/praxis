@@ -14,6 +14,8 @@ pub mod comfyui_qwen3;
 pub mod vosk_remote;
 pub mod wake_word;
 
+mod elevenlabs_http;
+
 #[cfg(test)]
 mod elevenlabs_tests;
 
@@ -328,7 +330,7 @@ pub mod elevenlabs_stt {
         pub fn new(api_key: String) -> Self {
             Self {
                 api_key,
-                client: crate::client(),
+                client: crate::elevenlabs_http::client(),
                 base_url: "https://api.elevenlabs.io".to_string(),
             }
         }
@@ -338,7 +340,10 @@ pub mod elevenlabs_stt {
             Self {
                 api_key,
                 base_url,
-                client: crate::client_builder().no_proxy().build().unwrap(),
+                client: crate::elevenlabs_http::client_builder()
+                    .no_proxy()
+                    .build()
+                    .unwrap(),
             }
         }
 
@@ -393,27 +398,25 @@ pub mod elevenlabs_stt {
                 .send()
                 .await
                 .map_err(|e| {
-                    STTError::TranscriptionFailed(format!("HTTP request failed: {}", e))
+                    STTError::TranscriptionFailed(
+                        crate::elevenlabs_http::Failure::transport(e).to_string(),
+                    )
                 })?;
 
-            if !response.status().is_success() {
-                let status = response.status();
-                let error_text = response.text().await.unwrap_or_default();
-                return Err(STTError::TranscriptionFailed(format!(
-                    "ElevenLabs STT API error: {} - {}",
-                    status, error_text
-                )));
-            }
-
-            let stt_response: STTResponse = response.json().await.map_err(|e| {
-                STTError::TranscriptionFailed(format!("Failed to parse response: {}", e))
+            let body =
+                crate::elevenlabs_http::read_success(response, crate::elevenlabs_http::STT_LIMIT)
+                    .await
+                    .map_err(|e| STTError::TranscriptionFailed(e.to_string()))?;
+            let stt_response: STTResponse = serde_json::from_slice(&body).map_err(|_| {
+                STTError::TranscriptionFailed(
+                    crate::elevenlabs_http::Failure::InvalidResponse.to_string(),
+                )
             })?;
 
-            if let Some(error) = stt_response.error {
-                return Err(STTError::TranscriptionFailed(format!(
-                    "ElevenLabs error: {}",
-                    error
-                )));
+            if stt_response.error.is_some() {
+                return Err(STTError::TranscriptionFailed(
+                    crate::elevenlabs_http::Failure::Rejected.to_string(),
+                ));
             }
 
             stt_response
@@ -600,18 +603,25 @@ pub mod tts {
                 Self {
                     api_key,
                     voice_id,
-                    client: crate::client(),
+                    client: crate::elevenlabs_http::client(),
                     base_url: "https://api.elevenlabs.io".to_string(),
                 }
             }
 
             #[cfg(test)]
-            pub(crate) fn with_base_url(api_key: String, voice_id: String, base_url: String) -> Self {
+            pub(crate) fn with_base_url(
+                api_key: String,
+                voice_id: String,
+                base_url: String,
+            ) -> Self {
                 Self {
                     api_key,
                     voice_id,
                     base_url,
-                    client: crate::client_builder().no_proxy().build().unwrap(),
+                    client: crate::elevenlabs_http::client_builder()
+                        .no_proxy()
+                        .build()
+                        .unwrap(),
                 }
             }
 
@@ -646,7 +656,12 @@ pub mod tts {
                 }
                 for (name, value, min, max) in [
                     ("stability", Some(settings.stability), 0.0, 1.0),
-                    ("similarity_boost", Some(settings.similarity_boost), 0.0, 1.0),
+                    (
+                        "similarity_boost",
+                        Some(settings.similarity_boost),
+                        0.0,
+                        1.0,
+                    ),
                     ("style", settings.style, 0.0, 1.0),
                     ("speed", settings.speed, 0.7, 1.2),
                 ] {
@@ -686,27 +701,23 @@ pub mod tts {
                     .send()
                     .await
                     .map_err(|e| {
-                        TTSError::SynthesisFailed(format!("HTTP request failed: {}", e))
+                        TTSError::SynthesisFailed(
+                            crate::elevenlabs_http::Failure::transport(e).to_string(),
+                        )
                     })?;
 
-                if !response.status().is_success() {
-                    let status = response.status();
-                    let error_text = response.text().await.unwrap_or_default();
-                    return Err(TTSError::SynthesisFailed(format!(
-                        "ElevenLabs API error: {} - {}",
-                        status, error_text
-                    )));
-                }
-
-                let bytes = response.bytes().await.map_err(|e| {
-                    TTSError::SynthesisFailed(format!("Failed to read audio bytes: {}", e))
-                })?;
+                let bytes = crate::elevenlabs_http::read_success(
+                    response,
+                    crate::elevenlabs_http::TTS_LIMIT,
+                )
+                .await
+                .map_err(|e| TTSError::SynthesisFailed(e.to_string()))?;
                 if bytes.is_empty() {
                     return Err(TTSError::SynthesisFailed(
                         "ElevenLabs returned empty audio".to_string(),
                     ));
                 }
-                Ok(bytes.to_vec())
+                Ok(bytes)
             }
 
             pub fn is_ready(&self) -> bool {
@@ -943,20 +954,17 @@ pub mod tts {
                     )));
                 }
 
-                let response_text = response
-                    .text()
-                    .await
-                    .map_err(|e| {
-                        TTSError::SynthesisFailed(format!(
-                            "Failed to read Qwen3-TTS response: {}",
-                            e
-                        ))
-                    })?;
+                let response_text = response.text().await.map_err(|e| {
+                    TTSError::SynthesisFailed(format!("Failed to read Qwen3-TTS response: {}", e))
+                })?;
 
                 // Try to parse as JSON with base64 audio
                 if let Ok(tts_response) = serde_json::from_str::<TTSResponse>(&response_text) {
                     if let Some(error) = tts_response.error {
-                        return Err(TTSError::SynthesisFailed(format!("Qwen3-TTS error: {}", error)));
+                        return Err(TTSError::SynthesisFailed(format!(
+                            "Qwen3-TTS error: {}",
+                            error
+                        )));
                     }
                     if let Some(audio_b64) = tts_response.audio {
                         use base64::Engine;
@@ -1045,20 +1053,17 @@ pub mod tts {
                     )));
                 }
 
-                let response_text = response
-                    .text()
-                    .await
-                    .map_err(|e| {
-                        TTSError::SynthesisFailed(format!(
-                            "Failed to read Qwen3-TTS response: {}",
-                            e
-                        ))
-                    })?;
+                let response_text = response.text().await.map_err(|e| {
+                    TTSError::SynthesisFailed(format!("Failed to read Qwen3-TTS response: {}", e))
+                })?;
 
                 // Try to parse as JSON with base64 audio
                 if let Ok(tts_response) = serde_json::from_str::<TTSResponse>(&response_text) {
                     if let Some(error) = tts_response.error {
-                        return Err(TTSError::SynthesisFailed(format!("Qwen3-TTS error: {}", error)));
+                        return Err(TTSError::SynthesisFailed(format!(
+                            "Qwen3-TTS error: {}",
+                            error
+                        )));
                     }
                     if let Some(audio_b64) = tts_response.audio {
                         use base64::Engine;

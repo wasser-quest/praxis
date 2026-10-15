@@ -129,7 +129,7 @@ async fn resilience_gateway_histories_survive_retries_and_exhaustion_on_both_pat
             std::fs::create_dir(dir.path().join("templates")).unwrap();
             std::fs::write(dir.path().join("contexts/retries.sm"), "[state standard]\nsettings.provider = synthetic\nsettings.system_template = standard\nsettings.activated_tools = [\"execute_terminal\",\"agent_complete\"]\n").unwrap();
             std::fs::write(dir.path().join("templates/standard.poml"), "<poml><role>Offline retry fixture</role></poml>").unwrap();
-            std::fs::write(dir.path().join("templates/user.poml"), include_str!("../../../templates/user.poml")).unwrap();
+            std::fs::write(dir.path().join("templates/user.md"), include_str!("../../../templates/user.md")).unwrap();
             let user = format!("resilience-gateway-{max_turns}-{exhausted}");
             let mut ctx = db.load_context(&user).unwrap();
             ctx.sm_file = Some("retries".into());

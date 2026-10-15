@@ -69,6 +69,7 @@ fn request() -> RequestEnvelope {
             model: None,
             thinking: None,
         },
+        conversation: None,
     }
 }
 #[tokio::test]

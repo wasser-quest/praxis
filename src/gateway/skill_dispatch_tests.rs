@@ -54,13 +54,9 @@ async fn use_skill_respects_disabled_tool() {
     assert!(result.contains("disabled"), "{result}");
 }
 
+/// Shipped skills are SKILL.md and render in-process: no Node or POML_CLI.
 #[tokio::test]
-#[ignore = "Requires Node and POML_CLI pointing to Microsoft's JavaScript CLI"]
-async fn use_skill_real_poml_dispatch() {
-    assert!(
-        std::env::var("POML_CLI").is_ok(),
-        "Set POML_CLI for this integration test"
-    );
+async fn use_skill_shipped_skill_dispatch() {
     let dir = tempfile::tempdir().unwrap();
     let db = crate::db::Database::new(dir.path()).unwrap();
     crate::db::tools::init_default_tools(&db).unwrap();
@@ -68,7 +64,7 @@ async fn use_skill_real_poml_dispatch() {
         ("code_review", "code", "suggested fix"),
         ("debug", "error", "Root Cause"),
         ("tmux", "user_request", "tmux"),
-        ("poml_templates", "user_request", "update_template"),
+        ("prompt_templates", "user_request", "update_template"),
     ] {
         let result = invoke(
             &db,

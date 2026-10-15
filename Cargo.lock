@@ -2965,6 +2965,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8ca58f447f06ed17d5fc4043ce1b10dd205e060fb3ce5b979b8ed8e59ff3f79"
 
 [[package]]
+name = "memo-map"
+version = "0.3.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5449c8c750f1a07ea702bbd212bd999fceece9b3d1508b17023b3e174583124b"
+
+[[package]]
 name = "mime"
 version = "0.3.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2993,6 +2999,17 @@ dependencies = [
  "smallvec",
  "tagptr",
  "triomphe",
+]
+
+[[package]]
+name = "minijinja"
+version = "2.24.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "86886cf6dbf4e614b19c9a1eec9775f021869d7eadde0fc73921a81b90c9b4c9"
+dependencies = [
+ "memo-map",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -3690,6 +3707,7 @@ dependencies = [
  "jsonwebtoken",
  "lazy_static",
  "libc",
+ "minijinja",
  "once_cell",
  "png",
  "praxis-channel-discord",
@@ -3700,6 +3718,7 @@ dependencies = [
  "praxis-provider-anthropic",
  "praxis-provider-api",
  "praxis-provider-http",
+ "praxis-provider-llamacpp",
  "praxis-provider-ollama",
  "praxis-provider-openai",
  "praxis-sandbox",
@@ -3718,6 +3737,7 @@ dependencies = [
  "rustls-pemfile",
  "serde",
  "serde_json",
+ "serde_yaml_ng",
  "sha2",
  "shlex",
  "tempfile",
@@ -3879,6 +3899,22 @@ dependencies = [
  "reqwest",
  "serde_json",
  "tokio",
+ "wiremock",
+]
+
+[[package]]
+name = "praxis-provider-llamacpp"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "futures-util",
+ "praxis-provider-api",
+ "praxis-provider-http",
+ "reqwest",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "tracing",
  "wiremock",
 ]
 
@@ -5033,6 +5069,19 @@ dependencies = [
  "itoa",
  "ryu",
  "serde",
+]
+
+[[package]]
+name = "serde_yaml_ng"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b4db627b98b36d4203a7b458cf3573730f2bb591b28871d916dfa9efabfd41f"
+dependencies = [
+ "indexmap 2.14.0",
+ "itoa",
+ "ryu",
+ "serde",
+ "unsafe-libyaml",
 ]
 
 [[package]]
@@ -6275,6 +6324,12 @@ dependencies = [
  "crypto-common",
  "subtle",
 ]
+
+[[package]]
+name = "unsafe-libyaml"
+version = "0.2.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "673aac59facbab8a9007c7f6108d11f63b603f7cabff99fabf650fea5c32b861"
 
 [[package]]
 name = "untrusted"

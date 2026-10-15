@@ -374,8 +374,8 @@ async fn foundation_direct_agent_restarts_a_completed_default_graph_before_provi
     let (root, state, user) = fixture();
     std::fs::write(root.path().join("contexts/restart.sm"), "@routing graph\n@start entry\n[state entry]\nsettings.provider = fixture\nsettings.system_template = standard\n[state done]\nsettings.provider = openai\nsettings.system_template = standard\n[transitions]\nentry -> done\n").unwrap();
     std::fs::write(
-        root.path().join("templates/user.poml"),
-        include_str!("../../templates/user.poml"),
+        root.path().join("templates/user.md"),
+        include_str!("../../templates/user.md"),
     )
     .unwrap();
     let mut ctx = state.db.load_context(&user).unwrap();

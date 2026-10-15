@@ -106,6 +106,7 @@ impl LlamaCppProvider {
             .and_then(Value::as_u64).filter(|n| *n >= 256)
             .or_else(|| std::env::var("LLAMACPP_CONTEXT_SIZE").ok()?.parse::<u64>().ok().filter(|n| *n >= 256));
         let Some(ctx) = ctx else { return Ok((body, false)) };
+        self.window.store(ctx, std::sync::atomic::Ordering::Relaxed);
         let output = body["max_tokens"].as_u64().filter(|n|*n>0).unwrap_or(4096).min(ctx/4).max(1);
         body["max_tokens"] = json!(output);
         let mut template_omitted = false;

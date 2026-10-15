@@ -30,6 +30,7 @@ fn request() -> RequestEnvelope {
             thinking: None,
         },
         continuation: None,
+        conversation: None,
     }
 }
 
@@ -184,4 +185,48 @@ async fn compiled_worker_preserves_safe_rate_limit_without_retry() {
     assert_eq!(error.kind, praxis_provider_api::ErrorKind::RateLimited);
     assert_eq!(error.retry_after, Some(Duration::from_secs(2)));
     assert_eq!(server.received_requests().await.unwrap().len(), 1);
+}
+
+/// A context proxy (e.g. billion-context) keys its state on the host's opaque
+/// conversation key; the worker forwards it only under the configured header.
+#[tokio::test]
+async fn conversation_key_is_forwarded_only_under_the_configured_header() {
+    const KEY: &str = "0123456789abcdef0123456789abcdef";
+    for (configured, expected) in [(true, Some(KEY)), (false, None)] {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "choices":[{"message":{"content":"ok"},"finish_reason":"stop"}]
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let mut request = request();
+        request.conversation = Some(KEY.into());
+        let mut arguments = vec![server.uri(), "fixture-model".into()];
+        if configured {
+            arguments.extend(["--conversation-header".into(), "x-acp-session".into()]);
+        }
+        let launch = WorkerLaunch {
+            executable: PathBuf::from(env!("CARGO_BIN_EXE_praxis-provider-openai")),
+            arguments,
+            environment: BTreeMap::new(),
+            identity: WorkerIdentity { provider: "openai".into(), generation: 1, nonce: [3; 16] },
+            capabilities: WireCapabilities { supports_output_limit: true, supports_list_models: false, supports_embeddings: false },
+            limits: WireLimits::default(),
+        };
+        bridge::invoke(launch, &request, Duration::from_secs(5), &CancellationToken::new(), &|_| {})
+            .await
+            .unwrap();
+        let received = server.received_requests().await.unwrap();
+        let sent = received[0].headers.get("x-acp-session").map(|v| v.to_str().unwrap().to_string());
+        assert_eq!(sent.as_deref(), expected, "configured={configured}");
+    }
+    let refused = std::process::Command::new(env!("CARGO_BIN_EXE_praxis-provider-openai"))
+        .env_clear()
+        .args(["http://localhost/v1", "model", "--conversation-header", "authorization"])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success(), "credential headers cannot carry the key");
 }

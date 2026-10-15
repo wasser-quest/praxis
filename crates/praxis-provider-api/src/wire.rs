@@ -267,6 +267,10 @@ pub struct RequestEnvelope {
     pub context: RequestContext,
     pub request: WireChatRequest,
     pub continuation: Option<WireContinuation>,
+    /// Opaque host-derived conversation key (see `conversation`). Omitted when
+    /// absent, so workers built before this field still accept the envelope.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversation: Option<String>,
 }
 impl RequestEnvelope {
     pub fn validate(
@@ -275,6 +279,9 @@ impl RequestEnvelope {
         limits: WireLimits,
     ) -> Result<(), WireValidationError> {
         validate_header(self.version, &self.context, expected, limits)?;
+        if self.conversation.as_deref().is_some_and(|key| !crate::conversation::valid(key)) {
+            return Err(WireValidationError::WrongRequest);
+        }
         if let Some(value) = &self.continuation {
             value.validate(&expected.binding, limits)?;
         }
@@ -709,6 +716,7 @@ mod tests {
                 vision_model: Some("host-model".into()),
             }
             .into(),
+            conversation: None,
         }
     }
     fn tool() -> ToolCall {

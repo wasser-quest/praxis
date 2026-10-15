@@ -74,6 +74,10 @@ impl LLMProvider for OllamaProvider {
     async fn health_check(&self) -> bool {
         self.0.health_check().await
     }
+    fn context_window(&self) -> Option<u64> {
+        self.0.context_window()
+    }
+
     fn name(&self) -> &str {
         self.0.name()
     }

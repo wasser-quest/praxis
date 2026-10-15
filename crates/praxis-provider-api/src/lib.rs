@@ -17,6 +17,7 @@
 
 pub mod bridge;
 pub mod chat;
+pub mod conversation;
 pub mod credentials;
 pub mod errors;
 pub mod exchange;

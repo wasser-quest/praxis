@@ -34,6 +34,7 @@ pub const SLASH_COMMANDS: &[SlashCmd] = &[
     SlashCmd { name: "/status", desc: "Print agent status" },
     SlashCmd { name: "/delegations", desc: "Show delegated subtasks (status + result)" },
     SlashCmd { name: "/context", desc: "Get/set context variables (e.g. set foo=bar)" },
+    SlashCmd { name: "/changes", desc: "Show recent context changes: who changed what (/changes 50)" },
     SlashCmd { name: "/thinking", desc: "Reasoning level: off|low|medium|high|xhigh|auto" },
     SlashCmd { name: "/show_thinking", desc: "Show reasoning: on|off" },
     SlashCmd { name: "/rename", desc: "Rename the current session" },
@@ -240,6 +241,8 @@ pub struct App {
     pub session_total_tokens: u32,
     pub session_generation_ms: u64,
     pub last_response_usage: Option<super::streaming::UsageInfo>,
+    /// Fill of the model's context window after the last request.
+    pub context_meter: Option<super::context_meter::ContextMeter>,
 
     // Output folding state: indices of folded bubbles.
     pub folded_bubbles: std::collections::HashSet<usize>,
@@ -298,6 +301,7 @@ impl App {
             session_total_tokens: 0,
             session_generation_ms: 0,
             last_response_usage: None,
+            context_meter: None,
             folded_bubbles: std::collections::HashSet::new(),
             command_call_indices: std::collections::HashMap::new(),
             linked_tool_bubbles: std::collections::HashMap::new(),
@@ -514,6 +518,18 @@ impl App {
                 }
             }
             "connection_error" => self.flash(data),
+            "context" => {
+                if let Some(meter) = super::context_meter::ContextMeter::parse(data) {
+                    self.context_meter = Some(meter);
+                }
+            }
+            "compaction" => self.flash(super::context_meter::compaction_notice(data)),
+            "context_changed" => {
+                if let Some(notice) = super::context_log::notice(data) {
+                    self.flash(notice);
+                }
+            }
+            "loop_guard" => self.flash(super::context_meter::loop_guard_notice(data)),
             "agent_start" => self.agent_active = true,
             "agent_stop" => { self.agent_active = false; self.live.tools.clear(); }
             "usage" => {
@@ -533,6 +549,8 @@ impl App {
     /// Drop transient state when switching session.
     pub fn reset_view(&mut self) {
         self.transcript.clear();
+        // The meter describes the previous session's last request.
+        self.context_meter = None;
         self.copy_selection = None;
         self.pending_clipboard = None;
         self.live = Default::default();
@@ -799,6 +817,23 @@ impl App {
             "/context" | "/ctx" => {
                 let response = self.remote.command(self.active_user_id(),line).await;
                 self.transcript.push(Bubble::System {content:response.unwrap_or_else(|e|format!("{e}"))});
+            }
+            "/changes" => {
+                let count: usize = rest.trim().parse().unwrap_or(20).clamp(1, 200);
+                let id = self.active_user_id().to_string();
+                // Show the newest `count` changes: read the current seq first.
+                let content = match self.remote.request(reqwest::Method::GET, &format!("/v1/context/{}/events?limit=1", urlencoding::encode(&id)), None).await {
+                    Ok(head) => {
+                        let after = head["seq"].as_i64().unwrap_or(0).saturating_sub(count as i64).max(0);
+                        self.remote
+                            .request(reqwest::Method::GET, &format!("/v1/context/{}/events?after={after}&limit={count}", urlencoding::encode(&id)), None)
+                            .await
+                            .map(|log| super::context_log::render(&log))
+                            .unwrap_or_else(|e| format!("changes failed: {e}"))
+                    }
+                    Err(e) => format!("changes failed: {e}"),
+                };
+                self.transcript.push(Bubble::System { content });
             }
             "/state" | "/workflow" => {
                 let id = self.active_user_id().to_string();

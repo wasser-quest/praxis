@@ -1,0 +1,34 @@
+{
+  "name": "billion_context",
+  "description": "Uses billion-context (https://github.com/ranxianglei/billion-context) and acp-kernel (https://github.com/ranxianglei/acp-kernel) to compress long conversations: a chat provider that routes a local OpenAI-compatible model (llama.cpp) through the separately installed bili proxy. Credits: NOTICE.md",
+  "version": "1.0.0",
+  "role": "runtime",
+  "enabled": false,
+  "tools": [],
+  "provides": {
+    "providers": [
+      {
+        "id": "bili_llamacpp",
+        "executable": "bin/praxis-provider-openai",
+        "protocol": "praxis.provider.v1",
+        "args": [
+          "http://127.0.0.1:8787/bili/http://127.0.0.1:8080/v1",
+          "local",
+          "--conversation-header",
+          "x-acp-session"
+        ],
+        "capabilities": [
+          "chat",
+          "output_limit"
+        ],
+        "timeout_secs": 300
+      }
+    ]
+  },
+  "build": {
+    "crate": "praxis-provider-openai",
+    "bins": [
+      "praxis-provider-openai"
+    ]
+  }
+}

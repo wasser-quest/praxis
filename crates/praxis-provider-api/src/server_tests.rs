@@ -25,6 +25,7 @@ fn request() -> RequestEnvelope {
             model: None,
             thinking: None,
         },
+        conversation: None,
     }
 }
 fn identity() -> WorkerIdentity {

@@ -34,6 +34,7 @@ async fn invoke(
             thinking: None,
         },
         continuation: None,
+        conversation: None,
     };
     bridge::invoke(
         WorkerLaunch {

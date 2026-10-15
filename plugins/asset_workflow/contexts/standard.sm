@@ -31,6 +31,21 @@ cron = [cron_add, cron_delete, cron_list, cron_toggle, cron_run]
 # Every state needs set_context to switch roles again.
 role_switch = [set_context, get_context]
 
+# Stop a task that keeps repeating itself (defaults shown; 0 disables a check).
+[limits]
+max_same_tool_call = 3
+max_tool_errors = 4
+max_same_reply = 3
+max_state_changes = 12
+max_repeated_chunks = 12
+on_abort = "standard"
+
+# React to events (see docs/CONTEXT_EVENTS.md). Examples, disabled:
+# [on]
+# tool_failed execute_terminal x2 -> state debugger
+# tool_failed * x6 -> stop "Too many failing tool calls"
+# changed sm_data.role by model -> note "Role changed: check the plan before acting"
+
 [state routing]
 settings.system_template = "states/standard/standard"
 settings.activated_tools = ["core_files", "agent_basic", "role_switch"]

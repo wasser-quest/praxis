@@ -1,5 +1,9 @@
 //! OpenAI-compatible endpoints with optional explicit private-pipe credential grants.
 //! CLI arguments carry configuration, never credentials. Stdout is protocol-only.
+//!
+//! Usage: `praxis-provider-openai URL MODEL [--credentials] [--conversation-header NAME]`.
+//! With `--conversation-header`, the host's opaque per-conversation key is sent
+//! upstream under NAME (e.g. `x-acp-session` for a billion-context proxy).
 use praxis_provider_api::{
     worker::{serve_once, serve_once_with_credentials, SessionConfig},
     WireCapabilities, WireLimits,
@@ -18,7 +22,12 @@ async fn main() {
 }
 
 async fn run() -> Result<(), ()> {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(at) = args.iter().position(|arg| arg == "--conversation-header") {
+        let name = args.get(at + 1).cloned().ok_or(())?;
+        praxis_provider_api::conversation::forward_as(&name)?;
+        args.drain(at..at + 2);
+    }
     let authenticated = args.len() == 3 && args[2] == "--credentials";
     if (args.len() != 2 && !authenticated)
         || args

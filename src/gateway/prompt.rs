@@ -465,54 +465,6 @@ pub async fn render_user(
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn state_graph_bundled_example_selects_its_prompt_over_a_previous_workflow() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let mut ctx = Context {
-            user_id: "graph-example-prompt".into(),
-            ..Default::default()
-        };
-        ctx.settings.sm_file = Some("branching-coding".into());
-        ctx.active_state = Some("route".into());
-        ctx.settings.active_state = ctx.active_state.clone();
-        ctx.settings.system_template = Some("states/standard/standard".into());
-        ctx.settings.use_decision_router = true;
-        route_context(
-            root,
-            &mut ctx,
-            "Implement the game",
-            &PluginRegistry::new(),
-            None,
-        )
-        .await
-        .unwrap();
-        assert_eq!(
-            ctx.settings.system_template.as_deref(),
-            Some("graph-coding")
-        );
-        assert_eq!(ctx.settings.max_llm_turns, Some(40));
-        assert_eq!(ctx.settings.max_tool_calls, Some(80));
-        assert!(!ctx.settings.use_decision_router);
-        let sm = crate::sm::load_file_in(&root.join("contexts"), "branching-coding").unwrap();
-        assert_eq!(
-            super::super::workflow_graph::view(&sm, &ctx).await["edges"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .filter(|e| e["from"] == "route")
-                .count(),
-            5
-        );
-        assert!(sm
-            .states
-            .iter()
-            .filter(|(name, _)| name.as_str() != "_default")
-            .all(|(_, state)| state
-                .variables
-                .get("settings.system_template")
-                .is_some_and(|v| v == "graph-coding")));
-    }
-
     #[test]
     fn state_graph_completed_task_restarts_at_entry_and_preserves_user_settings() {
         let root = fixture();
@@ -538,27 +490,6 @@ mod tests {
         assert_eq!(next.settings.active_skill, ctx.settings.active_skill);
         assert_eq!(next.user_id, ctx.user_id);
         assert_eq!(next.session_id, ctx.session_id);
-    }
-
-    #[tokio::test]
-    async fn state_graph_poml_protocol_renders_with_real_cli() {
-        if std::env::var_os("POML_CLI").is_none() {
-            return;
-        }
-        let text = crate::runtime::engine::render_strict(
-            &Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("templates/graph-coding.poml")
-                .to_string_lossy(),
-            &json!({}),
-        )
-        .await
-        .unwrap();
-        assert!(text.contains("runtime appends [WORKFLOW GRAPH]"));
-        assert!(
-            text.contains(r#"{"ir":"1 N {\"edge\":0,\"from_state\":\"route\"}"}"#),
-            "{text}"
-        );
-        assert!(text.contains("current verified modification, build and test receipts"));
     }
 
     #[test]
@@ -698,7 +629,7 @@ mod tests {
             .map(|path| path.file_stem().unwrap().to_str().unwrap().to_string())
             .collect();
         names.sort();
-        assert_eq!(names, vec!["20-tasks", "branching-coding", "language-learning", "standard", "standard-verified", "verified-capabilities", "verified-coding", "verified-implementation"]);
+        assert_eq!(names, vec!["standard", "standard-verified", "verified-capabilities", "verified-coding"]);
         let mut explicit_selections = 0;
         for name in names {
             let sm = crate::sm::load_file_in(&contexts, &name).unwrap();
@@ -710,9 +641,6 @@ mod tests {
                 route_shipped(&mut stale, "Continue coding.").await;
                 assert!(stale.sm_data["persona_roles"].as_str().unwrap().contains("research"));
                 assert!(!stale.sm_data["persona_roles"].as_str().unwrap().contains("obsolete"));
-            } else if name == "20-tasks" {
-                assert!(sm.auto_rules.is_empty(), "the experiment must not classify tasks deterministically");
-                assert!(sm.states.values().all(|state| state.variables.contains_key("sm_data.role")));
             }
             for (state_name, state) in sm.states.iter().filter(|(name,_)| name.as_str() != "_default") {
                 let mut ctx = Context {
@@ -731,7 +659,7 @@ mod tests {
                     .unwrap_or_else(|error| panic!("{name}:{state_name} -> {selected}: {error}"));
             }
         }
-        assert_eq!(explicit_selections, 44, "all shipped state template contracts must be exercised");
+        assert_eq!(explicit_selections, 20, "all shipped state template contracts must be exercised");
     }
 
     fn fixture() -> tempfile::TempDir {

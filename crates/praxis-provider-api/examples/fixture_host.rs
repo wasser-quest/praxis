@@ -58,6 +58,7 @@ async fn check(mode: &str) -> Result<(), Box<dyn std::error::Error>> {
             model: None,
             thinking: None,
         },
+        conversation: None,
     };
     let deltas = Mutex::new(Vec::new());
     let result = bridge::invoke(

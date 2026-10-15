@@ -551,8 +551,17 @@ impl Database {
     }
 
     pub fn save_context(&self, ctx: &Context) -> anyhow::Result<()> {
+        self.save_context_logged(ctx, &super::context_events::current_source(), None)
+    }
+
+    /// Save and log the change. With `expected_seq`, refuse (`Conflict`) when
+    /// the context changed after the caller read it.
+    pub(crate) fn save_context_logged(&self, ctx: &Context, source: &str, expected_seq: Option<i64>) -> anyhow::Result<()> {
         let conn = self.conn();
         let data = serde_json::to_string(ctx)?;
+        let logged_key = Self::context_key(&ctx.user_id, &ctx.session_id);
+        super::context_events::check_expected(&conn, &logged_key, expected_seq)?;
+        let before = super::context_events::current_data(&conn, &logged_key)?;
         if !ctx.session_id.is_empty() && ctx.session_id != "default" {
             let key = format!("{}:::{}", ctx.user_id, ctx.session_id);
             conn.execute(
@@ -587,9 +596,13 @@ impl Database {
                 rusqlite::params![ctx.user_id, data],
             )?;
         }
+        let event = super::context_events::record(&conn, &logged_key, before.as_deref(), &data, source)?;
         // Publish while the DB lock still orders saves. Only the public web-
         // speech flag is sent, never credentials or other context contents.
         crate::runtime::events::chat_tts_settings(&ctx.user_id, ctx.settings.web_chat_tts);
+        if let Some(event) = event {
+            crate::runtime::events::send(&ctx.user_id, "context_changed", &super::context_events::live_notice(&event));
+        }
         Ok(())
     }
 
@@ -611,11 +624,15 @@ impl Database {
         let raw:String=tx.query_row("SELECT data FROM contexts WHERE user_id=?1",[&key],|r|r.get(0))?;
         let current=decode_context(&raw)?;
         if serde_json::to_value(current)?!=serde_json::to_value(expected)? {return Ok(false);}
-        tx.execute("UPDATE contexts SET data=?2,updated_at=datetime('now') WHERE user_id=?1",rusqlite::params![key,serde_json::to_string(next)?])?;
+        let next_data=serde_json::to_string(next)?;
+        tx.execute("UPDATE contexts SET data=?2,updated_at=datetime('now') WHERE user_id=?1",rusqlite::params![key,next_data])?;
         if let Some((kind, payload)) = event {
             super::execution::insert_event(&tx, next, kind, payload, None)?;
         }
-        tx.commit()?;Ok(true)
+        let change=super::context_events::record(&tx,&key,Some(&raw),&next_data,"workflow")?;
+        tx.commit()?;
+        if let Some(change)=change { crate::runtime::events::send(&next.user_id,"context_changed",&super::context_events::live_notice(&change)); }
+        Ok(true)
     }
 
     pub fn merge_context(
@@ -623,15 +640,35 @@ impl Database {
         user_id: &str,
         updates: serde_json::Value,
     ) -> anyhow::Result<Context> {
-        self.merge_context_with_actor(user_id, updates, false)
+        self.merge_context_with_actor(user_id, updates, false, None)
     }
 
     /// Model/tool-originated updates cannot grant user-only skill activation.
     pub fn merge_context_from_agent(&self, user_id: &str, updates: serde_json::Value) -> anyhow::Result<Context> {
-        self.merge_context_with_actor(user_id, updates, true)
+        self.merge_context_with_actor(user_id, updates, true, None)
     }
 
-    fn merge_context_with_actor(&self, user_id: &str, updates: serde_json::Value, from_agent: bool) -> anyhow::Result<Context> {
+    /// A user change that applies only if the context is still at
+    /// `expected_seq` (the last change the caller saw); otherwise `Conflict`.
+    pub fn change_context(&self, user_id: &str, updates: serde_json::Value, expected_seq: Option<i64>) -> anyhow::Result<Context> {
+        self.merge_context_with_actor(user_id, updates, false, expected_seq)
+    }
+
+    /// Current change sequence of the user's active context (0 = no changes yet).
+    pub fn context_seq(&self, user_id: &str) -> anyhow::Result<i64> {
+        let ctx = self.load_context(user_id)?;
+        let conn = self.conn();
+        super::context_events::latest_seq(&conn, &Self::context_key(&ctx.user_id, &ctx.session_id))
+    }
+
+    /// Changes of the user's active context after `after`, oldest first.
+    pub fn context_events(&self, user_id: &str, after: i64, limit: usize) -> anyhow::Result<Vec<serde_json::Value>> {
+        let ctx = self.load_context(user_id)?;
+        let conn = self.conn();
+        super::context_events::list(&conn, &Self::context_key(&ctx.user_id, &ctx.session_id), after, limit)
+    }
+
+    fn merge_context_with_actor(&self, user_id: &str, updates: serde_json::Value, from_agent: bool, expected_seq: Option<i64>) -> anyhow::Result<Context> {
         anyhow::ensure!(updates.is_object(), "Context updates must be an object");
         let mut ctx = self.load_context(user_id)?;
         let before_contract_update = ctx.clone();
@@ -708,7 +745,12 @@ impl Database {
             }
         }
         if from_agent { crate::gateway::action_contracts::validate_context(&before_contract_update, &ctx)?; }
-        self.save_context(&ctx)?;
+        // Attribute the change: the model's set_context, else an explicit scope, else the user.
+        let source = if from_agent { "model:set_context".to_string() } else {
+            let scoped = super::context_events::current_source();
+            if scoped == "runtime" { "user".to_string() } else { scoped }
+        };
+        self.save_context_logged(&ctx, &source, expected_seq)?;
         Ok(ctx)
     }
 

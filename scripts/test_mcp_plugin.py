@@ -8,6 +8,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -63,6 +64,8 @@ def mock():
                 continue
             if mode == "env":
                 value = json.dumps(sorted(os.environ))
+            elif mode == "path":
+                value = os.environ["PATH"]
             elif mode == "secret":
                 value = os.environ["TOKEN"]
                 print(value, file=sys.stderr, flush=True)
@@ -87,16 +90,25 @@ class MCPTests(unittest.TestCase):
         self.config = Path(self.temp.name) / "servers.json"
         self.log = Path(self.temp.name) / "requests.jsonl"
 
-    def invoke(self, action="call", args=None, mode="normal", spec=None):
+    def invoke(self, action="call", args=None, mode="normal", spec=None, env_overrides=None):
         server = {"command": sys.executable, "args": [str(Path(__file__).resolve()), "--mock", mode],
-                  "allow_tools": ["echo"], "env_from": {"TOKEN": "MOCK_TOKEN", "MOCK_LOG": "MOCK_LOG"}, "timeout_secs": 1}
+                  "allow_tools": ["echo"], "env_from": {"TOKEN": "mcp_service_token", "MOCK_LOG": "mock_log"}, "timeout_secs": 1}
         if spec:
             server.update(spec)
         self.config.write_text(json.dumps({"servers": {"local": server}}))
-        env = {**os.environ, "PRAXIS_MCP_CONFIG": str(self.config), "MOCK_TOKEN": "synthetic-private-token",
-               "MOCK_LOG": str(self.log), "PRIVATE_ADMIN_KEY": "must-not-inherit", "PYTHONDONTWRITEBYTECODE": "1",
-               "PLUGIN_SECRETS": json.dumps({"other_key": "another-private-token"}),
+        env = {**os.environ, "PRAXIS_MCP_CONFIG": str(self.config),
+               "PRIVATE_ADMIN_KEY": "must-not-inherit", "PRIVATE_PROVIDER_KEY": "provider-must-not-inherit",
+               "PYTHONDONTWRITEBYTECODE": "1",
+               "PLUGIN_SECRETS": json.dumps({"mcp_service_token": "synthetic-private-token", "mock_log": str(self.log),
+                                             "other_key": "another-private-token"}),
                "PLUGIN_ARGS": json.dumps(args if args is not None else {"server": "local", "tool": "echo", "arguments": {"text": "Grüße"}})}
+        for key in ("mcp_service_token", "mock_log"):
+            env.pop(key, None)
+        for key, value in (env_overrides or {}).items():
+            if value is None:
+                env.pop(key, None)
+            else:
+                env[key] = value
         result = subprocess.run([sys.executable, str(ROOT / "plugins/mcp" / (action + ".py"))], env=env, capture_output=True, text=True, timeout=5)
         self.assertEqual(result.stderr, "")
         self.assertNotIn("synthetic-private-token", result.stdout)
@@ -156,11 +168,63 @@ class MCPTests(unittest.TestCase):
                 self.assertNotEqual(code, 0)
                 self.assertEqual(self.requests(), [])
 
+    def test_scoped_secret_only_and_ambient_conflict(self):
+        for overrides in ({}, {"mcp_service_token": "ambient-must-not-win"}):
+            with self.subTest(overrides=overrides):
+                code, result = self.invoke(mode="secret", env_overrides=overrides)
+                self.assertEqual(code, 0)
+                self.assertEqual(result["result"]["content"][0]["text"], "[REDACTED]")
+
+    def test_ambient_secret_never_used(self):
+        for envelope in (None, "{}", json.dumps({"mock_log": str(self.log)})):
+            with self.subTest(envelope=envelope):
+                code, result = self.invoke(env_overrides={"PLUGIN_SECRETS": envelope,
+                                                         "mcp_service_token": "synthetic-private-token",
+                                                         "mock_log": str(self.log)})
+                self.assertNotEqual(code, 0)
+                self.assertEqual(result["error"], "missing_environment")
+                self.assertEqual(self.requests(), [])
+
+    def test_invalid_secret_envelope_fails_before_spawn(self):
+        valid = {"mcp_service_token": "synthetic-private-token", "mock_log": str(self.log)}
+        envelopes = ["not JSON", "[]", "null", '"string"', "123", "NaN",
+                     '{"key":"first","key":"second"}']
+        envelopes.extend(json.dumps({**valid, "other_key": value}) for value in (None, 1, [], {}, "bad\0value"))
+        envelopes.extend(json.dumps({**valid, "mcp_service_token": value}) for value in ("", "bad\0value"))
+        for envelope in envelopes:
+            with self.subTest(envelope=envelope[:100]):
+                code, _ = self.invoke(env_overrides={"PLUGIN_SECRETS": envelope,
+                                                    "mcp_service_token": "synthetic-private-token",
+                                                    "mock_log": str(self.log)})
+                self.assertNotEqual(code, 0)
+                self.assertEqual(self.requests(), [])
+
+    def test_secret_envelope_size_limit(self):
+        # A >512 KiB env entry exceeds Linux exec limits, so test in-process.
+        sys.path.insert(0, str(ROOT / "plugins/mcp"))
+        try:
+            import bridge
+            with patch.dict(os.environ, {"PLUGIN_SECRETS": " " * (bridge.LIMIT + 1)}):
+                with self.assertRaises(bridge.MCPError):
+                    bridge.environment({})
+        finally:
+            sys.path.pop(0)
+
+    def test_safe_path_forwarding(self):
+        code, result = self.invoke(mode="path", env_overrides={"PATH": "/safe/bin:/usr/bin"})
+        self.assertEqual(code, 0)
+        self.assertEqual(result["result"]["content"][0]["text"], "/safe/bin:/usr/bin")
+
+    def test_untransferred_scoped_secret_redacted(self):
+        code, result = self.invoke(args={"server": "local", "tool": "echo", "arguments": {"text": "another-private-token"}})
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(result["result"]["content"][0]["text"]), {"text": "[REDACTED]"})
+
     def test_environment_isolation_and_secret_redaction(self):
         code, result = self.invoke(mode="env")
         self.assertEqual(code, 0)
         child_env = json.loads(result["result"]["content"][0]["text"])
-        for key in ("PRIVATE_ADMIN_KEY", "PLUGIN_ARGS", "PLUGIN_CONTEXT", "PLUGIN_SECRETS", "MOCK_TOKEN", "PRAXIS_MCP_CONFIG"):
+        for key in ("PRIVATE_ADMIN_KEY", "PLUGIN_ARGS", "PLUGIN_CONTEXT", "PLUGIN_SECRETS", "MOCK_TOKEN", "mcp_service_token", "mock_log", "PRIVATE_PROVIDER_KEY", "PRAXIS_MCP_CONFIG"):
             self.assertNotIn(key, child_env)
         code, result = self.invoke(mode="secret")
         self.assertEqual(code, 0)

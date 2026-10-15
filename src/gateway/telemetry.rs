@@ -136,17 +136,43 @@ pub async fn chat(
         id: uuid::Uuid::new_v4().to_string(),
         limits: limits(&state.db, ctx)?,
     };
-    state
-        .llm
-        .get()
-        .streaming_chat_traced(request, provider, &ctx.user_id, &trace)
-        .await
+    // Provider workers get an opaque per-conversation key, never the id itself.
+    let conversation = super::receipt_sign::conversation_key(&ctx.user_id);
+    let router = state.llm.get();
+    let call = router.streaming_chat_traced(request, provider, &ctx.user_id, &trace);
+    let response = praxis_provider_api::conversation::scope(Some(conversation), call).await?;
+    if let Some(usage) = &response.usage {
+        let payload = context_payload(ctx, usage.prompt_tokens, router.context_window(provider));
+        crate::runtime::events::send(&ctx.user_id, "context", &payload.to_string());
+    }
+    Ok(response)
+}
+
+/// What the TUI's context meter shows: how full the last request was, against
+/// the model's real window when the provider knows it.
+pub fn context_payload(ctx: &Context, prompt_tokens: u32, window: Option<u64>) -> Value {
+    json!({
+        "prompt_tokens": prompt_tokens,
+        "window": window,
+        "compaction_enabled": ctx.settings.compaction_enabled,
+        "compaction_threshold": super::compaction::threshold(&ctx.settings),
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use crate::gateway::llm::error::ProviderError;
     use super::*;
+    #[test]
+    fn context_event_reports_fill_against_the_known_window() {
+        let ctx = Context { user_id: "meter".into(), ..Default::default() };
+        let payload = context_payload(&ctx, 6200, Some(16384));
+        assert_eq!(payload["prompt_tokens"], 6200);
+        assert_eq!(payload["window"], 16384);
+        assert_eq!(payload["compaction_threshold"], super::super::compaction::threshold(&ctx.settings));
+        assert!(context_payload(&ctx, 10, None)["window"].is_null(), "unknown stays unknown");
+    }
+
     #[test]
     fn execution_telemetry_uses_real_compaction_threshold_and_requires_older_turns() {
         let dir = tempfile::tempdir().unwrap();

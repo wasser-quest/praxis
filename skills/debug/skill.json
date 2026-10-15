@@ -1,8 +1,0 @@
-{
-  "name": "debug",
-  "required_parameters": [
-    "error"
-  ],
-  "description": "Debug errors and exceptions. Use this skill when the user encounters an error, stack trace, or unexpected behavior.",
-  "version": "1.1.0"
-}

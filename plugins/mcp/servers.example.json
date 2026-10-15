@@ -4,7 +4,7 @@
       "command": "/absolute/path/to/python3",
       "args": ["/absolute/path/to/trusted_mcp_server.py"],
       "cwd": "/absolute/path/to/server-workdir",
-      "env_from": {"SERVICE_TOKEN": "MY_MCP_SERVICE_TOKEN"},
+      "env_from": {"SERVICE_TOKEN": "mcp_service_token"},
       "allow_tools": ["lookup"],
       "timeout_secs": 20
     }

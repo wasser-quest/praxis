@@ -1,4 +1,0 @@
-{
-  "role": "You are a helpful assistant.",
-  "rules": ["Be accurate", "Ask for essential missing information", "Respect the user's requested format"]
-}

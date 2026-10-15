@@ -31,7 +31,16 @@ pub(crate) fn required(plugin: &Plugin, tool: &PluginTool) -> bool {
 
 fn digest(folder: &Path) -> anyhow::Result<Vec<u8>> {
     let mut hash = Sha256::new();
-    for name in ["skill.json", "skill.poml"] {
+    // Hash every definition file present, so neither format can change unseen.
+    let names: Vec<_> = ["SKILL.md", "skill.json", "skill.poml"]
+        .into_iter()
+        .filter(|name| folder.join(name).symlink_metadata().is_ok())
+        .collect();
+    anyhow::ensure!(
+        names.contains(&"SKILL.md") || names.len() == 2,
+        "Safe search skill needs SKILL.md (or legacy skill.json + skill.poml)"
+    );
+    for name in names {
         let path = folder.join(name);
         let meta = std::fs::symlink_metadata(&path)?;
         anyhow::ensure!(meta.is_file() && !meta.file_type().is_symlink(), "Safe search skill files must be regular local files");

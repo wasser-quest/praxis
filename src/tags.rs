@@ -304,8 +304,6 @@ Available tags:
 - `§learn="pref: <key>=<value>"` — Learn a user preference
 - `§learn="topic: <topic>"` — Track a conversation topic
 
-For detailed feedback, use the feedback template (tasks/feedback) which provides structured analysis with summary, issues, and recommendations.
-
 IMPORTANT: Tags are stripped before the user sees your response. Put them at the very END.
 "#
 }

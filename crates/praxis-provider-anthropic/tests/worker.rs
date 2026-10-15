@@ -30,6 +30,7 @@ fn request() -> RequestEnvelope {
             thinking: None,
         },
         continuation: None,
+        conversation: None,
     }
 }
 

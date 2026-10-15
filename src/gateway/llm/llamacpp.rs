@@ -13,6 +13,8 @@ pub struct LlamaCppProvider {
     model: String,
     base_url: String,
     client: reqwest::Client,
+    /// Last `n_ctx` reported by the server's /props (0 = not yet known).
+    pub(super) window: std::sync::atomic::AtomicU64,
 }
 
 impl LlamaCppProvider {
@@ -22,6 +24,7 @@ impl LlamaCppProvider {
             model,
             base_url,
             client: super::http::client(),
+            window: std::sync::atomic::AtomicU64::new(0),
         }
     }
 }
@@ -368,6 +371,11 @@ impl LLMProvider for LlamaCppProvider {
             .collect();
         models.sort_by(|a, b| a.id.cmp(&b.id));
         Ok(models)
+    }
+
+    fn context_window(&self) -> Option<u64> {
+        let window = self.window.load(std::sync::atomic::Ordering::Relaxed);
+        (window > 0).then_some(window)
     }
 
     fn name(&self) -> &str {

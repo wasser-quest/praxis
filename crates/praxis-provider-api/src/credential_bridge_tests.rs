@@ -43,6 +43,7 @@ fn fixture() -> (WorkerLaunch, RequestEnvelope) {
             model: None,
             thinking: None,
         },
+        conversation: None,
     };
     (launch, request)
 }

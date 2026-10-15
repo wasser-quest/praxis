@@ -5,7 +5,7 @@ edition = "2021"
 description = "AI Agent Platform — Praxis"
 
 [workspace]
-members = ["crates/xis", "crates/praxis-vm", "crates/praxis-plugin-api", "crates/praxis-channel-discord", "crates/praxis-voice", "crates/praxis-comfyui", "crates/praxis-provider-api", "crates/praxis-provider-http", "crates/praxis-provider-openai", "crates/praxis-provider-anthropic", "crates/praxis-provider-ollama", "crates/praxis-gpu-router", "crates/praxis-tui", "crates/praxis-vm-web", "crates/praxis-vm-worker", "crates/praxis-dashboard", "crates/praxis-legacy-file-ops", "crates/praxis-shell", "crates/praxis-vision", "crates/praxis-sandbox"]
+members = ["crates/xis", "crates/praxis-vm", "crates/praxis-plugin-api", "crates/praxis-channel-discord", "crates/praxis-voice", "crates/praxis-comfyui", "crates/praxis-provider-api", "crates/praxis-provider-http", "crates/praxis-provider-openai", "crates/praxis-provider-anthropic", "crates/praxis-provider-ollama", "crates/praxis-provider-llamacpp", "crates/praxis-gpu-router", "crates/praxis-tui", "crates/praxis-vm-web", "crates/praxis-vm-worker", "crates/praxis-dashboard", "crates/praxis-legacy-file-ops", "crates/praxis-shell", "crates/praxis-vision", "crates/praxis-sandbox"]
 default-members = ["."]
 resolver = "2"
 
@@ -35,6 +35,9 @@ songbird = ["praxis-channel-discord/voice"]
 vosk = ["voice_vosk"]
 
 [dependencies]
+# Prompt templates (Markdown + Jinja) and SKILL.md front matter.
+minijinja = { version = "2", default-features = false, features = ["builtins", "macros", "multi_template", "serde", "json", "loader", "fuel", "adjacent_loop_items", "debug"] }
+serde_yaml_ng = "0.10"
 praxis-plugin-api = { path = "crates/praxis-plugin-api" }
 praxis-sandbox = { path = "crates/praxis-sandbox" }
 praxis-provider-api = { path = "crates/praxis-provider-api" }
@@ -42,6 +45,7 @@ praxis-provider-http = { path = "crates/praxis-provider-http" }
 praxis-provider-openai = { path = "crates/praxis-provider-openai" }
 praxis-provider-anthropic = { path = "crates/praxis-provider-anthropic" }
 praxis-provider-ollama = { path = "crates/praxis-provider-ollama" }
+praxis-provider-llamacpp = { path = "crates/praxis-provider-llamacpp" }
 praxis-comfyui = { path = "crates/praxis-comfyui" }
 praxis-voice = { path = "crates/praxis-voice", optional = true }
 praxis-channel-discord = { path = "crates/praxis-channel-discord", optional = true }

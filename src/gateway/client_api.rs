@@ -10,6 +10,8 @@ pub fn routes() -> Router<GatewayState> {
         .route("/v1/messages/:user", axum::routing::get(messages).delete(clear))
         .route("/v1/context/:user", axum::routing::get(context).delete(delete))
         .route("/v1/context/:user/fork", axum::routing::post(fork))
+        .route("/v1/context/:user/events", axum::routing::get(context_events))
+        .route("/v1/context/:user/changes", axum::routing::post(change_context))
         .route("/v1/context/exec", axum::routing::post(exec))
         .route("/v1/models", axum::routing::get(models))
         .route("/v1/providers", axum::routing::get(providers))
@@ -42,6 +44,56 @@ async fn messages(State(s): State<GatewayState>, Path(user): Path<String>) -> Re
 async fn context(State(s): State<GatewayState>, Path(user): Path<String>) -> Result<Json<Value>, StatusCode> {
     Ok(Json(serde_json::to_value(s.db.load_context(&user).map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?).map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?))
 }
+/// The context's change log after `after` (default 0), oldest first, plus the
+/// current seq. Clients poll or reconnect with the last seq they saw.
+async fn context_events(
+    State(s): State<GatewayState>,
+    Path(user): Path<String>,
+    axum::extract::Query(query): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let number = |key: &str, default: i64| -> Result<i64, (StatusCode, Json<Value>)> {
+        query.get(key).map_or(Ok(default), |v| v.parse().map_err(|_| bad(&format!("{key} must be a number"))))
+    };
+    let (after, limit) = (number("after", 0)?, number("limit", 100)?);
+    let events = s.db.context_events(&user, after, limit.clamp(1, 1000) as usize).map_err(internal)?;
+    let seq = s.db.context_seq(&user).map_err(internal)?;
+    Ok(Json(json!({"seq": seq, "events": events})))
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ChangeRequest {
+    /// Dotted paths or nested objects, as accepted by `/context set`.
+    set: Value,
+    /// Apply only if the context is still at this seq; 409 otherwise.
+    #[serde(default)]
+    expected_seq: Option<i64>,
+}
+
+/// Append a user change. Same validation as `/context set`; with
+/// `expected_seq` it never overwrites a change the client has not seen.
+async fn change_context(
+    State(s): State<GatewayState>,
+    Path(user): Path<String>,
+    Json(request): Json<ChangeRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    match s.db.change_context(&user, request.set, request.expected_seq) {
+        Ok(_) => Ok(Json(json!({"success": true, "seq": s.db.context_seq(&user).map_err(internal)?}))),
+        Err(error) => match error.downcast_ref::<crate::db::context_events::Conflict>() {
+            Some(conflict) => Err((StatusCode::CONFLICT, Json(json!({"error": conflict.to_string(), "seq": conflict.current})))),
+            None => Err(bad(&error.to_string())),
+        },
+    }
+}
+
+fn bad(message: &str) -> (StatusCode, Json<Value>) {
+    (StatusCode::BAD_REQUEST, Json(json!({"error": message})))
+}
+
+fn internal(_: anyhow::Error) -> (StatusCode, Json<Value>) {
+    (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "internal error"})))
+}
+
 async fn clear(State(s): State<GatewayState>, Path(user): Path<String>) -> Result<Json<Value>, StatusCode> {
     if super::task_control::cancellation(&user).is_some() { return Err(StatusCode::CONFLICT); }
     s.db.clear_messages(&user).map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;

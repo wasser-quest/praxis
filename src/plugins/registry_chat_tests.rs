@@ -37,6 +37,8 @@ write(hello)
 request=read()
 with open({path},'a') as marker:
     marker.write(json.dumps(request['context'])+'\n')
+with open({path}+'.conversation','a') as marker:
+    marker.write(json.dumps(request.get('conversation'))+'\n')
 state=request.get('continuation')
 if state:
     assert state['payload']==list(b'opaque not JSON')
@@ -80,10 +82,15 @@ write({{'version':request['version'],'context':request['context'],'seq':1,'event
             pieces.lock().unwrap().push(text);
         }
     };
-    let first = provider
-        .chat_attempt(request(), None, Some(&callback))
-        .await
-        .unwrap();
+    // The host passes its opaque conversation key through; without a scope
+    // the field is omitted entirely.
+    let key = "00112233445566778899aabbccddeeff";
+    let first = praxis_provider_api::conversation::scope(
+        Some(key.into()),
+        provider.chat_attempt(request(), None, Some(&callback)),
+    )
+    .await
+    .unwrap();
     assert_eq!(*pieces.lock().unwrap(), vec!["piece"]);
     assert_eq!(first.response.content.as_deref(), Some("answer"));
     assert!(matches!(
@@ -101,6 +108,8 @@ write({{'version':request['version'],'context':request['context'],'seq':1,'event
         .map(|line| serde_json::from_str(line).unwrap())
         .collect();
     assert_eq!(contexts.len(), 2);
+    let conversations = std::fs::read_to_string(marker.with_extension("conversation")).unwrap();
+    assert_eq!(conversations.lines().collect::<Vec<_>>(), vec![format!("\"{key}\""), "null".into()]);
     assert_eq!(contexts[0]["binding"], contexts[1]["binding"]);
     assert_ne!(contexts[0]["nonce"], contexts[1]["nonce"]);
     assert_ne!(contexts[0]["request_id"], contexts[1]["request_id"]);

@@ -318,6 +318,10 @@ impl LLMProvider for OllamaProvider {
         Ok(models)
     }
 
+    fn context_window(&self) -> Option<u64> {
+        self.num_ctx
+    }
+
     fn name(&self) -> &str {
         "ollama"
     }

@@ -144,6 +144,10 @@ fn audio_context_saves_publish_only_web_tts_permission() {
         let event = rx.try_recv().expect("context edits must update connected dashboards");
         assert_eq!(event.event, "chat_tts_settings");
         assert_eq!(serde_json::from_str::<serde_json::Value>(&event.data).unwrap(), serde_json::json!({"enabled": enabled}));
+        // The change log announces which paths changed, never their values.
+        let change = rx.try_recv().expect("context edits are announced");
+        assert_eq!(change.event, "context_changed");
+        assert!(!change.data.contains("do not publish") && !change.data.contains("\"after\""), "{}", change.data);
         assert!(rx.try_recv().is_err());
     }
     db.delete_context(&user).unwrap();
@@ -190,6 +194,7 @@ async fn audio_disable_during_synthesis_keeps_replay_without_late_notification()
         }).await.unwrap();
         assert_eq!(db.get_message_audio(&user, id).unwrap(), Some(("audio/wav".into(), audio.to_vec())));
         assert_eq!(rx.recv().await.unwrap().event, "chat_tts_settings");
+        assert_eq!(rx.recv().await.unwrap().event, "context_changed");
         assert!(tokio::time::timeout(std::time::Duration::from_millis(100), rx.recv()).await.is_err(),
             "late synthesis must not announce chat_tts after OFF");
         crate::runtime::events::remove(&user);

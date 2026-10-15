@@ -207,6 +207,12 @@ async fn run_agent_loop_inner(
     // selected state's budget. Later role changes/tools cannot refill it.
     let turn_limit = ctx.settings.max_llm_turns.unwrap_or(config.max_turns).clamp(1, 128);
     let tool_limit = ctx.settings.max_tool_calls.unwrap_or(config.max_tool_calls).clamp(0, 128) as usize;
+    // Budgets bound how much a task does; the guard notices it repeating itself.
+    let mut guard = super::loop_guard::LoopGuard::new(workflow.limits.clone());
+    let mut abort_reason: Option<String> = None;
+    // `[on]` rules see tool outcomes and context changes logged after this point.
+    let mut rules = super::event_rules::RuleState::default();
+    let mut seen_seq = state.db.context_seq(user_id)?;
     state.db.save_context(&ctx)?;
     // Store the RAW user input; render_user runs per request (raw-storing policy).
     let input_message_id = state.db.add_message(
@@ -247,6 +253,12 @@ async fn run_agent_loop_inner(
         crate::gateway::compaction::before_request(state, user_id).await?;
         // Refresh after tools and injected inputs; route BEFORE rendering.
         ctx = crate::gateway::decision_routing::prepare(state, user_id, &user_message, Some(turn), None).await?;
+        let mut guard_warnings = Vec::new();
+        match guard.state(ctx.active_state.as_deref()) {
+            super::loop_guard::Verdict::Abort(reason) => { abort_reason = Some(reason); break; }
+            super::loop_guard::Verdict::Warn(warning) => guard_warnings.push(warning),
+            super::loop_guard::Verdict::Ok => {}
+        }
         let system_prompt = crate::gateway::prompt::render_system(state, &ctx, &user_message).await?;
         let mut messages = vec![ChatMessage {
             reasoning_content: None,
@@ -501,6 +513,13 @@ role: "system".to_string(),
             );
         }
 
+        match guard.reply(response.content.as_deref().unwrap_or("")) {
+            // Drop the degenerate response itself: no half-stored tool calls.
+            super::loop_guard::Verdict::Abort(reason) => { abort_reason = Some(reason); break; }
+            super::loop_guard::Verdict::Warn(warning) => guard_warnings.push(warning),
+            super::loop_guard::Verdict::Ok => {}
+        }
+
         // Handle tool calls
         if let Some(tool_calls) = &response.tool_calls {
             current_tool_ids.extend(tool_calls.iter().map(|call| call.id.clone()));
@@ -538,12 +557,22 @@ role: "system".to_string(),
                 }
             }
 
+            let mut outcomes: Vec<(String, bool)> = Vec::new();
             for tc in tool_calls {
                 let exhausted = tool_calls_used >= tool_limit;
                 tool_calls_used = tool_calls_used.saturating_add(1);
                 let args: serde_json::Value = serde_json::from_str(&tc.function.arguments).unwrap_or_default();
+                if abort_reason.is_none() {
+                    match guard.tool_call(&tc.function.name, &tc.function.arguments) {
+                        super::loop_guard::Verdict::Abort(reason) => abort_reason = Some(reason),
+                        super::loop_guard::Verdict::Warn(warning) => guard_warnings.push(warning),
+                        super::loop_guard::Verdict::Ok => {}
+                    }
+                }
                 let skipped = if should_stop(user_id).await {
                     Some("Task cancelled; tool not executed".to_string())
+                } else if abort_reason.is_some() {
+                    Some("Loop guard stopped the task; tool not executed".to_string())
                 } else if exhausted {
                     Some("Maximum tool calls reached; tool not executed".to_string())
                 } else if !tool_names.contains(&tc.function.name)
@@ -559,6 +588,10 @@ role: "system".to_string(),
                     let mut message = crate::db::messages::Message::tool(format!("Error: {reason}"), tc.id.clone());
                     message.tool_name = Some(tc.function.name.clone());
                     state.db.add_message(user_id, &message)?;
+                    if abort_reason.is_none() {
+                        record_guard(&mut guard, &mut abort_reason, &mut guard_warnings, false);
+                    }
+                    outcomes.push((tc.function.name.clone(), false));
                     continue;
                 }
 
@@ -612,12 +645,19 @@ role: "system".to_string(),
                 }
 
                 let tool_start_time = chrono::Local::now();
-                let result = execute_tool_call_in(std::path::Path::new(&state.config.root_dir), &state.db, user_id, tc, &state.plugins).await;
+                // Context changes made by the tool are logged with its name.
+                let result = crate::db::context_events::with_source(
+                    format!("tool:{}", tc.function.name),
+                    execute_tool_call_in(std::path::Path::new(&state.config.root_dir), &state.db, user_id, tc, &state.plugins),
+                ).await;
                 // The tool may have changed settings, state, or custom_data.
                 // Start history/screenshot updates from that fresh snapshot.
                 ctx = state.db.load_context(user_id)?;
                 let tool_duration = chrono::Local::now().signed_duration_since(tool_start_time);
                 let mut final_result = result.clone();
+                let success = crate::gateway::tool_results::display_success(&result);
+                record_guard(&mut guard, &mut abort_reason, &mut guard_warnings, success);
+                outcomes.push((tc.function.name.clone(), success));
                 let mut image_content_parts: Option<Vec<serde_json::Value>> = None;
 
                 // Record tool call in custom_data.tool_history and expose used_tools at root
@@ -788,6 +828,13 @@ role: "system".to_string(),
                 state.db.save_context(&ctx)?;
                 // The attempt was charged before validation/execution.
             }
+            if abort_reason.is_none() {
+                run_rules(state, user_id, &workflow, &mut rules, &mut seen_seq, &outcomes, &mut abort_reason).await?;
+            }
+            if abort_reason.is_some() {
+                break;
+            }
+            add_guard_warnings(state, user_id, &mut guard_warnings)?;
             ctx = state.db.load_context(user_id)?;
             if ctx.settings.done {
                 if let Err(error) = super::action_contracts::require(user_id, "_complete") {
@@ -977,6 +1024,7 @@ role: "system".to_string(),
             let mut message = crate::db::messages::Message::assistant(format!("Execution guard rejected completion/transition: {error}"));
             message.role = "system".into();
             state.db.add_message(user_id, &message)?;
+            add_guard_warnings(state, user_id, &mut guard_warnings)?;
             continue;
         }
 
@@ -1003,6 +1051,9 @@ role: "system".to_string(),
             crate::gateway::llm::error::ErrorKind::Cancelled,
         ).into());
     }
+    if let Some(reason) = abort_reason {
+        return Err(abort_task(state, user_id, &workflow, guard.limits(), &reason));
+    }
     if turn_limit_reached {
         anyhow::bail!("Agent turn limit reached after {turn} LLM turns before a final answer. Tool results are saved; increase settings.max_llm_turns to allow a longer task.");
     }
@@ -1024,6 +1075,135 @@ role: "system".to_string(),
         total_tokens: cumulative_total_tokens,
         generation_ms: cumulative_generation_ms,
     })
+}
+
+/// Feed this round's tool outcomes and newly logged context changes to the
+/// workflow's `[on]` rules, then apply what they trigger.
+async fn run_rules(
+    state: &GatewayState,
+    user_id: &str,
+    workflow: &sm::StateMachine,
+    rules: &mut super::event_rules::RuleState,
+    seen_seq: &mut i64,
+    outcomes: &[(String, bool)],
+    abort_reason: &mut Option<String>,
+) -> anyhow::Result<()> {
+    use super::event_rules::{Action, Event, RULE_SOURCE};
+    if workflow.on_rules.is_empty() {
+        return Ok(());
+    }
+    let mut events: Vec<Event> = outcomes
+        .iter()
+        .map(|(name, success)| Event::Tool { name: name.clone(), success: *success })
+        .collect();
+    for logged in state.db.context_events(user_id, *seen_seq, 200)? {
+        *seen_seq = (*seen_seq).max(logged["seq"].as_i64().unwrap_or(0));
+        let source = logged["source"].as_str().unwrap_or("runtime").to_string();
+        for change in logged["changes"].as_array().into_iter().flatten() {
+            if let Some(path) = change["path"].as_str() {
+                events.push(Event::Changed { path: path.to_string(), source: source.clone() });
+            }
+        }
+    }
+    let actions: Vec<Action> = events.iter().flat_map(|event| rules.handle(&workflow.on_rules, event)).collect();
+    for action in actions {
+        tracing::info!(user_id, ?action, "Workflow [on] rule fired");
+        match action {
+            Action::State { name } => {
+                let ctx = state.db.load_context(user_id)?;
+                let mut value = serde_json::to_value(&ctx)?;
+                if sm::transition_to(workflow, &mut value, &name) {
+                    let mut next: crate::db::contexts::Context = serde_json::from_value(value)?;
+                    next.settings.active_state = next.active_state.clone();
+                    crate::db::context_events::with_source(RULE_SOURCE, async { state.db.save_context(&next) }).await?;
+                } else {
+                    add_system_note(state, user_id, &format!("Workflow rule could not switch to state {name}: its guard is not satisfied."))?;
+                }
+            }
+            Action::Set { path, value } => {
+                let update = serde_json::json!({ path.clone(): value });
+                if let Err(error) = crate::db::context_events::with_source(RULE_SOURCE, async { state.db.merge_context(user_id, update) }).await {
+                    add_system_note(state, user_id, &format!("Workflow rule could not set {path}: {error}"))?;
+                }
+            }
+            Action::Note { text } => add_system_note(state, user_id, &format!("Workflow rule: {text}"))?,
+            Action::Stop { text } => {
+                *abort_reason = Some(format!("workflow rule: {text}"));
+                break;
+            }
+        }
+    }
+    // Our own writes are logged too; rules never react to them.
+    *seen_seq = state.db.context_seq(user_id)?;
+    Ok(())
+}
+
+fn add_system_note(state: &GatewayState, user_id: &str, text: &str) -> anyhow::Result<()> {
+    let mut message = crate::db::messages::Message::assistant(text.to_string());
+    message.role = "system".into();
+    state.db.add_message(user_id, &message)?;
+    Ok(())
+}
+
+fn record_guard(
+    guard: &mut super::loop_guard::LoopGuard,
+    abort_reason: &mut Option<String>,
+    warnings: &mut Vec<String>,
+    success: bool,
+) {
+    match guard.tool_result(success) {
+        super::loop_guard::Verdict::Abort(reason) => *abort_reason = Some(reason),
+        super::loop_guard::Verdict::Warn(warning) => warnings.push(warning),
+        super::loop_guard::Verdict::Ok => {}
+    }
+}
+
+/// Persist each distinct warning once as a system note for the next turn.
+fn add_guard_warnings(state: &GatewayState, user_id: &str, warnings: &mut Vec<String>) -> anyhow::Result<()> {
+    warnings.dedup();
+    for warning in warnings.drain(..) {
+        tracing::warn!(user_id, %warning, "Loop guard warning");
+        let mut message = crate::db::messages::Message::assistant(format!("Loop guard: {warning}"));
+        message.role = "system".into();
+        state.db.add_message(user_id, &message)?;
+    }
+    Ok(())
+}
+
+/// Stop the task: record why, optionally move to the workflow's safe state,
+/// and tell the UI. Tool results that already ran stay in history.
+fn abort_task(
+    state: &GatewayState,
+    user_id: &str,
+    workflow: &crate::sm::StateMachine,
+    limits: &super::loop_guard::LoopLimits,
+    reason: &str,
+) -> anyhow::Error {
+    tracing::warn!(user_id, %reason, "Loop guard stopped the task");
+    let text = format!("Loop guard stopped the task: {reason}. Tool results are saved; rephrase the request or adjust [limits] in the workflow.");
+    let mut message = crate::db::messages::Message::assistant(text.clone());
+    message.role = "system".into();
+    if let Err(error) = state.db.add_message(user_id, &message) {
+        tracing::warn!(user_id, %error, "Could not record the loop guard stop");
+    }
+    if let Some(target) = &limits.on_abort {
+        let moved = state.db.load_context(user_id).ok().and_then(|ctx| {
+            let mut value = serde_json::to_value(&ctx).ok()?;
+            crate::sm::transition_to(workflow, &mut value, target).then_some(())?;
+            let mut ctx: crate::db::contexts::Context = serde_json::from_value(value).ok()?;
+            ctx.settings.active_state = ctx.active_state.clone();
+            state.db.save_context(&ctx).ok()
+        });
+        if moved.is_none() {
+            tracing::warn!(user_id, target, "Loop guard could not enter the on_abort state");
+        }
+    }
+    crate::runtime::events::send(
+        user_id,
+        "loop_guard",
+        &serde_json::json!({ "reason": reason, "on_abort": limits.on_abort }).to_string(),
+    );
+    anyhow::anyhow!(text)
 }
 
 /// Generate a compaction summary of the conversation using the LLM.
@@ -1299,3 +1479,91 @@ mod agent_tests {
 }
 
 include!("capability_dispatch_tests.rs");
+
+#[cfg(test)]
+mod on_rule_tests {
+    use super::*;
+
+    fn state() -> (tempfile::TempDir, GatewayState) {
+        let root = tempfile::tempdir().unwrap();
+        let db = crate::db::Database::new(&root.path().join("data")).unwrap();
+        let mut config = crate::config::Config::from_env();
+        config.root_dir = root.path().to_string_lossy().into_owned();
+        config.workspace_dir = None;
+        config.gateway_api_key = "on-rule-api-key-12345".into();
+        config.dashboard_admin_password = "on-rule-password".into();
+        let state = super::super::management_state(db, config, Default::default(), crate::plugins::PluginRegistry::new()).unwrap();
+        (root, state)
+    }
+
+    fn notes(state: &GatewayState, user: &str) -> Vec<String> {
+        state.db.get_messages(user, 100).unwrap().into_iter().filter(|m| m.role == "system").map(|m| m.content).collect()
+    }
+
+    #[tokio::test]
+    async fn on_rules_switch_state_set_values_notify_and_stop() {
+        let (_root, state) = state();
+        let user = "on-rules";
+        let workflow = sm::parse(
+            "[state work]\n[state debugger]\n[on]\n\
+             tool_failed execute_terminal x2 -> state debugger\n\
+             tool_ok write_file -> set sm_data.dirty = true\n\
+             changed sm_data.role by model -> note Re-read the plan\n\
+             changed sm_data -> note any change\n\
+             tool_failed read_file x3 -> stop too many read failures\n",
+        )
+        .unwrap();
+        state.db.merge_context(user, serde_json::json!({"active_state": "work"})).unwrap();
+        let mut rules = super::super::event_rules::RuleState::default();
+        let mut seen = state.db.context_seq(user).unwrap();
+        let mut abort = None;
+        let failed = |name: &str| vec![(name.to_string(), false)];
+
+        run_rules(&state, user, &workflow, &mut rules, &mut seen, &failed("execute_terminal"), &mut abort).await.unwrap();
+        assert_eq!(state.db.load_context(user).unwrap().active_state.as_deref(), Some("work"));
+        run_rules(&state, user, &workflow, &mut rules, &mut seen, &failed("execute_terminal"), &mut abort).await.unwrap();
+        let ctx = state.db.load_context(user).unwrap();
+        assert_eq!(ctx.active_state.as_deref(), Some("debugger"));
+        assert_eq!(ctx.settings.active_state.as_deref(), Some("debugger"));
+
+        run_rules(&state, user, &workflow, &mut rules, &mut seen, &[("write_file".into(), true)], &mut abort).await.unwrap();
+        assert_eq!(state.db.load_context(user).unwrap().sm_data["dirty"], true);
+        assert!(notes(&state, user).is_empty(), "the rule's own sm_data write does not trigger `changed sm_data`");
+
+        state.db.merge_context_from_agent(user, serde_json::json!({"sm_data.role": "code"})).unwrap();
+        run_rules(&state, user, &workflow, &mut rules, &mut seen, &[], &mut abort).await.unwrap();
+        assert_eq!(notes(&state, user), vec!["Workflow rule: Re-read the plan", "Workflow rule: any change"]);
+        run_rules(&state, user, &workflow, &mut rules, &mut seen, &[], &mut abort).await.unwrap();
+        assert_eq!(notes(&state, user).len(), 2, "each change is handled once");
+
+        let sources: Vec<String> = state.db.context_events(user, 0, 100).unwrap().iter().map(|e| e["source"].as_str().unwrap().to_string()).collect();
+        assert!(sources.iter().filter(|s| *s == "workflow:on").count() >= 2, "{sources:?}");
+
+        for _ in 0..3 {
+            run_rules(&state, user, &workflow, &mut rules, &mut seen, &failed("read_file"), &mut abort).await.unwrap();
+        }
+        assert_eq!(abort.as_deref(), Some("workflow rule: too many read failures"));
+    }
+
+    #[tokio::test]
+    async fn a_guarded_state_is_not_entered_by_a_rule() {
+        let (_root, state) = state();
+        let user = "on-rules-guarded";
+        let workflow = sm::parse(
+            "[state work]\n[state done]\n[checks]\nbuild = {\"program\":\"true\"}\n[guards]\ndone = [build]\n[on]\ntool_ok * -> state done\n",
+        );
+        let workflow = workflow.unwrap();
+        state.db.merge_context(user, serde_json::json!({"active_state": "work"})).unwrap();
+        let (mut rules, mut seen, mut abort) = (super::super::event_rules::RuleState::default(), 0, None);
+        run_rules(&state, user, &workflow, &mut rules, &mut seen, &[("anything".into(), true)], &mut abort).await.unwrap();
+        assert_eq!(state.db.load_context(user).unwrap().active_state.as_deref(), Some("work"));
+        assert!(notes(&state, user)[0].contains("guard is not satisfied"));
+    }
+
+    #[test]
+    fn workflows_reject_rules_that_target_missing_states() {
+        assert!(sm::parse("[state a]\n[on]\ntool_ok * -> state nowhere\n").is_err());
+        assert!(sm::parse("[state a]\n[on]\nbogus\n").is_err());
+        assert_eq!(sm::parse("[state a]\n[on]\ntool_ok * -> state a\n").unwrap().on_rules.len(), 1);
+    }
+}

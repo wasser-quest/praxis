@@ -1,0 +1,3 @@
+# Output Format
+
+Be concise and match the user's language and requested format. For actions, report the result and verification evidence, not a fictional execution transcript.

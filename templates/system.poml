@@ -1,4 +1,0 @@
-<poml>
-  <!-- Compatibility name for existing settings.system_template = system. -->
-  <include src="standard.poml" />
-</poml>

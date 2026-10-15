@@ -5,4 +5,8 @@ secrets.enc2
 secrets.json
 secrets.json.migrated
 /data
-pycache
+__pycache__/
+
+# Plugin binaries are build output: `praxis plugin install <dir> --build`
+# compiles them from the package's declared crate. Never commit them.
+plugins/*/bin/

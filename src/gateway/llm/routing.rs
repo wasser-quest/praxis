@@ -112,6 +112,12 @@ impl LLMRouter {
         self.policy.history_image_messages.min(2) as usize
     }
 
+    /// Context window of the provider a request would use, when known.
+    pub fn context_window(&self, provider: Option<&str>) -> Option<u64> {
+        let name = provider.unwrap_or(&self.default_provider);
+        self.find_provider(name).ok().and_then(|p| p.context_window())
+    }
+
     fn find_provider(&self, name: &str) -> Result<&dyn LLMProvider, anyhow::Error> {
         self.providers
             .iter()

@@ -42,6 +42,9 @@ pub enum AgentSignal {
 }
 
 pub async fn render(template_path: &str, context: &serde_json::Value) -> anyhow::Result<String> {
+    if super::jinja::handles(std::path::Path::new(template_path)) {
+        return super::jinja::render(std::path::Path::new(template_path), context, None);
+    }
     tracing::info!(template = %template_path, "[POML] rendering template");
     let poml_cli = std::env::var("POML_CLI").unwrap_or_else(|_| "poml".to_string());
 
@@ -93,6 +96,10 @@ pub(crate) async fn render_strict_candidate(
     destination: Option<&std::path::Path>,
 ) -> anyhow::Result<String> {
     use anyhow::Context;
+    // Markdown/Jinja templates render in-process; only legacy .poml needs Node.
+    if super::jinja::handles(std::path::Path::new(template_path)) {
+        return super::jinja::render(std::path::Path::new(template_path), context, destination);
+    }
     let cli = std::env::var("POML_CLI")
         .context("Set POML_CLI to the installed Microsoft POML JavaScript CLI path")?;
     let context_file = NamedTempFile::new()?;

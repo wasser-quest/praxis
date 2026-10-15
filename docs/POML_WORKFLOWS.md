@@ -1,5 +1,14 @@
 # Semantic templates, skills and statemachines
 
+> **Template format (2026-10):** shipped templates are Markdown with Jinja
+> expressions (`templates/**/*.md`), rendered in-process; see
+> `skills/prompt_templates/references/reference.md`. A `.md` file wins over a
+> `.poml` file of the same name; legacy `.poml` still renders with `POML_CLI`.
+> The `20-tasks`, `branching-coding`, `verified-implementation` and
+> `language-learning` workflows and their templates were removed; sections below
+> that mention them are historical. Shipped workflows: `standard`,
+> `standard-verified`, `verified-coding`, `verified-capabilities`.
+
 ## What selects the prompt
 
 1. Load the current user's context and plugin defaults.
@@ -168,6 +177,28 @@ Workflow groups are merged into `settings.tool_group_definitions` on every routi
 The model switches state by writing a context variable — the shipped `standard.sm` uses `set_context("sm_data.role", "<role>")` — and `[auto]` rules map that value to a state on the next routing pass (every LLM request, including tool-call follow-ups). The state then sets `settings.system_template` and `settings.activated_tools`, so instructions and tool allowance change together. `[transitions]` are only evaluated by `agent_next`; use `[auto]` for model-driven switching. A `settings.system_template` that no state of the active workflow produces is treated as a manual choice and disables routing until it is cleared.
 
 State variables persist in the context until another state overwrites them, so every state should declare the variables it depends on (`system_template`, `activated_tools`, `tool_discovery_mode`).
+
+### Abort conditions (`[limits]`)
+
+`max_llm_turns` and `max_tool_calls` bound how much a task may do; they do not notice a model that keeps doing the *same* thing. Every agent task therefore runs a loop guard. It warns the model once, one step before a limit, and then stops the task with a reason shown to the user. Tool results that already ran stay in history.
+
+```ini
+[limits]
+max_same_tool_call = 3    # same tool + same arguments back to back
+max_tool_errors = 4       # failed tool results in a row
+max_same_reply = 3        # identical assistant text in consecutive turns
+max_state_changes = 12    # state/role switches within one task
+max_repeated_chunks = 12  # one phrase repeated at the end of a response ("the the the …")
+on_abort = "standard"     # optional: state to enter after a stop
+```
+
+The values shown are the defaults, which apply without a `[limits]` section. `0` disables a check. Unknown keys and an `on_abort` state the workflow does not declare are parse errors. A degenerate response (`max_repeated_chunks`) is dropped without storing its tool calls. A stop emits a `loop_guard` event with the reason.
+
+### Reacting to events (`[on]`)
+
+`[on]` rules react to tool outcomes and logged context changes, e.g.
+`tool_failed execute_terminal x2 -> state debugger`. See
+[the context change log](CONTEXT_EVENTS.md#reacting-to-events-on-rules).
 
 ### Template includes
 

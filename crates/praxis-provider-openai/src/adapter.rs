@@ -98,7 +98,7 @@ impl LLMProvider for OpenAIProvider {
             "max_tokens": request.max_tokens,
         });
 
-        let mut outgoing = self.client.post(&url).json(&body);
+        let mut outgoing = praxis_provider_api::conversation::tag(self.client.post(&url).json(&body));
         if !self.api_key.trim().is_empty() {
             outgoing = outgoing.bearer_auth(&self.api_key);
         }

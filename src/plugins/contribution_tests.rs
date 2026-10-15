@@ -372,6 +372,7 @@ async fn registry_invocation_validates_before_spawn_and_preserves_safe_launch_er
             model: None,
             thinking: None,
         },
+        conversation: None,
     };
     let callback = |_: praxis_provider_api::StreamDelta| panic!("unvalidated delta delivered");
     for mode in ["cancelled", "version", "zero", "spent", "untrusted"] {

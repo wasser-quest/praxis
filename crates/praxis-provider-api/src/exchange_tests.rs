@@ -30,6 +30,7 @@ fn request() -> RequestEnvelope {
             model: None,
             thinking: None,
         },
+        conversation: None,
     }
 }
 async fn worker(mode: &str, sequence: u64) -> WorkerProcess {

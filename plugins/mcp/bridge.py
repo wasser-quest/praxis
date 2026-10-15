@@ -24,11 +24,11 @@ def fail(code):
     raise MCPError(code)
 
 
-def decode(raw):
+def decode(raw, object_pairs_hook=None):
     try:
         if isinstance(raw, bytes):
             raw = raw.decode("utf-8")
-        return json.loads(raw, parse_constant=lambda _: fail("invalid_json"))
+        return json.loads(raw, parse_constant=lambda _: fail("invalid_json"), object_pairs_hook=object_pairs_hook)
     except (ValueError, UnicodeError, RecursionError):
         fail("invalid_json")
 
@@ -77,18 +77,30 @@ def load_config():
 def environment(spec):
     # No provider/admin environment or plugin envelopes reach the MCP child.
     env = {k: os.environ[k] for k in ("PATH", "SYSTEMROOT", "WINDIR") if k in os.environ}
-    secrets = []
+    raw = os.environ.get("PLUGIN_SECRETS", "{}")
+    if len(raw.encode("utf-8")) > LIMIT:
+        fail("configuration")
+
+    def unique_keys(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                fail("invalid_secrets")
+            result[key] = value
+        return result
+
+    envelope = decode(raw, object_pairs_hook=unique_keys)
+    if not isinstance(envelope, dict) or any(not isinstance(v, str) or "\0" in v for v in envelope.values()):
+        fail("invalid_secrets")
+    secrets = [v for v in envelope.values() if v]
+    if sum(len(s.encode("utf-8")) for s in secrets) > LIMIT:
+        fail("configuration")
     for target, source in spec.get("env_from", {}).items():
-        value = os.environ.get(source)
+        # References select only host-declared, package-scoped credentials.
+        value = envelope.get(source)
         if not value:
             fail("missing_environment")
         env[target] = value
-        secrets.append(value)
-    envelope = decode(os.environ.get("PLUGIN_SECRETS", "{}"))
-    if isinstance(envelope, dict):
-        secrets.extend(v for v in envelope.values() if isinstance(v, str) and v)
-    if sum(len(s.encode("utf-8")) for s in secrets) > LIMIT:
-        fail("configuration")
     return env, secrets
 
 

@@ -22,6 +22,8 @@
 //!   results and provides history/reconnect recovery.
 
 mod app;
+mod context_log;
+mod context_meter;
 mod model;
 mod remote;
 mod sessions;

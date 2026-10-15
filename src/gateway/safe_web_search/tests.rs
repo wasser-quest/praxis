@@ -11,10 +11,14 @@ fn plugin(name: &str, tool: &str) -> Plugin {
 fn package(root: &Path, flags: serde_json::Value) -> PathBuf {
     let folder = root.join("skills/safe_web_search");
     std::fs::create_dir_all(&folder).unwrap();
-    let mut manifest = json!({"name":"safe_web_search","description":"fixture","required_parameters":["question"]});
-    manifest.as_object_mut().unwrap().extend(flags.as_object().unwrap().clone());
-    std::fs::write(folder.join("skill.json"), manifest.to_string()).unwrap();
-    std::fs::write(folder.join("skill.poml"), include_str!("../../../skills/safe_web_search/skill.poml")).unwrap();
+    // Keep the shipped body; replace the front matter with fixture flags.
+    let shipped = include_str!("../../../skills/safe_web_search/SKILL.md");
+    let (_, body) = crate::skills::split_front_matter(shipped).unwrap();
+    let mut front = String::from("name: safe_web_search\ndescription: fixture\nparameters: [question]\n");
+    for (key, value) in flags.as_object().unwrap() {
+        front.push_str(&format!("{key}: {value}\n"));
+    }
+    std::fs::write(folder.join("SKILL.md"), format!("---\n{front}---\n{body}")).unwrap();
     folder
 }
 fn install(user: &str, folder: &Path) {
@@ -70,7 +74,7 @@ fn safe_search_admission_requires_successful_current_phase_and_unchanged_files()
     assert!(require(&user, &p, &p.tools[0]).is_err());
     delivered(&user, &second).unwrap();
     require(&user, &p, &p.tools[0]).unwrap();
-    std::fs::write(folder.join("skill.poml"), "changed").unwrap();
+    std::fs::write(folder.join("SKILL.md"), "changed").unwrap();
     assert!(require(&user, &p, &p.tools[0]).is_err());
     assert!(apply(&user, &mut request()).is_err());
 }
@@ -219,14 +223,15 @@ async fn safe_search_real_automatic_hidden_skill_is_task_local_and_restored_on_f
     assert!(require(&user,disabled,&disabled.tools[0]).is_err());
     let p = plugin("brave_search", "brave_web_search");
     require(&user,&p,&p.tools[0]).unwrap();
-    std::fs::write(folder.join("skill.poml"), "invalid or modified").unwrap();
+    std::fs::write(folder.join("SKILL.md"), "invalid or modified").unwrap();
     assert!(apply(&user,&mut request()).is_err());
     drop(guard);
     assert_eq!(db.load_context(&user).unwrap().settings.active_skill, ctx.settings.active_skill);
     let _guard = task_control::begin(&user).unwrap();
     assert!(require(&user,&p,&p.tools[0]).is_err());
     // Strict-render failure cannot leave an activation or overwrite the saved choice.
-    std::fs::write(folder.join("skill.poml"), "<poml><p>{{missing_required_variable}}</p></poml>").unwrap();
+    let broken = std::fs::read_to_string(folder.join("SKILL.md")).unwrap() + "\n{% if %}\n";
+    std::fs::write(folder.join("SKILL.md"), broken).unwrap();
     assert!(prepare(&db,&plugins,dir.path(),&user,"question").await.is_err());
     assert!(require(&user,&p,&p.tools[0]).is_err());
     assert_eq!(db.load_context(&user).unwrap().settings.active_skill, ctx.settings.active_skill);

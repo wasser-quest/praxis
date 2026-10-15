@@ -1,7 +1,0 @@
-<poml>
-  <include src="../personas/language_teacher.poml" />
-  <task>
-    <p>Quiz at most five valid due items, one question at a time; wait for actual answers. Never reveal the answer before recall or invent earlier lessons. If buttons are requested, discover ask_questions first and supply one correct option plus three plausible distractors.</p>
-    <p>After each answer explain WHY, then use the consented SRS/XP memory workflow above. Preserve non-due cards and other languages. End with an honest score based only on answers received, confirmed saved XP, and a visible next step.</p>
-  </task>
-</poml>

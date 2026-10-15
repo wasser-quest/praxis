@@ -67,6 +67,11 @@ pub trait ChatProvider: Send + Sync {
     fn supports_output_limit(&self) -> bool {
         true
     }
+    /// The model's context window in tokens, when the adapter knows it (from
+    /// the server or configuration). `None` means unknown, not unlimited.
+    fn context_window(&self) -> Option<u64> {
+        None
+    }
     fn name(&self) -> &str;
     fn as_any(&self) -> &dyn std::any::Any;
     async fn health_check(&self) -> bool {

@@ -166,10 +166,10 @@ async fn skill_discovery_poml_controls_queries_without_loading_bodies() {
     put(&root, "manual", "manual", false, true);
     let install = root.parent().unwrap();
     std::fs::create_dir_all(install.join("templates/discovery")).unwrap();
-    let policy = install.join("templates/discovery/skills.poml");
+    let policy = install.join("templates/discovery/skills.md");
     std::fs::write(
         &policy,
-        include_str!("../../templates/discovery/skills.poml"),
+        include_str!("../../templates/discovery/skills.md"),
     )
     .unwrap();
     let mut value = json!({"skills":[], "custom_data":{}, "user_prompt":"palace"});

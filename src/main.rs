@@ -82,6 +82,16 @@ enum Cli {
         #[command(subcommand)]
         action: SkillAction,
     },
+    /// Render a prompt template offline (no secrets, providers or services)
+    Template {
+        /// Template name without extension, e.g. states/standard/standard
+        name: String,
+        /// JSON file with the render context (default: empty object)
+        #[arg(long)]
+        context: Option<std::path::PathBuf>,
+        #[arg(long, default_value = ".")]
+        directory: std::path::PathBuf,
+    },
     /// Manage plugins
     Plugin {
         #[command(subcommand)]
@@ -173,6 +183,15 @@ enum SkillAction {
         after: String,
         #[arg(long, default_value = "10")]
         limit: usize,
+    },
+    /// Load one skill folder and render it as use_skill would. Missing required
+    /// parameters get example values, so this works without arguments.
+    Check {
+        /// Folder relative to skills/
+        folder: String,
+        /// Parameter as key=value; repeatable
+        #[arg(long = "param", value_name = "KEY=VALUE")]
+        params: Vec<String>,
     },
 }
 
@@ -400,6 +419,15 @@ async fn run() -> anyhow::Result<()> {
         println!("Existing prompts, manifests, .env and credentials were preserved. Restart Praxis to load installed packages.");
         return Ok(());
     }
+    if let Cli::Template { name, context, directory } = &cli {
+        let path = praxis::gateway::templates::resolve_template(&directory.join("templates"), name)?;
+        let value: serde_json::Value = match context {
+            Some(file) => serde_json::from_slice(&std::fs::read(file)?)?,
+            None => serde_json::json!({}),
+        };
+        println!("{}", praxis::gateway::poml::render_strict(&path.to_string_lossy(), &value).await?);
+        return Ok(());
+    }
     if let Cli::Skill { directory, data_dir, action } = &cli {
         let data = data_dir.clone().unwrap_or_else(|| directory.join("data"));
         let mut index = praxis::skills::SkillIndex::open(&data, &directory.join("skills"))?;
@@ -413,6 +441,28 @@ async fn run() -> anyhow::Result<()> {
             SkillAction::List { after, limit } => {
                 index.ensure_indexed()?;
                 serde_json::to_value(index.browse(after, *limit, true)?)?
+            }
+            SkillAction::Check { folder, params } => {
+                let root = directory.join("skills");
+                let skill = praxis::skills::Skill::from_dir(&root, &root.join(folder))?;
+                let mut values = serde_json::Map::new();
+                for param in params {
+                    let (key, value) = param.split_once('=').ok_or_else(|| anyhow::anyhow!("--param needs KEY=VALUE, got {param}"))?;
+                    values.insert(key.to_string(), serde_json::json!(value));
+                }
+                for key in &skill.required_parameters {
+                    values.entry(key.clone()).or_insert_with(|| serde_json::json!(format!("<example {key}>")));
+                }
+                let rendered = praxis::skills::execute_skill(&skill, &serde_json::Value::Object(values)).await?;
+                serde_json::json!({
+                    "name": skill.name,
+                    "format": format!("{:?}", skill.format),
+                    "description": skill.description,
+                    "required_parameters": skill.required_parameters,
+                    "user_only": skill.user_only,
+                    "skill_hidden": skill.skill_hidden,
+                    "rendered": rendered,
+                })
             }
         };
         println!("{}", serde_json::to_string_pretty(&result)?);
@@ -514,6 +564,7 @@ async fn run() -> anyhow::Result<()> {
         Cli::Service { .. } => unreachable!(),
         Cli::Plugin { .. } => unreachable!(),
         Cli::Skill { .. } => unreachable!(),
+        Cli::Template { .. } => unreachable!(),
     }
 }
 
@@ -1338,6 +1389,10 @@ async fn handle_plugin_action(action: &PluginAction) -> anyhow::Result<()> {
                             plugin.tools.len(),
                             plugin.secrets.len()
                         );
+                        // Descriptions carry credits/attribution (e.g. billion_context).
+                        if !plugin.description.trim().is_empty() {
+                            println!("      {}", plugin.description.trim());
+                        }
                         if let Some(frontend) = &plugin.frontend {
                             println!(
                                 "      frontend: {} {}",
@@ -1347,7 +1402,8 @@ async fn handle_plugin_action(action: &PluginAction) -> anyhow::Result<()> {
                         }
                         if !plugin.provides.is_empty() {
                             println!(
-                                "      provides: routes={} ui={} assets={} migrations={}",
+                                "      provides: providers={} routes={} ui={} assets={} migrations={}",
+                                plugin.provides.providers.len(),
                                 plugin.provides.routes.len(),
                                 plugin.provides.ui.len(),
                                 plugin.provides.assets.len(),

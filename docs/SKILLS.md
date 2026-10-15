@@ -1,15 +1,40 @@
-# Praxis skills: POML discovery and lazy loading
+# Praxis skills: SKILL.md, discovery and lazy loading
 
-Native packages live under the installation's `skills/` directory. Each contains
-`skill.json` and `skill.poml`, optionally `references/`, `scripts/` and examples.
-This is not Pi's `SKILL.md` format. Only manifests are indexed; instructions and
-references are **never** indexed or automatically copied into the system prompt.
+Skills live under the installation's `skills/` directory, one folder each, in the
+standard `SKILL.md` format that Claude Code and other agents use:
 
-## Discovery belongs to POML
+```text
+skills/<folder>/SKILL.md          # YAML front matter + Markdown instructions
+skills/<folder>/references/...    # optional, read only when needed
+skills/<folder>/scripts/...       # optional, never run by the loader
+```
 
-Edit **`templates/discovery/skills.poml`** to define the discovery strategy. For a
+```yaml
+---
+name: my_skill
+description: What it does and when to use it (searched; first 320 chars shown).
+parameters: [user_request]   # optional required inputs → body rendered with Jinja
+user_only: false             # optional
+hidden: false                # optional
+---
+```
+
+Skills from other agents can be copied in unchanged: unknown front matter keys
+are ignored and the body is returned **verbatim** unless the skill declares
+`parameters` (or `template: true`), so `{{ … }}` in their examples is never
+evaluated. Legacy `skill.json` + `skill.poml` folders still load; `SKILL.md` wins
+when both exist. Check a skill offline with
+`./praxis skill check <folder> --param key=value`. The authoring workflow is the
+user-only `skill_creator` skill; template syntax is in `prompt_templates`.
+
+Only front matter is indexed; instructions and references are **never** indexed
+or automatically copied into the system prompt.
+
+## Discovery belongs to the template
+
+Edit **`templates/discovery/skills.md`** to define the discovery strategy. For a
 per-context variant, set `custom_data.skill_discovery_template` to a template name
-without `.poml`, such as `discovery/my_policy`. Ordinary template path/renderer
+without extension, such as `discovery/my_policy`. Ordinary template path/renderer
 validation applies. The template receives the normal shared render context,
 including `user_prompt`, `settings`, `custom_data` and `sm_data`.
 
@@ -29,26 +54,22 @@ The template renders a **JSON plan**, not a persona or skill body:
 - `names` pins a few preferred registered **metadata** entries.
 - `queries` performs a few literal word-prefix searches of names/descriptions.
 - `limit` bounds the combined, deduplicated metadata candidates in `skills`.
-- Use POML expressions, conditions and local includes to choose rules based on
+- Use template expressions, conditions and includes to choose rules based on
   the current request or context. Rust does not contain topic-specific routing.
 - The shipped policy uses **empty names and queries**: the normal prompt contains
   no catalog at all. The model calls `search_skills` only when useful, then
   `use_skill` for one selected workflow. A million installed skills do not mean
   a million descriptions in every prompt.
 
-Example custom policy (save under `templates/discovery/my_policy.poml`):
+Example custom policy (save under `templates/discovery/my_policy.md`):
 
-```xml
-<poml>
-  <let name="task" value="typeof user_prompt === 'string' ? user_prompt : ''" />
-  <let name="wanted" value="/debug|review/i.test(task) ? ['debug'] : []" />
-  <p>{{JSON.stringify({instructions:'Use relevant candidates. Otherwise search_skills with a few task keywords. Load only a matching permitted skill with use_skill. Ask the user to activate user_only skills.', names:[], queries:wanted, limit:5})}}</p>
-</poml>
+```jinja
+{% set wanted = ['debug'] if 'debug' in (user_prompt or '') | lower else [] %}
+{{ {"instructions": "Use relevant candidates. Otherwise search_skills with a few task keywords. Load only a matching permitted skill with use_skill. Ask the user to activate user_only skills.", "names": [], "queries": wanted, "limit": 5} | tojson }}
 ```
 
-The shared `templates/shared/runtime.poml` controls presentation of candidates and
-instructions. Custom personas should include it, or deliberately render `skills`
-and `skill_discovery_instructions` themselves. Missing default discovery assets
+Templates that want to show candidates render `skills` and
+`skill_discovery_instructions` themselves. Missing default discovery assets
 in older/custom installations produce no candidates; explicitly selected missing
 or invalid templates/plans fail clearly. `repair-assets` adds missing defaults
 without replacing custom files.
@@ -62,11 +83,11 @@ characters. These are runtime safety bounds, not an invitation to increase the
 prompt in proportion to catalog size. Invalid plans fail instead of falling back
 to loading every skill. Templates are trusted local prompt code, not a sandbox.
 
-Neither a POML plan nor model arguments can bypass manifest flags:
+Neither a discovery plan nor model arguments can bypass manifest flags:
 
 | Manifest flag | Meaning |
 |---|---|
-| `skill_hidden: true` | Omit from model search and POML candidates, including pins. An exact-name dependency can still be loaded unless user-only. Human browsing includes it. |
+| `skill_hidden: true` | Omit from model search and template candidates, including pins. An exact-name dependency can still be loaded unless user-only. Human browsing includes it. |
 | `user_only: true` | `use_skill` refuses it. The user must select it through `/skill` or authenticated context controls. Discovery may advertise its metadata and tell the model to ask the user. |
 
 Both flags default to false. They are independent. Hidden does not mean secret,
@@ -78,7 +99,7 @@ local file/terminal tools or an operator changing manifests.
 `search_skills` uses a separate persistent **`DATA_DIR/skill-index.sqlite`** FTS5
 index. The first search for an unindexed root builds it once. Normal prompts with
 the default policy never open/scan the skills directory. Searches return at most
-20 results; exact canonical-name loads read only that manifest and POML. Aliased
+20 results; exact canonical-name loads read only that skill folder. Aliased
 or grouped/sharded folders are resolved through the index.
 
 Index construction streams metadata from disk instead of collecting all skills
@@ -143,17 +164,17 @@ Commands can remain visible to unpaired users but execution is denied.
 Example tool arguments:
 
 ```json
-{"query":"POML templates","limit":5}
+{"query":"prompt templates","limit":5}
 ```
 
 Pass this to `search_skills`, then use its required-input contract with `use_skill`:
 
 ```json
-{"name":"poml_templates","parameters":{"user_request":"Create a French tutor"}}
+{"name":"prompt_templates","parameters":{"user_request":"Create a French tutor"}}
 ```
 
 Only explicit parameters plus the loader's authoritative `skill_dir` are supplied
-to per-task POML. It does not silently merge stored secrets/context. Loading a
+to the skill body. It does not silently merge stored secrets/context. Loading a
 skill returns instructions, not completed actions: no scripts, provider spending,
 file changes, or permission changes occur automatically. Relative references and
 helpers resolve against the returned absolute skill directory.
@@ -165,12 +186,13 @@ helpers resolve against the returned absolute skill directory.
 | `code_review` | `code` | Review instructions |
 | `debug` | `error` | Debugging workflow |
 | `tmux` | `user_request` | Host tmux required; scripts never autorun |
-| `poml_templates` | `user_request` | Real Microsoft POML authoring/validation |
-| `skill_creator` | `user_request` | **User-only by default**; delegates POML work to `poml_templates` with `target_kind: "skill"` |
+| `safe_web_search` | `question` | Loaded automatically before Brave searches |
+| `prompt_templates` | `user_request` | Markdown/Jinja template authoring and validation |
+| `skill_creator` | `user_request` | **User-only by default**; delegates template syntax to `prompt_templates` with `target_kind: "skill"` |
 
 The creator keeps package/index guidance in a separate reference and does not
-duplicate the POML guide. `target_kind: "skill"` tells the POML skill to validate
-staged skill files with its helper rather than saving them through `update_template`,
+duplicate the template guide. `target_kind: "skill"` tells the template skill to
+validate staged skill files with `praxis skill check` rather than saving them through `update_template`,
 which intentionally writes only `templates/`. Publication/indexing do not activate
 anything. See `skills/skill_creator/references/authoring.md` for manifest bounds.
 quiz/binding constraints. Cell diagnostics identify the archive path, row,
@@ -193,8 +215,8 @@ On a running version with the existing skill loader, **skill/reference/helper-on
 updates need no restart or binary replacement**. Review differences and back up
 the installation's existing skill files first; copy only the approved changed
 files to `INSTALLATION/skills/<skill-name>/` (references/helpers first,
-`skill.poml` last), using atomic file replacements. Do not overwrite unrelated
-customizations. Validate the installed POML with the real renderer, then refresh
+`SKILL.md` last), using atomic file replacements. Do not overwrite unrelated
+customizations. Validate with `praxis skill check <skill-name>`, then refresh
 only that folder's metadata if its description changed:
 
 ```bash
@@ -202,7 +224,7 @@ only that folder's metadata if its description changed:
   --data-dir /actual/data index --folder <skill-name>
 ```
 
-`execute_skill` renders the disk POML on every load. The new instructions apply
+`execute_skill` re-reads `SKILL.md` from disk on every load. The new instructions apply
 to the next `use_skill` load or next message with that skill already selected;
 an in-flight task can still hold older instructions. There is no need to change
 persistent selection, credentials, the main DB, VM or service state. A Git push
@@ -211,34 +233,24 @@ bundles the guide in future builds/onboarding/repair; `repair-assets` deliberate
 preserves existing skill files and is not an overwrite/update command for them.
 New Rust loader behavior would still require a rebuilt binary and restart.
 
-## POML setup, validation and deployment
+## Validation
 
-Set `POML_CLI` in the service environment to Microsoft's JavaScript CLI; Node is
-required. The tested local path is `/workspace/poml/python/poml/js/cli.js`, not a
-bundled dependency. Strict skill/discovery/template rendering has no silent
-string-substitution fallback and fails on missing input, renderer errors or empty
-output. The renderer uses `type="string"` for literal imports in this installed
-CLI. References/examples are under `skills/poml_templates/`.
+Templates and skills render in-process (MiniJinja); no Node or `POML_CLI` is
+needed. Legacy `.poml` templates and `skill.poml` skills still render through the
+Microsoft CLI when `POML_CLI` is set; convert them instead of extending them.
+Rendering fails on syntax errors, missing includes and empty output, with the file
+and line in the message; there is no silent fallback.
 
-Use the POML skill's `scripts/validate.py` with synthetic contexts, not private
-context dumps. For normal templates, `update_template` validates a temporary
-sibling before replacement, checks prospective include cycles, preserves old
-files on validation failure, then mirrors the saved template to the DB. Saving
-and activation are separate. Imports are trusted local code and require review;
-the renderer deadline does not make arbitrary template code safe.
+`update_template` validates a temporary sibling before replacement (including
+prospective self-includes), preserves the old file on failure, then mirrors the
+saved template to the DB. Saving and activation are separate.
 
 ```bash
-POML_CLI=/path/to/cli.js python3 scripts/test_skills.py
-POML_CLI=/path/to/cli.js python3 scripts/test_poml_templates.py
+./praxis skill check <folder> --param user_request="…"     # one skill
+./praxis template states/code/code --context ctx.json        # one template
 python3 scripts/check_context_docs.py
-POML_CLI=/path/to/cli.js EMBEDDING_PROVIDER=none \
-  cargo test --locked --lib -- --include-ignored --test-threads=1
-cargo check --locked --all-targets --features songbird
+EMBEDDING_PROVIDER=none cargo test --locked --lib
 ```
 
-Onboarding and `repair-assets` bundle both complete new skills and the default
-POML discovery policy. Existing custom files/configuration/data are preserved.
-Rebuild/deploy the binary and changed public assets together: an old binary does
-not gain indexed discovery or access enforcement merely by copying skill folders.
-Startup adds the search tool and updates tool metadata while preserving disabled
-tools. A running binary needs a normal authorized restart to load new Rust code.
+Onboarding and `repair-assets` bundle the shipped skills and the default
+discovery policy. Existing custom files/configuration/data are preserved.

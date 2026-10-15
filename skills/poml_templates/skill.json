@@ -1,8 +1,0 @@
-{
-  "name": "poml_templates",
-  "description": "Create, edit and validate Microsoft POML templates for Praxis system prompts, roles and tasks. Use when asked to author a .poml file, add dynamic prompt variables, loops, conditions or includes. Requires user_request with the template requirements.",
-  "required_parameters": [
-    "user_request"
-  ],
-  "version": "1.0.0"
-}

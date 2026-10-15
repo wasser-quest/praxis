@@ -652,6 +652,7 @@ impl ChatProvider for RegistryChatProvider {
             context,
             continuation: state,
             request: request.into(),
+            conversation: praxis_provider_api::conversation::current(),
         };
         let launch_deadline = started + self.config.deadline.min(prepared.deadline);
         if self.config.cancel.is_cancelled() {

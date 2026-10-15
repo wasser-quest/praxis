@@ -145,6 +145,16 @@ fn parse_hex_key(hex: &str) -> Option<[u8; 32]> {
     Some(out)
 }
 
+/// Opaque, stable key for one Praxis conversation, for provider workers that
+/// forward it upstream (prompt caching, context proxies). Keyed with the
+/// installation's receipt key and domain-separated, so it reveals neither the
+/// context id nor anything usable for receipts.
+pub fn conversation_key(conversation: &str) -> String {
+    let mut message = b"praxis-conversation-v1\0".to_vec();
+    message.extend_from_slice(conversation.as_bytes());
+    hmac_sha256(key(), &message)[..32].to_string()
+}
+
 fn hmac_sha256(key: &[u8], message: &[u8]) -> String {
     let mut block = [0u8; BLOCK];
     if key.len() > BLOCK {
@@ -216,6 +226,14 @@ pub fn verify(value: &Value) -> bool {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn conversation_keys_are_stable_opaque_and_wire_valid() {
+        let a = conversation_key("ctx-1");
+        assert_eq!(a, conversation_key("ctx-1"));
+        assert_ne!(a, conversation_key("ctx-2"));
+        assert!(!a.contains("ctx") && praxis_provider_api::conversation::valid(&a), "{a}");
+    }
 
     #[test]
     fn sign_verify_roundtrip_and_tamper_detection() {

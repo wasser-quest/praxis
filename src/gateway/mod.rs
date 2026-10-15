@@ -22,7 +22,10 @@ pub mod http_handler;
 pub mod inference;
 #[cfg(test)]
 mod learning_flow_tests;
+pub mod event_rules;
+pub mod jinja;
 pub mod llm;
+pub mod loop_guard;
 pub mod message_handler;
 pub mod poml;
 pub mod prompt;

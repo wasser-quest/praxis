@@ -158,10 +158,9 @@ pub async fn execute<P: ChatProvider + ?Sized, W: AsyncWrite + Unpin>(
             overflow.store(true, Ordering::Relaxed);
         }
     };
-    let attempt = provider.chat_attempt(
-        request.request.clone().into(),
-        continuation.as_ref(),
-        Some(&on_delta),
+    let attempt = crate::conversation::scope(
+        request.conversation.clone(),
+        provider.chat_attempt(request.request.clone().into(), continuation.as_ref(), Some(&on_delta)),
     );
     tokio::pin!(attempt);
     let mut seq = 0;

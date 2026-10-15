@@ -1315,11 +1315,11 @@ mod dashboard_tests {
         let state = Arc::new(DashboardState { plugins: Arc::new(crate::plugins::PluginRegistry::new()),  db: crate::db::Database::new(dir.path()).unwrap(), gateway_api_key: String::new(), admin_password: String::new() });
         let mut ctx = state.db.load_context("alice").unwrap();
         ctx.settings.system_template = Some("language_instructor".into());
-        ctx.settings.active_skill = Some("poml_templates".into());
+        ctx.settings.active_skill = Some("prompt_templates".into());
         state.db.save_context(&ctx).unwrap();
         let status = get_sm_info(State(state), Path("alice".into())).await.unwrap().0;
         assert_eq!(status["system_template"], "language_instructor");
-        assert_eq!(status["active_skill"], "poml_templates");
+        assert_eq!(status["active_skill"], "prompt_templates");
         assert_eq!(status["active_templates"], serde_json::json!([]));
         assert_eq!(status["sm_file"], "standard");
     }

@@ -10,14 +10,14 @@ pub(super) fn fixture() -> (tempfile::TempDir, GatewayState, String, PathBuf) {
     }
     std::fs::write(
         install.path().join("contexts/verified-implementation.sm"),
-        include_str!("../../contexts/verified-implementation.sm"),
+        include_str!("test_fixtures/verified-implementation.sm"),
     )
     .unwrap();
     std::fs::write(
         install
             .path()
-            .join("templates/verified-implementation.poml"),
-        include_str!("../../templates/verified-implementation.poml"),
+            .join("templates/verified-implementation.md"),
+        include_str!("test_fixtures/verified-implementation.md"),
     )
     .unwrap();
     let workspace = install.path().join("ir-snake");

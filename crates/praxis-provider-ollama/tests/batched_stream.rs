@@ -45,6 +45,7 @@ async fn compiled_worker_drains_many_records_in_one_http_chunk() {
             thinking: None,
         },
         continuation: None,
+        conversation: None,
     };
     let deltas = Mutex::new(vec![]);
     let attempt = bridge::invoke(

@@ -239,7 +239,7 @@ pub fn estimate_message_tokens(msg: &Message) -> usize {
 }
 
 impl Database {
-    fn resolve_user_key(&self, conn: &rusqlite::Connection, user_id: &str) -> String {
+    pub(crate) fn resolve_user_key(&self, conn: &rusqlite::Connection, user_id: &str) -> String {
         if let Ok(data) = conn.query_row(
             "SELECT data FROM contexts WHERE user_id = ?1",
             rusqlite::params![user_id],
@@ -538,8 +538,11 @@ impl Database {
         let count:i64=tx.query_row("SELECT count(*) FROM messages WHERE user_id=?1 AND id IN (SELECT value FROM json_each(?2))",rusqlite::params![key,ids],|r|r.get(0))?;
         anyhow::ensure!(count as usize==prefix.len(),"History changed during compaction");
         tx.execute("UPDATE contexts SET data=json_set(data,'$.settings.compaction_summary',?2),updated_at=datetime('now') WHERE user_id=?1",rusqlite::params![key,summary])?;
+        let updated:String=tx.query_row("SELECT data FROM contexts WHERE user_id=?1",[&key],|r|r.get(0))?;
+        let change=super::context_events::record(&tx,&key,Some(&raw),&updated,"compaction")?;
         tx.execute("DELETE FROM messages WHERE user_id=?1 AND id IN (SELECT value FROM json_each(?2)) AND role NOT IN ('discord_user','discord_bot')",rusqlite::params![key,ids])?;
         tx.commit()?;
+        if let Some(change)=change { crate::runtime::events::send(user,"context_changed",&super::context_events::live_notice(&change)); }
         Ok(())
     }
 

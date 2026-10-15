@@ -43,10 +43,12 @@ fn sync_dir(
         };
         if path.is_dir() {
             changed += sync_dir(db, root, &path, &name, visited)?;
-        } else if path.is_file() && name.ends_with(".poml") {
-            let name = name
-                .strip_suffix(".poml")
-                .ok_or_else(|| anyhow::anyhow!("Missing template extension"))?;
+        } else if let Some(name) = path.is_file().then(|| template_name(&name)).flatten() {
+            // A Markdown template replaces its legacy .poml twin.
+            if name_has_extension(&name) == Some("poml") && dir.join(format!("{}.md", base(&name))).is_file() {
+                continue;
+            }
+            let name = strip_template_extension(&name);
             validate_name(name)?;
             let content = std::fs::read_to_string(&path)?;
             // A single statement preserves metadata even if an operator edit
@@ -66,6 +68,32 @@ fn sync_dir(
     Ok(changed)
 }
 
+/// Template file extensions, in lookup order: Markdown/Jinja first, then
+/// legacy POML, so converting a template is just adding its `.md` file.
+pub const EXTENSIONS: [&str; 2] = ["md", "poml"];
+
+fn template_name(file: &str) -> Option<String> {
+    EXTENSIONS.iter().any(|ext| file.ends_with(&format!(".{ext}"))).then(|| file.to_string())
+}
+
+fn name_has_extension(file: &str) -> Option<&str> {
+    EXTENSIONS.iter().copied().find(|ext| file.ends_with(&format!(".{ext}")))
+}
+
+fn base(file: &str) -> &str {
+    let file = file.rsplit('/').next().unwrap_or(file);
+    name_has_extension(file).map_or(file, |ext| &file[..file.len() - ext.len() - 1])
+}
+
+fn strip_template_extension(file: &str) -> &str {
+    name_has_extension(file).map_or(file, |ext| &file[..file.len() - ext.len() - 1])
+}
+
+/// The existing file for a template name, preferring `.md` over `.poml`.
+fn find(root: &Path, name: &str) -> Option<PathBuf> {
+    EXTENSIONS.iter().find_map(|ext| root.join(format!("{name}.{ext}")).canonicalize().ok())
+}
+
 /// Resolve a selected template without traversal or symlink escapes.
 pub fn resolve_template(root: &Path, name: &str) -> anyhow::Result<PathBuf> {
     validate_name(name)?;
@@ -74,16 +102,16 @@ pub fn resolve_template(root: &Path, name: &str) -> anyhow::Result<PathBuf> {
         || name.contains("..")
         || name.starts_with('/')
         || name.contains("//")
-        || name.ends_with(".poml")
+        || name_has_extension(name).is_some()
     {
         anyhow::bail!("Unsafe template name: {name}");
     }
-    let path = match root.join(format!("{name}.poml")).canonicalize() {
-        Ok(path) => path,
+    let path = match find(&root, name) {
+        Some(path) => path,
         // Stale stored template names (deleted files) fall back to the core template.
-        Err(_) => {
+        None => {
             tracing::warn!(template = %name, "Template missing; falling back to standard");
-            root.join("standard.poml").canonicalize()?
+            find(&root, "standard").ok_or_else(|| anyhow::anyhow!("Template missing: {name} (and no standard template)"))?
         }
     };
     anyhow::ensure!(
@@ -119,8 +147,11 @@ impl TemplateManager {
         if let Ok(entries) = std::fs::read_dir(&self.templates_dir) {
             for entry in entries.flatten() {
                 if let Some(name) = entry.file_name().to_str() {
-                    if name.ends_with(".poml") {
-                        templates.push(name.replace(".poml", ""));
+                    if name_has_extension(name).is_some() {
+                        let name = strip_template_extension(name).to_string();
+                        if !templates.contains(&name) {
+                            templates.push(name);
+                        }
                     }
                 }
             }
@@ -131,6 +162,25 @@ impl TemplateManager {
 
 #[cfg(test)]
 mod gateway_tests {
+    #[test]
+    fn markdown_templates_take_precedence_over_their_poml_twin() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("states")).unwrap();
+        std::fs::write(root.path().join("standard.poml"), "<poml><p>ok</p></poml>").unwrap();
+        std::fs::write(root.path().join("states/a.poml"), "<poml/>").unwrap();
+        std::fs::write(root.path().join("states/a.md"), "a").unwrap();
+        let resolved = super::resolve_template(root.path(), "states/a").unwrap();
+        assert_eq!(resolved.extension().unwrap(), "md");
+        assert_eq!(super::resolve_template(root.path(), "standard").unwrap().extension().unwrap(), "poml");
+        assert!(super::resolve_template(root.path(), "standard.md").is_err());
+        // A missing name falls back to the standard template in either format.
+        assert_eq!(super::resolve_template(root.path(), "gone").unwrap().file_name().unwrap(), "standard.poml");
+        let data = tempfile::tempdir().unwrap();
+        let db = crate::db::Database::new(data.path()).unwrap();
+        super::sync_from_disk(&db, root.path()).unwrap();
+        assert_eq!(db.get_template("states/a").unwrap().unwrap().content, "a");
+    }
+
     #[test]
     fn backend_template_selection_rejects_missing_and_unsafe_names() {
         let root = tempfile::tempdir().unwrap();

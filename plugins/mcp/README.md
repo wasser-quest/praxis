@@ -27,7 +27,7 @@ freigegebenes MCP-Tool kann Shell-/Netzwerk-/Dateieffekte auslösen!
       "command": "/opt/mcp/venv/bin/python3",
       "args": ["/opt/mcp/server.py"],
       "cwd": "/opt/mcp",
-      "env_from": {"SERVICE_TOKEN": "MY_MCP_SERVICE_TOKEN"},
+      "env_from": {"SERVICE_TOKEN": "mcp_service_token"},
       "allow_tools": ["lookup"],
       "timeout_secs": 20
     }
@@ -38,7 +38,6 @@ freigegebenes MCP-Tool kann Shell-/Netzwerk-/Dateieffekte auslösen!
 ```sh
 chmod 600 /absolute/path/to/mcp-servers.json
 export PRAXIS_MCP_CONFIG=/absolute/path/to/mcp-servers.json
-# MY_MCP_SERVICE_TOKEN über den privaten Prozess-/Service-Secretmechanismus setzen.
 praxis run
 ```
 
@@ -50,13 +49,38 @@ modellbeschreibbarer Workspaces liegen; keine Toolargumente/PLUGIN_CONTEXT wähl
 Datei, Executable, cwd, Timeout oder Environment. Sie wird pro Aufruf gelesen;
 Änderungen sind **nicht** an die Host-Registry-Revision gebunden.
 
-`env_from` ordnet Child-Environment-Namen vorhandenen Host-Environment-Namen zu;
-fehlende/leere Werte brechen vor Prozessstart ab. Nur PATH/SYSTEMROOT/WINDIR und
-diese expliziten Variablen werden weitergegeben, niemals das gesamte Environment
-oder PLUGIN_ARGS/PLUGIN_CONTEXT/PLUGIN_SECRETS automatisch. Server erhalten kein
-HOME automatisch (bei Bedarf ausdrücklich konfigurieren). Credentials niemals
-in `args`, `command`, Schemas, POML oder Toolargumente schreiben. Diese erste
-Version nutzt Operator-Environment, **keine** per-user Host-Secret-Grants.
+### Deklarierte, paketbezogene Credentials (Migration)
+
+`env_from` ordnet Child-Environment-Namen **Secret-Referenzen im hostseitigen
+`PLUGIN_SECRETS`-Envelope** zu, nicht mehr Namen im geerbten Prozess-Environment.
+Für das Beispiel ergänzt der Operator im eigenen MCP-Paket die oberste Ebene
+von `plugin.json` (neben `name`, `tools` usw.):
+
+```json
+"secrets": ["mcp_service_token"]
+```
+
+Das ausgelieferte Manifest enthält keine serverspezifischen Secret-Referenzen;
+die Deklaration muss im operatorseitigen Paket vor Installation/Neuladen erfolgen.
+Den tatsächlichen Wert über Dashboard → Settings → Secrets als Custom-Secret
+`mcp_service_token` provisionieren (alternativ über die authentifizierte Secrets-
+API im Feld `custom`). Für dauerhafte Speicherung den verschlüsselten Store mit
+dem Master-Passwort speichern. Im Manifest steht nur die Referenz, kein Wert.
+Der Host selektiert für den Aufruf nur die vom MCP-Paket deklarierten Credentials
+und setzt `PLUGIN_SECRETS`; der Operator muss dieses Envelope nicht exportieren.
+Weitere `env_from`-Quellen müssen entsprechend deklariert/provisioniert werden.
+Dies ist eine Auswahl pro Paket, kein eigener per-user Secret-Grant-Mechanismus.
+
+Ein früheres `export MY_MCP_SERVICE_TOKEN=...` genügt nicht mehr: Wert in den
+Custom-Secret-Store übertragen, Referenz deklarieren und `env_from` anpassen.
+Es gibt **keinen** Fallback auf beliebige geerbte Provider-/Admin-Credentials.
+Fehlende/leere referenzierte Werte brechen vor Prozessstart ab. Ein ungültiges
+Envelope (kein JSON-Objekt mit Stringwerten, doppelte Schlüssel, NUL in Werten
+oder Budgetüberschreitung) schlägt geschlossen fehl. Nur PATH/SYSTEMROOT/WINDIR
+und die explizit ausgewählten Werte werden weitergegeben, niemals das gesamte
+Environment oder PLUGIN_ARGS/PLUGIN_CONTEXT/PLUGIN_SECRETS automatisch. Server
+erhalten kein HOME automatisch (bei Bedarf ausdrücklich konfigurieren).
+Credentials niemals in `args`, `command`, Schemas, POML oder Toolargumente schreiben.
 
 ## Nutzung
 
@@ -121,7 +145,9 @@ PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_mcp_plugin.py
 ```
 
 Offline-Mockserver prüft Handshake/Reihenfolge, UTF-8-Call, Pagination/Freigabe,
-fehlende Tools, Environment-Isolation/Redaktion, Version/IDs/JSON/EOF, Serverfehler,
+fehlende Tools, Scoped-only-Credentials, abgewiesene Ambient-only-Credentials,
+ungültige Secret-Envelopes, PATH-Weitergabe, Environment-Isolation/Redaktion,
+Version/IDs/JSON/EOF, Serverfehler,
 Tool-isError, Serverrequests, Deadline und Ausgabeüberschreitung.
 
 ## Host-Integration und mögliche Erweiterungen
@@ -141,6 +167,7 @@ Credentials werden niemals gebündelt. Mögliche spätere Erweiterungen:
 2. Optional Discovery-/Workflow-Dokumentation um die drei Toolnamen ergänzen.
    Dynamische Einzeltools werden nicht in den Hostkatalog injiziert.
 3. Erst für persistente Sessions, hostgarantiertes Cancel/Disable-Drain und
-   per-user scoped credentials: eigener Service-Worker mit Praxis-Handshake,
+   per-user Secret-Grants (über die vorhandene Paketselektion hinaus): eigener
+   Service-Worker mit Praxis-Handshake,
    Host-issued Identity/Deadline und deklarierter Credential-Selektion. Das ist
    eine separate Integration, kein Feature dieser Script-Bridge.

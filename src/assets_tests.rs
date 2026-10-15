@@ -103,16 +103,14 @@ fn onboarding_assets_install_every_bundled_file_and_executable() {
     }
     for name in [
         "contexts/standard.sm",
-        "contexts/verified-implementation.sm",
         "contexts/verified-capabilities.sm",
-        "templates/verified-implementation.poml",
         "examples/plugins/verified-rust/plugin.json",
         "docs/DECISION_IR.md",
         "docs/BRANDING.md",
-        "templates/standard.poml",
-        "templates/user.poml",
+        "templates/standard.md",
+        "templates/user.md",
         "templates/blueprints/standard.json",
-        "templates/shared/runtime.poml",
+        "templates/shared/runtime_minimal.md",
         "static/logo.png",
         "static/logo.svg",
         "static/favicon.ico",
@@ -122,7 +120,7 @@ fn onboarding_assets_install_every_bundled_file_and_executable() {
         "plugins/mcp/plugin.json",
         "plugins/mcp/bridge.py",
         "plugins/mcp/call.py",
-        "skills/poml_templates/reference.md",
+        "skills/prompt_templates/references/reference.md",
     ] {
         assert!(
             root.join(name).is_file(),
@@ -345,7 +343,7 @@ async fn onboarding_assets_first_message_and_active_skill_render_from_fresh_inst
             }
         }
     }
-    ctx.settings.active_skill = Some("poml_templates".into());
+    ctx.settings.active_skill = Some("prompt_templates".into());
     let value = crate::gateway::prompt::build_context(
         &db,
         &ctx,

@@ -1,4 +1,0 @@
-<poml>
-  <!-- Compatibility name; existing tutor selections keep working. -->
-  <include src="personas/language_teacher.poml" />
-</poml>

@@ -61,6 +61,7 @@ write({{'version':request['version'],'context':request['context'],'seq':0,
             model: None,
             thinking: None,
         },
+        conversation: None,
     };
     let callback = |_: praxis_provider_api::StreamDelta| panic!("unexpected delta");
     for mode in [

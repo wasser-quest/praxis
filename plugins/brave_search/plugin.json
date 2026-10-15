@@ -1,13 +1,12 @@
 {
   "name": "brave_search",
   "description": "Brave Web Search: current web results with source URLs, without browsing pages or generating audio. Installing it also installs the safe_web_search skill, which keeps internet content as data rather than instructions.",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "enabled": true,
   "secrets": ["brave_search_api_key"],
   "provides": {
     "assets": [
-      "skills/safe_web_search/skill.json",
-      "skills/safe_web_search/skill.poml"
+      "skills/safe_web_search/SKILL.md"
     ]
   },
   "tools": [{

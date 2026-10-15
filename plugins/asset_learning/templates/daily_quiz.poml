@@ -1,4 +1,0 @@
-<poml>
-  <!-- Compatibility for existing root-level daily_quiz selections. -->
-  <include src="tasks/daily_quiz.poml" />
-</poml>

@@ -1,4 +1,5 @@
 pub mod contexts;
+pub mod context_events;
 pub mod execution;
 pub mod cron_jobs;
 pub mod enc2;
@@ -135,6 +136,12 @@ impl Database {
             let tx = conn.unchecked_transaction()?;
             tx.execute_batch(include_str!("../../migrations/016_service_storage.sql"))?;
             tx.pragma_update(None, "user_version", 16)?;
+            tx.commit()?;
+        }
+        if version < 17 {
+            let tx = conn.unchecked_transaction()?;
+            tx.execute_batch(include_str!("../../migrations/017_context_events.sql"))?;
+            tx.pragma_update(None, "user_version", 17)?;
             tx.commit()?;
         }
         Ok(())

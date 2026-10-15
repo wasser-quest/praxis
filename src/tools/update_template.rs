@@ -2,11 +2,17 @@ use crate::db::Database;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
-fn destination(root: &Path, name: &str) -> anyhow::Result<PathBuf> {
+/// New and converted templates are Markdown; content that is still POML
+/// keeps the legacy extension.
+fn extension(content: &str) -> &'static str {
+    if content.trim_start().starts_with("<poml") { "poml" } else { "md" }
+}
+
+fn destination(root: &Path, name: &str, extension: &str) -> anyhow::Result<PathBuf> {
     let parts: Vec<_> = name.split('/').collect();
     anyhow::ensure!(parts.iter().all(|s| !s.is_empty() && s.bytes().all(
         |b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-'
-    )), "Template name must contain only letters, numbers, '_' or '-' separated by '/', without .poml");
+    )), "Template name must contain only letters, numbers, '_' or '-' separated by '/', without an extension");
     std::fs::create_dir_all(root)?;
     let mut parent = root.canonicalize()?;
     for part in &parts[..parts.len() - 1] {
@@ -19,7 +25,7 @@ fn destination(root: &Path, name: &str) -> anyhow::Result<PathBuf> {
         }
         std::fs::create_dir_all(&parent)?;
     }
-    let path = parent.join(format!("{}.poml", parts[parts.len() - 1]));
+    let path = parent.join(format!("{}.{extension}", parts[parts.len() - 1]));
     if let Ok(meta) = std::fs::symlink_metadata(&path) {
         anyhow::ensure!(
             !meta.file_type().is_symlink(),
@@ -45,13 +51,14 @@ pub async fn save_validated(
         context.is_object(),
         "Template validation context must be a JSON object"
     );
-    let path = destination(root, name)?;
+    let extension = extension(content);
+    let path = destination(root, name, extension)?;
     let parent = path
         .parent()
         .ok_or_else(|| anyhow::anyhow!("Missing template parent"))?;
     let temporary = tempfile::Builder::new()
         .prefix(".validate-")
-        .suffix(".poml")
+        .suffix(&format!(".{extension}"))
         .tempfile_in(parent)?;
     std::fs::write(temporary.path(), content)?;
     let temp_path = temporary
@@ -112,9 +119,9 @@ mod validated_template_tests {
             "C:\\outside",
             "a\\b",
         ] {
-            assert!(destination(root.path(), name).is_err(), "{name}");
+            assert!(destination(root.path(), name, "poml").is_err(), "{name}");
         }
-        assert!(destination(root.path(), "tasks/my_template-1")
+        assert!(destination(root.path(), "tasks/my_template-1", "poml")
             .unwrap()
             .starts_with(root.path()));
     }
@@ -125,11 +132,11 @@ mod validated_template_tests {
         let root = tempfile::tempdir().unwrap();
         let outside = tempfile::tempdir().unwrap();
         std::os::unix::fs::symlink(outside.path(), root.path().join("linked")).unwrap();
-        assert!(destination(root.path(), "linked/new/file").is_err());
+        assert!(destination(root.path(), "linked/new/file", "poml").is_err());
         assert!(!outside.path().join("new").exists());
         std::os::unix::fs::symlink(outside.path().join("target"), root.path().join("file.poml"))
             .unwrap();
-        assert!(destination(root.path(), "file").is_err());
+        assert!(destination(root.path(), "file", "poml").is_err());
     }
 
     #[tokio::test]

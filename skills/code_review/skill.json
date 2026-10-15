@@ -1,8 +1,0 @@
-{
-  "name": "code_review",
-  "required_parameters": [
-    "code"
-  ],
-  "description": "Review code for bugs, security issues, and best practices. Use this skill when the user asks to review, audit, or check code quality.",
-  "version": "1.0.0"
-}

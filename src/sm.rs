@@ -144,6 +144,12 @@ pub struct StateMachine {
     /// Operator-authored project requirements checked before model calls.
     #[serde(default)]
     pub workspace: crate::workspace::Requirements,
+    /// `[limits]`: abort conditions for a model that stopped making progress.
+    #[serde(default)]
+    pub limits: crate::gateway::loop_guard::LoopLimits,
+    /// `[on]`: actions triggered by tool outcomes and logged context changes.
+    #[serde(default)]
+    pub on_rules: Vec<crate::gateway::event_rules::OnRule>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -310,7 +316,7 @@ pub fn parse(content: &str) -> Result<StateMachine, SmError> {
                     current_state_name = Some(name);
                     current_section = Some(parts[0].into());
                 }
-                "checks" | "guards" | "action_guards" | "action_guard_triggers" | "user_reply_guards" | "workspace" => {
+                "checks" | "guards" | "action_guards" | "action_guard_triggers" | "user_reply_guards" | "workspace" | "limits" | "on" => {
                     current_state_name = None;
                     current_section = Some(parts[0].to_string());
                 }
@@ -402,6 +408,14 @@ pub fn parse(content: &str) -> Result<StateMachine, SmError> {
                     .collect();
                 sm.tool_groups.insert(key, tools);
             }
+            Some("on") => {
+                sm.on_rules.push(crate::gateway::event_rules::parse(trimmed, line_num + 1).map_err(SmError::ParseError)?);
+                check_on_rule_count(sm.on_rules.len())?;
+            }
+            Some("limits") => {
+                let (key, value) = parse_assignment(trimmed, line_num)?;
+                sm.limits.set(&key, &value).map_err(|e| SmError::ParseError(format!("Line {}: {e}", line_num + 1)))?;
+            }
             Some("workspace") => {
                 let (key, value) = parse_assignment(trimmed, line_num)?;
                 if !workspace_keys.insert(key.clone()) {
@@ -488,6 +502,18 @@ pub fn parse(content: &str) -> Result<StateMachine, SmError> {
     if sm.edges.keys().any(|id| !edge_ids.contains(id)) { return Err(SmError::ParseError("Edge metadata must name an outgoing edge as state:index".into())); }
     if sm.is_graph() && (sm.entry_state().is_none() || sm.states.len() > 256 || sm.transitions.len() > 1024 || sm.states.keys().any(|name| name.is_empty() || name.len() > 64 || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')) || sm.steps.iter().any(|name| name == "_default" || !sm.states.contains_key(name))) { return Err(SmError::ParseError("Graph requires a declared entry state, at most 256 identifier-named states and 1024 edges".into())); }
     sm.workspace.validate().map_err(|e| SmError::ParseError(e.to_string()))?;
+    for rule in &sm.on_rules {
+        if let crate::gateway::event_rules::Action::State { name } = &rule.action {
+            if name != "_complete" && (name == "_default" || !sm.states.contains_key(name)) {
+                return Err(SmError::ParseError(format!("Line {}: [on] rule switches to an undeclared state: {name}", rule.line)));
+            }
+        }
+    }
+    if let Some(target) = &sm.limits.on_abort {
+        if target == "_default" || !sm.states.contains_key(target) {
+            return Err(SmError::ParseError(format!("[limits] on_abort names an undeclared state: {target}")));
+        }
+    }
     for (target, required) in &sm.guards {
         if (target != "_complete" && (target == "_default" || !sm.states.contains_key(target))) || required.is_empty() || required.iter().any(|name| !sm.checks.contains_key(name)) {
             return Err(SmError::ParseError(format!("Invalid guard '{target}': expected a state or _complete and declared checks")));
@@ -515,6 +541,13 @@ pub fn parse(content: &str) -> Result<StateMachine, SmError> {
         }
     }
     Ok(sm)
+}
+
+fn check_on_rule_count(rules: usize) -> Result<(), SmError> {
+    if rules > 64 {
+        return Err(SmError::ParseError("At most 64 [on] rules per workflow".into()));
+    }
+    Ok(())
 }
 
 fn parse_metadata(line: &str, _line_num: usize) -> Result<(String, String), SmError> {
@@ -1305,6 +1338,18 @@ mod sm_tests {
         assert!(load_file_in(root.path(), "../standard").is_err());
     }
 
+
+    #[test]
+    fn limits_section_sets_abort_conditions_and_checks_the_abort_state() {
+        let sm = parse("[state work]\n[state standard]\n[limits]\nmax_same_tool_call = 2\nmax_tool_errors = 0\non_abort = \"standard\"\n").unwrap();
+        assert_eq!(sm.limits.max_same_tool_call, 2);
+        assert_eq!(sm.limits.max_tool_errors, 0);
+        assert_eq!(sm.limits.max_same_reply, crate::gateway::loop_guard::LoopLimits::default().max_same_reply);
+        assert_eq!(sm.limits.on_abort.as_deref(), Some("standard"));
+        assert!(parse("[state work]\n[limits]\non_abort = missing\n").is_err());
+        assert!(parse("[state work]\n[limits]\nmax_turns_forever = 3\n").is_err());
+        assert_eq!(parse("[state work]\n").unwrap().limits, crate::gateway::loop_guard::LoopLimits::default());
+    }
 
     #[test]
     fn test_parse_basic() {
